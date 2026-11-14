@@ -38,7 +38,7 @@ body{display:flex;flex-direction:column}
   <div id="chart"></div>
   <div class="fallback" id="fallback">Loading TradingView chart…</div>
 </main>
-<footer class="footer">Charting by&nbsp;<a href="https://www.tradingview.com/" target="_blank" rel="noopener">TradingView</a>&nbsp;· Analysis only</footer>
+<footer class="footer"><a id="chartCredit" href="https://www.tradingview.com/symbols/DERIV-VOLATILITY_100_1S_INDEX/" target="_blank" rel="noopener">VOLATILITY_100_1S_INDEX chart</a>&nbsp;by TradingView&nbsp;· Analysis only</footer>
 <script>
 const markets = {
   "Deriv Synthetics": [
@@ -110,6 +110,9 @@ function renderSymbols() {
 function renderChart() {
   const root = document.getElementById("chart");
   const fallback = document.getElementById("fallback");
+  const credit = document.getElementById("chartCredit");
+  credit.href = "https://www.tradingview.com/symbols/" + activeSymbol.symbol.replace(":", "-") + "/";
+  credit.textContent = activeSymbol.symbol.split(":")[1] + " chart";
   root.innerHTML = "";
   fallback.style.display = "flex";
 
