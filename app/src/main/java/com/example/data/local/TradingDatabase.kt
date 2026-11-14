@@ -20,9 +20,10 @@ import kotlinx.coroutines.launch
         DailyReviewEntity::class,
         UserSettingsEntity::class,
         NewsReleaseEntity::class,
-        OutlookPredictionEntity::class
+        OutlookPredictionEntity::class,
+        PythonStrategyEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -34,6 +35,7 @@ abstract class TradingDatabase : RoomDatabase() {
     abstract fun dailyReviewDao(): DailyReviewDao
     abstract fun userSettingsDao(): UserSettingsDao
     abstract fun outlookDao(): OutlookDao
+    abstract fun pythonStrategyDao(): PythonStrategyDao
 
     companion object {
         @Volatile

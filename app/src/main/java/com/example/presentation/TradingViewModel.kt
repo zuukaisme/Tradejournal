@@ -10,6 +10,7 @@ import com.example.domain.model.BotVersion
 import com.example.domain.model.CurrencyCode
 import com.example.domain.model.DailyReview
 import com.example.domain.model.PerformanceSummary
+import com.example.domain.model.PythonStrategy
 import com.example.domain.model.Strategy
 import com.example.domain.model.TimePeriod
 import com.example.domain.model.Trade
@@ -33,6 +34,7 @@ enum class AppScreen {
     STATS,
     MENU,
     STRATEGIES,
+    STRATEGY_GUIDE,
     BOTS,
     OUTLOOK,
     BACKTEST,
@@ -94,6 +96,9 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val strategies: StateFlow<List<Strategy>> = repository.getAllStrategies()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val pythonStrategies: StateFlow<List<PythonStrategy>> = repository.getAllPythonStrategies()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val bots: StateFlow<List<Bot>> = repository.getAllBots()
@@ -271,6 +276,38 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             repository.deleteStrategy(id)
             closeStrategyEditor()
+        }
+    }
+
+    // Python Backtest Strategy actions
+    fun savePythonStrategy(name: String, className: String, code: String) {
+        viewModelScope.launch {
+            repository.insertPythonStrategy(
+                PythonStrategy(
+                    name = name.trim(),
+                    className = className.trim(),
+                    code = code,
+                    updatedAt = System.currentTimeMillis()
+                )
+            )
+        }
+    }
+
+    fun renamePythonStrategy(strategy: PythonStrategy, newName: String, newClassName: String = strategy.className) {
+        viewModelScope.launch {
+            repository.updatePythonStrategy(
+                strategy.copy(
+                    name = newName.trim(),
+                    className = newClassName.trim(),
+                    updatedAt = System.currentTimeMillis()
+                )
+            )
+        }
+    }
+
+    fun deletePythonStrategy(id: Long) {
+        viewModelScope.launch {
+            repository.deletePythonStrategy(id)
         }
     }
 

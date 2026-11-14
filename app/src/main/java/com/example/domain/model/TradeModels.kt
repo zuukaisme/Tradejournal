@@ -220,3 +220,12 @@ data class RuleAdherenceStat(
     val violatedWins: Int = 0,
     val violatedPnL: Double = 0.0
 )
+
+data class PythonStrategy(
+    val id: Long = 0,
+    val name: String,
+    val className: String = "",
+    val code: String,
+    val updatedAt: Long = System.currentTimeMillis()
+)
+

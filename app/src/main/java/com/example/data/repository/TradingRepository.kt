@@ -3,6 +3,7 @@ package com.example.data.repository
 import com.example.data.local.BotEntity
 import com.example.data.local.BotVersionEntity
 import com.example.data.local.DailyReviewEntity
+import com.example.data.local.PythonStrategyEntity
 import com.example.data.local.StrategyEntity
 import com.example.data.local.TradeEntity
 import com.example.data.local.TradingDatabase
@@ -14,6 +15,7 @@ import com.example.domain.model.BotVersion
 import com.example.domain.model.CurrencyCode
 import com.example.domain.model.DailyReview
 import com.example.domain.model.Emotion
+import com.example.domain.model.PythonStrategy
 import com.example.domain.model.Strategy
 import com.example.domain.model.Trade
 import com.example.domain.model.TradeDirection
@@ -34,6 +36,7 @@ class TradingRepository(private val database: TradingDatabase) {
     private val reviewDao = database.dailyReviewDao()
     private val settingsDao = database.userSettingsDao()
     private val outlookDao = database.outlookDao()
+    private val pythonStrategyDao = database.pythonStrategyDao()
 
     // --- News Outlook ---
     fun getAllReleases(): Flow<List<com.example.domain.model.NewsRelease>> = outlookDao.getAllReleases().map { list ->
@@ -113,6 +116,27 @@ class TradingRepository(private val database: TradingDatabase) {
 
     suspend fun deleteStrategy(id: Long) = withContext(Dispatchers.IO) {
         strategyDao.deleteStrategyById(id)
+    }
+
+    // --- Python Backtest Strategies ---
+    fun getAllPythonStrategies(): Flow<List<PythonStrategy>> = pythonStrategyDao.getAllPythonStrategies().map { list ->
+        list.map { it.toDomain() }
+    }
+
+    suspend fun getPythonStrategyById(id: Long): PythonStrategy? = withContext(Dispatchers.IO) {
+        pythonStrategyDao.getPythonStrategyById(id)?.toDomain()
+    }
+
+    suspend fun insertPythonStrategy(strategy: PythonStrategy): Long = withContext(Dispatchers.IO) {
+        pythonStrategyDao.insertPythonStrategy(strategy.toEntity())
+    }
+
+    suspend fun updatePythonStrategy(strategy: PythonStrategy) = withContext(Dispatchers.IO) {
+        pythonStrategyDao.updatePythonStrategy(strategy.toEntity())
+    }
+
+    suspend fun deletePythonStrategy(id: Long) = withContext(Dispatchers.IO) {
+        pythonStrategyDao.deletePythonStrategyById(id)
     }
 
     // --- Bots ---
@@ -345,6 +369,7 @@ class TradingRepository(private val database: TradingDatabase) {
     suspend fun clearAllData() = withContext(Dispatchers.IO) {
         tradeDao.deleteAllTrades()
         strategyDao.deleteAllStrategies()
+        pythonStrategyDao.deleteAllPythonStrategies()
         botDao.deleteAllBots()
         reviewDao.deleteAllReviews()
         outlookDao.deleteAllReleases()
@@ -779,5 +804,21 @@ class TradingRepository(private val database: TradingDatabase) {
         actualGoldDelta = actualGoldDelta,
         wasCorrect = wasCorrect,
         userTradedRelease = userTradedRelease
+    )
+
+    private fun PythonStrategyEntity.toDomain() = PythonStrategy(
+        id = id,
+        name = name,
+        className = className,
+        code = code,
+        updatedAt = updatedAt
+    )
+
+    private fun PythonStrategy.toEntity() = PythonStrategyEntity(
+        id = id,
+        name = name,
+        className = className,
+        code = code,
+        updatedAt = updatedAt
     )
 }

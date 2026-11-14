@@ -1,16 +1,10 @@
 package com.example
 
-import com.example.backtest.BacktestConfig
-import com.example.backtest.BacktestCsvParser
-import com.example.backtest.Candle
+import com.example.backtest.BacktestCodec
+import com.example.backtest.BacktestParseOutcome
 import com.example.backtest.ExitReason
 import com.example.backtest.Side
-import com.example.backtest.Signal
-import com.example.backtest.Strategy
-import com.example.backtest.ThreeBullishCandlesStrategy
-import com.example.backtest.runBacktest
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -18,185 +12,147 @@ import org.junit.Test
 class BacktestUnitTest {
 
     @Test
-    fun csvParser_parsesMt5TabAndUtf16LeBom() {
+    fun decodeCsvBytes_handlesUtf16LeAndBeBom() {
         val mt5Text = buildString {
             appendLine("<DATE>\t<TIME>\t<OPEN>\t<HIGH>\t<LOW>\t<CLOSE>\t<TICKVOL>\t<VOL>\t<SPREAD>")
             appendLine("2025.01.02\t09:00:00\t2630.50\t2635.00\t2629.00\t2634.25\t1200\t0\t15")
             appendLine("2025.01.02\t10:00:00\t2634.25\t2636.00\t2631.50\t2632.00\t950\t0\t12")
         }
-        val payload = mt5Text.toByteArray(Charsets.UTF_16LE)
-        val withBom = byteArrayOf(0xFF.toByte(), 0xFE.toByte()) + payload
+        val leBytes = byteArrayOf(0xFF.toByte(), 0xFE.toByte()) + mt5Text.toByteArray(Charsets.UTF_16LE)
+        val decodedLe = BacktestCodec.decodeCsvBytes(leBytes)
+        assertEquals("UTF-16LE (BOM)", decodedLe.detectedEncoding)
+        assertEquals("Tab (MT5)", decodedLe.detectedDelimiter)
+        assertEquals(2, decodedLe.estimatedRows)
+        assertTrue(decodedLe.text.startsWith("<DATE>\t<TIME>"))
 
-        val parsed = BacktestCsvParser.parseBytes(withBom)
-        assertEquals("UTF-16LE (BOM)", parsed.detectedEncoding)
-        assertEquals("Tab (MT5)", parsed.detectedDelimiter)
-        assertEquals(0, parsed.skippedRows)
-        assertEquals(2, parsed.candles.size)
-        assertEquals("2025.01.02 09:00:00", parsed.candles[0].time)
-        assertEquals(2630.50, parsed.candles[0].open, 1e-6)
-        assertEquals(2635.00, parsed.candles[0].high, 1e-6)
-        assertEquals(2629.00, parsed.candles[0].low, 1e-6)
-        assertEquals(2634.25, parsed.candles[0].close, 1e-6)
-        assertEquals(1200.0, parsed.candles[0].volume, 1e-6)
+        val beBytes = byteArrayOf(0xFE.toByte(), 0xFF.toByte()) + mt5Text.toByteArray(Charsets.UTF_16BE)
+        val decodedBe = BacktestCodec.decodeCsvBytes(beBytes)
+        assertEquals("UTF-16BE (BOM)", decodedBe.detectedEncoding)
+        assertTrue(decodedBe.text.startsWith("<DATE>\t<TIME>"))
     }
 
     @Test
-    fun csvParser_matchesColumnsByHeaderNameAndSemicolon() {
-        val csv = """
-            CLOSE;LOW;Timestamp;VOLUME;HIGH;OPEN
-            105,5;98,0;2025-03-01 01:00;500;106,0;100,0
-            108,0;104,0;2025-03-01 02:00;400;109,0;105,5
+    fun decodeCsvBytes_stripsUtf8BomAndDetectsDelimiters() {
+        val csv = "time;open;high;low;close\n2025-03-01 01:00;100;106;98;105\n"
+        val utf8BomBytes = byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()) + csv.toByteArray(Charsets.UTF_8)
+
+        val decoded = BacktestCodec.decodeCsvBytes(utf8BomBytes)
+        assertEquals("UTF-8 (BOM)", decoded.detectedEncoding)
+        assertEquals("Semicolon", decoded.detectedDelimiter)
+        assertEquals(1, decoded.estimatedRows)
+        assertTrue(decoded.text.startsWith("time;open"))
+    }
+
+    @Test
+    fun parseBacktestJson_parsesFullSuccessPayload() {
+        val json = """
+            {
+              "summary": {
+                "totalTrades": 2,
+                "wins": 1,
+                "losses": 1,
+                "winRatePct": 50.0,
+                "netPoints": 10.5,
+                "netR": 1.0,
+                "avgR": 0.5,
+                "profitFactor": 2.0,
+                "skippedByStopCap": 3
+              },
+              "points": {
+                "avgWinPoints": 20.5,
+                "avgLossPoints": -10.0,
+                "largestWinPoints": 20.5,
+                "largestLossPoints": -10.0,
+                "avgStopDistancePoints": 10.0,
+                "maxStopDistancePoints": 10.0,
+                "avgTargetDistancePoints": 20.5
+              },
+              "risk": {
+                "maxDrawdownPoints": 10.0,
+                "maxDrawdownR": 1.0,
+                "maxConsecutiveWins": 1,
+                "maxConsecutiveLosses": 1
+              },
+              "bySide": {
+                "buy": {"trades": 1, "winRatePct": 100.0, "netPoints": 20.5},
+                "sell": {"trades": 1, "winRatePct": 0.0, "netPoints": -10.0}
+              },
+              "timing": {"avgTradeDurationCandles": 4.5},
+              "equityCurve": [20.5, 10.5],
+              "trades": [
+                {
+                  "side": "buy",
+                  "entry": 2600.0,
+                  "sl": 2590.0,
+                  "tp": 2620.5,
+                  "exit": 2620.5,
+                  "openTime": "2025.01.02 09:00:00",
+                  "closeTime": "2025.01.02 12:00:00",
+                  "reason": "tp",
+                  "points": 20.5,
+                  "r": 2.0,
+                  "durationCandles": 4
+                },
+                {
+                  "side": "sell",
+                  "entry": 2620.0,
+                  "sl": 2630.0,
+                  "tp": 2600.0,
+                  "exit": 2630.0,
+                  "openTime": "2025.01.02 13:00:00",
+                  "closeTime": "2025.01.02 17:00:00",
+                  "reason": "sl",
+                  "points": -10.0,
+                  "r": -1.0,
+                  "durationCandles": 5
+                }
+              ],
+              "warnings": ["Under 50 trades, results are not statistically reliable"]
+            }
         """.trimIndent()
 
-        val parsed = BacktestCsvParser.parseText(csv)
-        assertEquals("Semicolon", parsed.detectedDelimiter)
-        assertEquals(2, parsed.candles.size)
-        assertEquals("2025-03-01 01:00", parsed.candles[0].time)
-        assertEquals(100.0, parsed.candles[0].open, 1e-6)
-        assertEquals(106.0, parsed.candles[0].high, 1e-6)
-        assertEquals(98.0, parsed.candles[0].low, 1e-6)
-        assertEquals(105.5, parsed.candles[0].close, 1e-6)
-        assertEquals(500.0, parsed.candles[0].volume, 1e-6)
-    }
-
-    @Test
-    fun engine_enforces50CandleWarmupAndNextOpenEntryAndSlFirstTieBreak() {
-        // Build 60 candles cleanly numbered 0..59
-        val candles = MutableList(60) { idx ->
-            Candle(
-                time = "T$idx",
-                open = 100.0,
-                high = 101.0,
-                low = 99.0,
-                close = 100.0
-            )
-        }
-        // Candle 51 is where a signal from candle 50 enters at open (102.0)
-        // Suppose signal is at i=49 (warmup period -> MUST be ignored!) and at i=50 (valid!).
-        // On candle 51, BOTH SL (98.0) and TP (110.0) are inside the candle's range [95.0, 115.0].
-        // Engine rule: SL must win tie-break.
-        candles[51] = Candle(
-            time = "T51",
-            open = 102.0,
-            high = 115.0,
-            low = 95.0,
-            close = 112.0
-        )
-
-        val signalIndices = mutableListOf<Int>()
-        val testStrategy = object : Strategy {
-            override fun onCandle(i: Int, candles: List<Candle>): Signal? {
-                // Verify zero lookahead slice size
-                assertEquals(i + 1, candles.size)
-                signalIndices.add(i)
-                return if (i == 49 || i == 50) {
-                    Signal(side = Side.BUY, sl = 98.0, tp = 110.0)
-                } else {
-                    null
-                }
-            }
-        }
-
-        val result = runBacktest(
-            candles = candles,
-            strategy = testStrategy,
-            config = BacktestConfig(maxStopPoints = null, pointSize = 0.5)
-        )
-
-        // Warmup skipped indices 0..49
-        assertTrue(signalIndices.none { it < 50 })
-        assertEquals(1, result.summary.totalTrades)
-        assertEquals(0, result.summary.wins)
-        assertEquals(1, result.summary.losses)
-
-        val trade = result.trades.single()
-        assertEquals(102.0, trade.entry, 1e-6)
-        assertEquals("T51", trade.openTime)
-        assertEquals("T51", trade.closeTime)
-        assertEquals(ExitReason.SL, trade.reason)
-        assertEquals(98.0, trade.exit, 1e-6)
-        // Entry 102.0 -> SL 98.0 = -4.0 price, divided by pointSize 0.5 = -8.0 points
-        assertEquals(-8.0, trade.points, 1e-6)
-        assertEquals(-1.0, trade.r, 1e-6)
-        assertEquals(1, trade.durationCandles)
-    }
-
-    @Test
-    fun engine_enforcesOneTradeAtATimeAndMaxStopCapSkipping() {
-        val candles = MutableList(60) { idx ->
-            Candle(
-                time = "T$idx",
-                open = 100.0,
-                high = 102.0,
-                low = 98.0,
-                close = 100.0
-            )
-        }
-        // Candle 51 enters Trade 1 (BUY entry=100, sl=90, tp=110) - stays open during 51 & 52
-        // Candle 53 hits TP=110
-        candles[53] = Candle(time = "T53", open = 101.0, high = 112.0, low = 100.0, close = 111.0)
-        // Candle 54 signal will have wide stop distance -> should be skipped by maxStopPoints = 5.0
-        // Candle 56 signal has valid stop distance 4.0 -> enters on 57, hits TP on 58
-        candles[58] = Candle(time = "T58", open = 101.0, high = 115.0, low = 99.0, close = 114.0)
-
-        var strategyCalls = 0
-        val testStrategy = object : Strategy {
-            override fun onCandle(i: Int, candles: List<Candle>): Signal? {
-                strategyCalls++
-                return when (i) {
-                    50 -> Signal(side = Side.BUY, sl = 96.0, tp = 110.0) // stop dist = 4.0 -> taken, exits 53
-                    51, 52 -> Signal(side = Side.SELL, sl = 104.0, tp = 90.0) // ignored while trade open
-                    54 -> Signal(side = Side.SELL, sl = 120.0, tp = 80.0) // stop dist = 20.0 > cap 5.0 -> skipped
-                    56 -> Signal(side = Side.BUY, sl = 96.0, tp = 112.0) // stop dist = 4.0 -> taken, exits 58
-                    else -> null
-                }
-            }
-        }
-
-        val result = runBacktest(
-            candles = candles,
-            strategy = testStrategy,
-            config = BacktestConfig(maxStopPoints = 5.0, pointSize = 1.0)
-        )
-
-        assertEquals(1, result.summary.skippedByStopCap)
+        val outcome = BacktestCodec.parseBacktestJson(json)
+        assertTrue(outcome is BacktestParseOutcome.Success)
+        val result = (outcome as BacktestParseOutcome.Success).result
         assertEquals(2, result.summary.totalTrades)
-        assertEquals(2, result.summary.wins)
-        assertEquals(0, result.summary.losses)
-        assertEquals(100.0, result.summary.winRatePct, 1e-6)
-        // Trade 1: 110 - 100 = 10 pts; Trade 2: 112 - 100 = 12 pts; Total = 22 pts
-        assertEquals(22.0, result.summary.netPoints, 1e-6)
-        assertEquals(listOf(10.0, 22.0), result.equityCurve)
-        // Duration: Trade 1 opened 51 closed 53 -> 3 candles; Trade 2 opened 57 closed 58 -> 2 candles
-        assertEquals(2.5, result.timing.avgTradeDurationCandles, 1e-6)
+        assertEquals(2.0, result.summary.profitFactor!!, 1e-6)
+        assertEquals(-10.0, result.points.avgLossPoints, 1e-6)
+        assertEquals(Side.BUY, result.trades[0].side)
+        assertEquals(ExitReason.TP, result.trades[0].reason)
+        assertEquals(Side.SELL, result.trades[1].side)
+        assertEquals(ExitReason.SL, result.trades[1].reason)
+        assertEquals(1, result.warnings.size)
     }
 
     @Test
-    fun engine_guardsZeroTradesAndThreeBullishCandlesStrategyWorks() {
-        val tooShort = List(50) { idx ->
-            Candle("T$idx", 100.0, 102.0, 98.0, 101.0)
-        }
-        val shortResult = runBacktest(tooShort, ThreeBullishCandlesStrategy(), BacktestConfig())
-        assertEquals(0, shortResult.summary.totalTrades)
-        assertEquals(0.0, shortResult.summary.winRatePct, 1e-6)
-        assertTrue(shortResult.warnings.isNotEmpty())
+    fun parseBacktestJson_handlesNullableProfitFactorAndErrorObjects() {
+        val nullPfJson = """
+            {
+              "summary": {"totalTrades": 1, "wins": 1, "losses": 0, "winRatePct": 100.0, "netPoints": 15.0, "netR": 1.5, "avgR": 1.5, "profitFactor": null, "skippedByStopCap": 0},
+              "points": {"avgWinPoints": 15.0, "avgLossPoints": 0.0, "largestWinPoints": 15.0, "largestLossPoints": 0.0, "avgStopDistancePoints": 10.0, "maxStopDistancePoints": 10.0, "avgTargetDistancePoints": 15.0},
+              "risk": {"maxDrawdownPoints": 0.0, "maxDrawdownR": 0.0, "maxConsecutiveWins": 1, "maxConsecutiveLosses": 0},
+              "bySide": {"buy": {"trades": 1, "winRatePct": 100.0, "netPoints": 15.0}, "sell": {"trades": 0, "winRatePct": 0.0, "netPoints": 0.0}},
+              "timing": {"avgTradeDurationCandles": 3.0},
+              "equityCurve": [15.0],
+              "trades": [],
+              "warnings": []
+            }
+        """.trimIndent()
 
-        // Verify ThreeBullishCandlesStrategy fires after 3 bullish candles
-        val candles = List(14) { idx ->
-            Candle("T$idx", 100.0, 102.0, 99.0, 99.5) // bearish, range = 3.0
-        }.toMutableList()
-        candles[11] = Candle("T11", 100.0, 103.0, 99.0, 102.0) // bullish, range = 4.0
-        candles[12] = Candle("T12", 102.0, 105.0, 101.0, 104.0) // bullish, range = 4.0
-        candles[13] = Candle("T13", 104.0, 107.0, 103.0, 106.0) // bullish, range = 4.0
+        val success = BacktestCodec.parseBacktestJson(nullPfJson) as BacktestParseOutcome.Success
+        assertNull(success.result.summary.profitFactor)
 
-        val strategy = ThreeBullishCandlesStrategy()
-        assertNull(strategy.onCandle(12, candles.subList(0, 13)))
-        val sig = strategy.onCandle(13, candles)
-        assertNotNull(sig)
-        assertEquals(Side.BUY, sig!!.side)
-        // Average range = (11 * 3.0 + 3 * 4.0) / 14 = 45.0 / 14.0
-        val expectedRange = 45.0 / 14.0
-        assertEquals(106.0 - expectedRange, sig.sl, 1e-6)
-        assertEquals(106.0 + 2.0 * expectedRange, sig.tp, 1e-6)
+        val errorJson = """
+            {
+              "error": "SyntaxError: invalid syntax (strategy.py, line 4)",
+              "details": "Traceback (most recent call last):\n  File \"backtest.py\", line 339"
+            }
+        """.trimIndent()
+        val failure = BacktestCodec.parseBacktestJson(errorJson) as BacktestParseOutcome.Failure
+        assertEquals("SyntaxError: invalid syntax (strategy.py, line 4)", failure.error.error)
+        assertTrue(failure.error.details.contains("Traceback"))
+
+        val malformed = BacktestCodec.parseBacktestJson("not valid json")
+        assertTrue(malformed is BacktestParseOutcome.Failure)
     }
 }

@@ -61,6 +61,7 @@ import com.example.presentation.screens.OutlookScreen
 import com.example.presentation.screens.SettingsScreen
 import com.example.presentation.screens.StatsScreen
 import com.example.presentation.screens.StrategiesScreen
+import com.example.presentation.screens.StrategyGuideScreen
 import com.example.presentation.screens.TradeEntryBottomSheet
 import com.example.presentation.screens.TradesScreen
 import java.text.SimpleDateFormat
@@ -102,18 +103,19 @@ fun MainScreen(
 
     val isSecondaryScreen = currentScreen in listOf(
         AppScreen.STRATEGIES,
+        AppScreen.STRATEGY_GUIDE,
         AppScreen.BOTS,
         AppScreen.OUTLOOK,
         AppScreen.BACKTEST,
         AppScreen.SETTINGS
     )
 
-    // Android BackHandler: returns to Menu from sub-screens, or Calendar from Menu/other tabs
+    // Android BackHandler: Strategy Guide returns to Strategies, other sub-screens return to Menu, main tabs return to Calendar
     BackHandler(enabled = currentScreen != AppScreen.CALENDAR) {
-        if (isSecondaryScreen) {
-            viewModel.navigateTo(AppScreen.MENU)
-        } else {
-            viewModel.navigateTo(AppScreen.CALENDAR)
+        when {
+            currentScreen == AppScreen.STRATEGY_GUIDE -> viewModel.navigateTo(AppScreen.STRATEGIES)
+            isSecondaryScreen -> viewModel.navigateTo(AppScreen.MENU)
+            else -> viewModel.navigateTo(AppScreen.CALENDAR)
         }
     }
 
@@ -124,12 +126,18 @@ fun MainScreen(
                 navigationIcon = {
                     if (isSecondaryScreen) {
                         IconButton(
-                            onClick = { viewModel.navigateTo(AppScreen.MENU) },
+                            onClick = {
+                                if (currentScreen == AppScreen.STRATEGY_GUIDE) {
+                                    viewModel.navigateTo(AppScreen.STRATEGIES)
+                                } else {
+                                    viewModel.navigateTo(AppScreen.MENU)
+                                }
+                            },
                             modifier = Modifier.testTag("top_bar_back_button")
                         ) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back to Menu",
+                                contentDescription = if (currentScreen == AppScreen.STRATEGY_GUIDE) "Back to Strategies" else "Back to Menu",
                                 tint = MaterialTheme.colorScheme.primary
                             )
                         }
@@ -162,6 +170,7 @@ fun MainScreen(
                                     AppScreen.STATS -> "Performance Analytics"
                                     AppScreen.MENU -> "Menu & Tools"
                                     AppScreen.STRATEGIES -> "Strategies & Rules"
+                                    AppScreen.STRATEGY_GUIDE -> "Strategy Guide"
                                     AppScreen.BOTS -> "MQL5 Bot Library"
                                     AppScreen.OUTLOOK -> "Gold News Outlook"
                                     AppScreen.BACKTEST -> "Strategy Backtester"
@@ -176,10 +185,11 @@ fun MainScreen(
                                     AppScreen.TRADES -> "${allTrades.size} logged executions"
                                     AppScreen.STATS -> "Indices, strategy graphs & P&L"
                                     AppScreen.MENU -> "Bots, strategies, gold outlook & tools"
-                                    AppScreen.STRATEGIES -> "Execution checklists & statistics"
+                                    AppScreen.STRATEGIES -> "Python scripts & entry checklists"
+                                    AppScreen.STRATEGY_GUIDE -> "Python contract, example & AI prompt"
                                     AppScreen.BOTS -> "Offline expert advisors & scripts"
                                     AppScreen.OUTLOOK -> "XAUUSD macro event probabilities"
-                                    AppScreen.BACKTEST -> "Offline CSV & MT5 strategy simulator"
+                                    AppScreen.BACKTEST -> "Embedded Python & MT5 simulator"
                                     AppScreen.SETTINGS -> "Risk limits, backup & API keys"
                                 },
                                 style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
@@ -284,10 +294,19 @@ fun MainScreen(
                     AppScreen.TRADES -> TradesScreen(viewModel = viewModel)
                     AppScreen.STATS -> StatsScreen(viewModel = viewModel)
                     AppScreen.MENU -> MenuScreen(viewModel = viewModel)
-                    AppScreen.STRATEGIES -> StrategiesScreen(viewModel = viewModel)
+                    AppScreen.STRATEGIES -> StrategiesScreen(
+                        viewModel = viewModel,
+                        onOpenStrategyGuide = { viewModel.navigateTo(AppScreen.STRATEGY_GUIDE) }
+                    )
+                    AppScreen.STRATEGY_GUIDE -> StrategyGuideScreen(
+                        onOpenStrategies = { viewModel.navigateTo(AppScreen.STRATEGIES) }
+                    )
                     AppScreen.BOTS -> BotsScreen(viewModel = viewModel)
                     AppScreen.OUTLOOK -> OutlookScreen(viewModel = viewModel)
-                    AppScreen.BACKTEST -> BacktestScreen(backtestViewModel = backtestViewModel)
+                    AppScreen.BACKTEST -> BacktestScreen(
+                        onOpenStrategies = { viewModel.navigateTo(AppScreen.STRATEGIES) },
+                        backtestViewModel = backtestViewModel
+                    )
                     AppScreen.SETTINGS -> SettingsScreen(viewModel = viewModel)
                 }
             }

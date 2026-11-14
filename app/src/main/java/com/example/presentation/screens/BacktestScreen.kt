@@ -3,6 +3,7 @@ package com.example.presentation.screens
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -22,6 +23,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.Warning
@@ -37,6 +40,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -53,7 +57,6 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -62,26 +65,21 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.backtest.BacktestError
 import com.example.backtest.BacktestResult
-import com.example.backtest.ExitReason
 import com.example.backtest.Side
 import com.example.backtest.Trade
 import com.example.presentation.BacktestViewModel
 import com.example.presentation.components.LiquidGlassCard
 import com.example.ui.theme.AmberGold
-import com.example.ui.theme.CrimsonRed
-import com.example.ui.theme.DarkBackground
-import com.example.ui.theme.DarkSurface
-import com.example.ui.theme.DarkSurfaceCard
-import com.example.ui.theme.NeonEmerald
 import java.util.Locale
 
 @Composable
 fun BacktestScreen(
+    onOpenStrategies: () -> Unit,
     modifier: Modifier = Modifier,
     backtestViewModel: BacktestViewModel = viewModel()
 ) {
-    val context = LocalContext.current
     val state by backtestViewModel.uiState.collectAsState()
     var strategyMenuExpanded by remember { mutableStateOf(false) }
 
@@ -89,7 +87,7 @@ fun BacktestScreen(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri != null) {
-            backtestViewModel.loadCsvUri(context, uri)
+            backtestViewModel.loadCsvUri(uri)
         }
     }
 
@@ -135,8 +133,7 @@ fun BacktestScreen(
                 if (state.fileName != null) {
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "${state.candlesCount} candles • ${state.detectedEncoding} • ${state.detectedDelimiter}" +
-                            if (state.skippedCsvRows > 0) " • ${state.skippedCsvRows} skipped" else "",
+                        text = "${state.estimatedRows} rows • ${state.detectedEncoding} • ${state.detectedDelimiter}",
                         style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
                         color = positiveColor
                     )
@@ -144,51 +141,84 @@ fun BacktestScreen(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // Strategy Dropdown
-                Box(modifier = Modifier.fillMaxWidth()) {
-                    OutlinedButton(
-                        onClick = { strategyMenuExpanded = true },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                            .testTag("strategy_dropdown_button"),
-                        shape = RoundedCornerShape(12.dp)
+                // Saved Python Strategy Dropdown
+                if (state.availableStrategies.isEmpty()) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = state.selectedStrategy.name,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                text = "No saved .py strategies yet",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f)
                             )
-                            Icon(Icons.Default.ArrowDropDown, contentDescription = "Select strategy")
+                            TextButton(
+                                onClick = onOpenStrategies,
+                                modifier = Modifier.testTag("backtest_go_to_strategies_button")
+                            ) {
+                                Text("Add Strategy", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
+                } else {
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        OutlinedButton(
+                            onClick = { strategyMenuExpanded = true },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("strategy_dropdown_button"),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = state.selectedStrategy?.name ?: "Select Strategy",
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Icon(Icons.Default.ArrowDropDown, contentDescription = "Select strategy")
+                            }
+                        }
 
-                    DropdownMenu(
-                        expanded = strategyMenuExpanded,
-                        onDismissRequest = { strategyMenuExpanded = false }
-                    ) {
-                        state.availableStrategies.forEach { strat ->
-                            DropdownMenuItem(
-                                text = {
-                                    Column {
-                                        Text(strat.name, fontWeight = FontWeight.Bold)
-                                        Text(
-                                            strat.description,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+                        DropdownMenu(
+                            expanded = strategyMenuExpanded,
+                            onDismissRequest = { strategyMenuExpanded = false }
+                        ) {
+                            state.availableStrategies.forEach { strat ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text(strat.name, fontWeight = FontWeight.Bold)
+                                            Text(
+                                                text = if (strat.className.isBlank()) {
+                                                    "Auto-detect Strategy subclass"
+                                                } else {
+                                                    "Class: ${strat.className}"
+                                                },
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    },
+                                    onClick = {
+                                        backtestViewModel.selectStrategy(strat)
+                                        strategyMenuExpanded = false
                                     }
-                                },
-                                onClick = {
-                                    backtestViewModel.selectStrategy(strat)
-                                    strategyMenuExpanded = false
-                                }
-                            )
+                                )
+                            }
                         }
                     }
                 }
@@ -204,7 +234,7 @@ fun BacktestScreen(
                         value = state.maxStopPointsInput,
                         onValueChange = { backtestViewModel.updateMaxStopPoints(it) },
                         label = { Text("Max Stop (pts)", fontSize = 12.sp) },
-                        placeholder = { Text("Optional") },
+                        placeholder = { Text("0 = No cap") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         modifier = Modifier
@@ -231,7 +261,7 @@ fun BacktestScreen(
                 // Run Button + Loading state
                 Button(
                     onClick = { backtestViewModel.run() },
-                    enabled = !state.isLoading && state.candles.isNotEmpty(),
+                    enabled = !state.isLoading && state.hasCsvBytes && state.selectedStrategy != null,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = positiveColor,
                         contentColor = onPrimaryColor
@@ -249,7 +279,7 @@ fun BacktestScreen(
                             color = onPrimaryColor
                         )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Running Backtest...", fontWeight = FontWeight.Bold)
+                        Text("Running Python Engine...", fontWeight = FontWeight.Bold)
                     } else {
                         Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
                         Spacer(modifier = Modifier.width(6.dp))
@@ -259,28 +289,10 @@ fun BacktestScreen(
             }
         }
 
-        // Error Banner
-        if (state.errorMessage != null) {
+        // Expandable Python / CSV Error Card
+        state.backtestError?.let { err ->
             item {
-                Surface(
-                    color = negativeColor.copy(alpha = 0.16f),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Default.Warning, contentDescription = "Error", tint = negativeColor, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = state.errorMessage!!,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = negativeColor,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                }
+                BacktestErrorCard(error = err)
             }
         }
 
@@ -357,7 +369,7 @@ fun BacktestScreen(
                 }
             }
 
-            // Points Section
+            // Points Section (avgLossPoints and largestLossPoints are already signed in backtest.py)
             item {
                 LiquidGlassCard {
                     Text(
@@ -368,9 +380,9 @@ fun BacktestScreen(
                     Spacer(modifier = Modifier.height(8.dp))
                     MetricRow("Total / Wins / Losses", "${result.summary.totalTrades} / ${result.summary.wins} / ${result.summary.losses}")
                     MetricRow("Avg Win", formatSignedPoints(result.points.avgWinPoints), positiveColor)
-                    MetricRow("Avg Loss", formatSignedPoints(-result.points.avgLossPoints), negativeColor)
+                    MetricRow("Avg Loss", formatSignedPoints(result.points.avgLossPoints), negativeColor)
                     MetricRow("Largest Win", formatSignedPoints(result.points.largestWinPoints), positiveColor)
-                    MetricRow("Largest Loss", formatSignedPoints(-result.points.largestLossPoints), negativeColor)
+                    MetricRow("Largest Loss", formatSignedPoints(result.points.largestLossPoints), negativeColor)
                     MetricRow("Avg Stop Distance", "${formatOneDec(result.points.avgStopDistancePoints)} pts")
                     MetricRow("Max Stop Distance", "${formatOneDec(result.points.maxStopDistancePoints)} pts")
                     MetricRow("Avg Target Distance", "${formatOneDec(result.points.avgTargetDistancePoints)} pts")
@@ -388,7 +400,6 @@ fun BacktestScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     MetricRow("Max Drawdown (Pts)", "${formatOneDec(result.risk.maxDrawdownPoints)} pts", negativeColor)
-                    MetricRow("Max Drawdown (%)", "${formatOneDec(result.risk.maxDrawdownPct)}%", negativeColor)
                     MetricRow("Max Drawdown (R)", "${formatTwoDec(result.risk.maxDrawdownR)} R", negativeColor)
                     MetricRow("Net R / Avg R", "${formatSignedR(result.summary.netR)} / ${formatSignedR(result.summary.avgR)}")
                     MetricRow("Max Consecutive Wins", "${result.risk.maxConsecutiveWins}", positiveColor)
@@ -455,7 +466,7 @@ fun BacktestScreen(
                     BacktestTradeCard(index = idx + 1, trade = trade)
                 }
             }
-        } else if (!state.isLoading) {
+        } else if (!state.isLoading && state.backtestError == null) {
             item {
                 LiquidGlassCard {
                     Text(
@@ -465,7 +476,7 @@ fun BacktestScreen(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Pick an MT5 tab-separated export or standard comma/semicolon CSV, choose a strategy, optionally set maxStopPoints and pointSize, and tap Run Backtest.",
+                        text = "Pick an MT5 tab-separated export or standard comma/semicolon CSV, choose a saved Python (.py) strategy, optionally set maxStopPoints and pointSize, and tap Run Backtest.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -480,13 +491,93 @@ fun BacktestScreen(
 }
 
 @Composable
+private fun BacktestErrorCard(error: BacktestError) {
+    val negativeColor = MaterialTheme.colorScheme.error
+    var detailsExpanded by remember(error) { mutableStateOf(false) }
+
+    Surface(
+        color = negativeColor.copy(alpha = 0.14f),
+        shape = RoundedCornerShape(14.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("backtest_error_card")
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.Top) {
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = "Backtest Error",
+                    tint = negativeColor,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = error.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = negativeColor,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            if (error.details.isNotBlank()) {
+                Spacer(modifier = Modifier.height(6.dp))
+                TextButton(
+                    onClick = { detailsExpanded = !detailsExpanded },
+                    colors = ButtonDefaults.textButtonColors(contentColor = negativeColor),
+                    modifier = Modifier.testTag("backtest_error_details_toggle")
+                ) {
+                    Icon(
+                        imageVector = if (detailsExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = if (detailsExpanded) "Hide details" else "Show details",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                AnimatedVisibility(visible = detailsExpanded) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("backtest_error_details_text")
+                    ) {
+                        Text(
+                            text = error.details,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 10.sp,
+                            lineHeight = 14.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.padding(10.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun BacktestSummaryCardsRow(result: BacktestResult) {
     val summary = result.summary
     val positiveColor = MaterialTheme.colorScheme.primary
     val negativeColor = MaterialTheme.colorScheme.error
+    val pf = summary.profitFactor
     val pfText = when {
-        summary.profitFactor.isInfinite() -> "INF"
-        else -> formatTwoDec(summary.profitFactor)
+        pf != null -> formatTwoDec(pf)
+        summary.wins > 0 -> "INF"
+        else -> "--"
+    }
+    val pfColor = when {
+        pf == null && summary.wins > 0 -> positiveColor
+        pf != null && pf >= 1.0 -> positiveColor
+        else -> negativeColor
     }
 
     Row(
@@ -508,12 +599,12 @@ private fun BacktestSummaryCardsRow(result: BacktestResult) {
         CompactStatCard(
             label = "PF",
             value = pfText,
-            valueColor = if (summary.profitFactor >= 1.0) positiveColor else negativeColor,
+            valueColor = pfColor,
             modifier = Modifier.weight(1f)
         )
         CompactStatCard(
             label = "Max DD",
-            value = "${formatOneDec(result.risk.maxDrawdownPct)}%",
+            value = "${formatTwoDec(result.risk.maxDrawdownR)}R",
             valueColor = negativeColor,
             modifier = Modifier.weight(1f)
         )
@@ -725,7 +816,6 @@ private fun BacktestEquityCurveCanvas(
                 )
             )
 
-            // Final point marker
             val lastX = (series.size - 1) * stepX
             val lastY = yFor(finalVal)
             drawCircle(
@@ -855,12 +945,12 @@ private fun formatTwoDec(value: Double): String =
     String.format(Locale.US, "%.2f", value)
 
 private fun formatSignedPoints(value: Double): String {
-    val sign = if (value >= 0.0) "+" else ""
+    val sign = if (value > 0.0) "+" else ""
     return "$sign${String.format(Locale.US, "%.1f", value)}"
 }
 
 private fun formatSignedR(value: Double): String {
-    val sign = if (value >= 0.0) "+" else ""
+    val sign = if (value > 0.0) "+" else ""
     return "$sign${String.format(Locale.US, "%.2f", value)}R"
 }
 

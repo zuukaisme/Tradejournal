@@ -150,3 +150,14 @@ data class UserSettingsEntity(
     val isOutlookEnabled: Boolean,
     val newsAlertEnabled: Boolean
 )
+
+@Entity(tableName = "python_strategies")
+data class PythonStrategyEntity(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+    val name: String,
+    val className: String,
+    val code: String,
+    val updatedAt: Long
+)
+

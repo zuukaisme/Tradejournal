@@ -10,26 +10,6 @@ enum class ExitReason {
     SL
 }
 
-data class Candle(
-    val time: String,
-    val open: Double,
-    val high: Double,
-    val low: Double,
-    val close: Double,
-    val volume: Double = 0.0
-)
-
-data class Signal(
-    val side: Side,
-    val sl: Double,
-    val tp: Double
-)
-
-data class BacktestConfig(
-    val maxStopPoints: Double? = null,
-    val pointSize: Double = 1.0
-)
-
 data class BacktestSummary(
     val totalTrades: Int,
     val wins: Int,
@@ -38,7 +18,7 @@ data class BacktestSummary(
     val netPoints: Double,
     val netR: Double,
     val avgR: Double,
-    val profitFactor: Double,
+    val profitFactor: Double?,
     val skippedByStopCap: Int
 )
 
@@ -54,7 +34,6 @@ data class BacktestPoints(
 
 data class BacktestRisk(
     val maxDrawdownPoints: Double,
-    val maxDrawdownPct: Double,
     val maxDrawdownR: Double,
     val maxConsecutiveWins: Int,
     val maxConsecutiveLosses: Int
@@ -69,12 +48,7 @@ data class SideStat(
 data class BySideStats(
     val buy: SideStat,
     val sell: SideStat
-) {
-    operator fun get(side: Side): SideStat = when (side) {
-        Side.BUY -> buy
-        Side.SELL -> sell
-    }
-}
+)
 
 data class BacktestTiming(
     val avgTradeDurationCandles: Double
@@ -104,3 +78,13 @@ data class BacktestResult(
     val trades: List<Trade>,
     val warnings: List<String>
 )
+
+data class BacktestError(
+    val error: String,
+    val details: String = ""
+)
+
+sealed interface BacktestParseOutcome {
+    data class Success(val result: BacktestResult) : BacktestParseOutcome
+    data class Failure(val error: BacktestError) : BacktestParseOutcome
+}

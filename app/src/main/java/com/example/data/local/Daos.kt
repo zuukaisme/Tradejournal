@@ -177,3 +177,25 @@ interface OutlookDao {
     suspend fun deleteAllPredictions()
 }
 
+@Dao
+interface PythonStrategyDao {
+    @Query("SELECT * FROM python_strategies ORDER BY updatedAt DESC")
+    fun getAllPythonStrategies(): Flow<List<PythonStrategyEntity>>
+
+    @Query("SELECT * FROM python_strategies WHERE id = :id LIMIT 1")
+    suspend fun getPythonStrategyById(id: Long): PythonStrategyEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPythonStrategy(strategy: PythonStrategyEntity): Long
+
+    @Update
+    suspend fun updatePythonStrategy(strategy: PythonStrategyEntity)
+
+    @Query("DELETE FROM python_strategies WHERE id = :id")
+    suspend fun deletePythonStrategyById(id: Long)
+
+    @Query("DELETE FROM python_strategies")
+    suspend fun deleteAllPythonStrategies()
+}
+
+

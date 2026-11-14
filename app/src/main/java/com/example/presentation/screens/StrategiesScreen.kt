@@ -1,8 +1,12 @@
 package com.example.presentation.screens
 
+import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,22 +19,30 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.UploadFile
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -39,42 +51,96 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.domain.model.PythonStrategy
 import com.example.domain.model.Strategy
 import com.example.presentation.TradingViewModel
 import com.example.presentation.components.CurrencyFormatter
 import com.example.presentation.components.LiquidGlassCard
+import com.example.presentation.components.LiquidGlassTabRow
 import com.example.ui.theme.CrimsonRed
-import com.example.ui.theme.DarkBackground
-import com.example.ui.theme.DarkSurface
-import com.example.ui.theme.DarkSurfaceCard
-import com.example.ui.theme.NeonEmerald
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Locale
+
+private data class PendingPythonUpload(
+    val suggestedName: String,
+    val code: String
+)
 
 @Composable
 fun StrategiesScreen(
     viewModel: TradingViewModel,
+    onOpenStrategyGuide: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
     val strategies by viewModel.strategies.collectAsState()
+    val pythonStrategies by viewModel.pythonStrategies.collectAsState()
     val allTrades by viewModel.trades.collectAsState()
     val settings by viewModel.settings.collectAsState()
     val isEditorOpen by viewModel.isStrategyEditorOpen.collectAsState()
     val strategyForEdit by viewModel.selectedStrategyForEdit.collectAsState()
+
+    var selectedTab by remember { mutableIntStateOf(0) }
+
+    // Python strategy dialog states
+    var pendingUpload by remember { mutableStateOf<PendingPythonUpload?>(null) }
+    var uploadReadError by remember { mutableStateOf<String?>(null) }
+    var strategyToView by remember { mutableStateOf<PythonStrategy?>(null) }
+    var strategyToRename by remember { mutableStateOf<PythonStrategy?>(null) }
+    var strategyToDelete by remember { mutableStateOf<PythonStrategy?>(null) }
+
+    val pyFilePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            scope.launch {
+                val readResult = withContext(Dispatchers.IO) {
+                    runCatching {
+                        val fileName = resolveFileDisplayName(context, uri)
+                        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                            ?: error("Unable to open selected .py file.")
+                        val text = String(bytes, Charsets.UTF_8).removePrefix("\uFEFF")
+                        if (text.isBlank()) error("Selected .py file is empty.")
+                        val baseName = fileName.removeSuffix(".py").ifBlank { "Custom Strategy" }
+                        PendingPythonUpload(suggestedName = baseName, code = text)
+                    }
+                }
+                readResult.onSuccess { upload ->
+                    uploadReadError = null
+                    pendingUpload = upload
+                }.onFailure { err ->
+                    uploadReadError = err.message ?: "Failed to read .py file."
+                }
+            }
+        }
+    }
 
     Box(
         modifier = modifier
@@ -91,88 +157,248 @@ fun StrategiesScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Trading Strategies",
+                        text = "Strategies",
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "${strategies.size} strategies defined",
+                        text = "${pythonStrategies.size} Python • ${strategies.size} Checklists",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
 
-                Button(
-                    onClick = { viewModel.openNewStrategyEditor() },
-                    modifier = Modifier.testTag("add_strategy_button")
+                OutlinedButton(
+                    onClick = onOpenStrategyGuide,
+                    modifier = Modifier
+                        .height(40.dp)
+                        .testTag("open_strategy_guide_button"),
+                    shape = RoundedCornerShape(12.dp)
                 ) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("New Strategy")
+                    Icon(Icons.Default.MenuBook, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Strategy Guide", fontSize = 12.sp)
                 }
             }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            LiquidGlassTabRow(
+                tabs = listOf("Python (.py)", "Checklists"),
+                selectedIndex = selectedTab,
+                onTabSelected = { selectedTab = it }
+            )
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            if (strategies.isEmpty()) {
-                Box(
+            if (selectedTab == 0) {
+                // Python Backtest Strategies Tab
+                Button(
+                    onClick = { pyFilePicker.launch(arrayOf("*/*")) },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
+                    ),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f),
-                    contentAlignment = Alignment.Center
+                        .height(48.dp)
+                        .testTag("upload_python_strategy_button"),
+                    shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text(
-                        text = "No trading strategies yet. Tap '+ New Strategy' to add your entry checklist.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Upload .py Strategy", fontWeight = FontWeight.Bold)
                 }
-            } else {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    items(strategies, key = { it.id }) { strategy ->
-                        val stratTrades = remember(allTrades, strategy.id) {
-                            allTrades.filter { it.strategyId == strategy.id }
-                        }
-                        val tradesCount = stratTrades.size
-                        val wins = stratTrades.count { it.pnl > 0 }
-                        val winRate = if (tradesCount > 0) (wins.toDouble() / tradesCount) * 100.0 else 0.0
-                        val totalPnL = stratTrades.sumOf { it.pnl }
 
-                        StrategyCard(
-                            strategy = strategy,
-                            tradesCount = tradesCount,
-                            winRate = winRate,
-                            totalPnL = totalPnL,
-                            currency = settings.currency,
-                            onEdit = { viewModel.openEditStrategy(strategy) }
+                if (uploadReadError != null) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Surface(
+                        color = MaterialTheme.colorScheme.error.copy(alpha = 0.16f),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = uploadReadError!!,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(10.dp)
                         )
                     }
+                }
 
-                    item {
-                        Spacer(modifier = Modifier.height(72.dp))
+                Spacer(modifier = Modifier.height(12.dp))
+
+                if (pythonStrategies.isEmpty()) {
+                    LiquidGlassCard(testTag = "empty_python_strategies_card") {
+                        Text(
+                            text = "No Python Strategies Saved",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Tap Upload .py Strategy to pick any Python strategy file from your device, or read the Strategy Guide for the 9-rule contract and an AI prompt.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        items(pythonStrategies, key = { it.id }) { strat ->
+                            PythonStrategyCard(
+                                strategy = strat,
+                                onView = { strategyToView = strat },
+                                onRename = { strategyToRename = strat },
+                                onDelete = { strategyToDelete = strat }
+                            )
+                        }
+                        item {
+                            Spacer(modifier = Modifier.height(24.dp))
+                        }
+                    }
+                }
+            } else {
+                // Journal Checklists Tab
+                if (strategies.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = "No journal checklist strategies yet.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Button(
+                                onClick = { viewModel.openNewStrategyEditor() },
+                                modifier = Modifier.testTag("add_strategy_button")
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("New Checklist")
+                            }
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(strategies, key = { it.id }) { strategy ->
+                            val stratTrades = remember(allTrades, strategy.id) {
+                                allTrades.filter { it.strategyId == strategy.id }
+                            }
+                            val tradesCount = stratTrades.size
+                            val wins = stratTrades.count { it.pnl > 0 }
+                            val winRate = if (tradesCount > 0) (wins.toDouble() / tradesCount) * 100.0 else 0.0
+                            val totalPnL = stratTrades.sumOf { it.pnl }
+
+                            StrategyCard(
+                                strategy = strategy,
+                                tradesCount = tradesCount,
+                                winRate = winRate,
+                                totalPnL = totalPnL,
+                                currency = settings.currency,
+                                onEdit = { viewModel.openEditStrategy(strategy) }
+                            )
+                        }
+
+                        item {
+                            Spacer(modifier = Modifier.height(72.dp))
+                        }
                     }
                 }
             }
         }
 
-        FloatingActionButton(
-            onClick = { viewModel.openNewStrategyEditor() },
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(20.dp)
-                .testTag("fab_add_strategy"),
-            containerColor = MaterialTheme.colorScheme.primary,
-            contentColor = MaterialTheme.colorScheme.onPrimary
-        ) {
-            Icon(Icons.Default.Add, contentDescription = "Add Strategy")
+        if (selectedTab == 1) {
+            FloatingActionButton(
+                onClick = { viewModel.openNewStrategyEditor() },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(20.dp)
+                    .testTag("fab_add_strategy"),
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary
+            ) {
+                Icon(Icons.Default.Add, contentDescription = "Add Checklist Strategy")
+            }
         }
+    }
+
+    // Dialog: Name + optional Class Name for uploaded .py file
+    pendingUpload?.let { upload ->
+        SavePythonStrategyDialog(
+            suggestedName = upload.suggestedName,
+            code = upload.code,
+            onDismiss = { pendingUpload = null },
+            onSave = { name, className ->
+                viewModel.savePythonStrategy(name = name, className = className, code = upload.code)
+                pendingUpload = null
+            }
+        )
+    }
+
+    // Dialog: Rename / Edit Class Name
+    strategyToRename?.let { strat ->
+        RenamePythonStrategyDialog(
+            strategy = strat,
+            onDismiss = { strategyToRename = null },
+            onSave = { newName, newClassName ->
+                viewModel.renamePythonStrategy(strat, newName, newClassName)
+                strategyToRename = null
+            }
+        )
+    }
+
+    // Dialog: Confirm Delete
+    strategyToDelete?.let { strat ->
+        AlertDialog(
+            onDismissRequest = { strategyToDelete = null },
+            title = { Text("Delete Python Strategy") },
+            text = { Text("Remove \"${strat.name}\" from saved strategies? Existing journal trades will not be affected.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deletePythonStrategy(strat.id)
+                        strategyToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError
+                    ),
+                    modifier = Modifier.testTag("confirm_delete_python_strategy")
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { strategyToDelete = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // Sheet: View Strategy Code
+    strategyToView?.let { strat ->
+        PythonCodeViewerSheet(
+            strategy = strat,
+            onDismiss = { strategyToView = null }
+        )
     }
 
     if (isEditorOpen) {
@@ -183,6 +409,329 @@ fun StrategiesScreen(
             onDelete = { if (strategyForEdit != null) viewModel.deleteStrategy(strategyForEdit!!.id) }
         )
     }
+}
+
+@Composable
+private fun PythonStrategyCard(
+    strategy: PythonStrategy,
+    onView: () -> Unit,
+    onRename: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val lineCount = remember(strategy.code) { strategy.code.lineSequence().count() }
+
+    LiquidGlassCard(
+        onClick = onView,
+        testTag = "python_strategy_card_${strategy.id}"
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+                    modifier = Modifier.size(38.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Default.Code,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = strategy.name,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    val classLabel = if (strategy.className.isBlank()) {
+                        "Auto-detect class"
+                    } else {
+                        "Class: ${strategy.className}"
+                    }
+                    Text(
+                        text = "$classLabel • $lineCount lines",
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
+        Spacer(modifier = Modifier.height(4.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(
+                onClick = onView,
+                modifier = Modifier.testTag("view_python_strategy_${strategy.id}")
+            ) {
+                Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("View", fontSize = 12.sp)
+            }
+            TextButton(
+                onClick = onRename,
+                modifier = Modifier.testTag("rename_python_strategy_${strategy.id}")
+            ) {
+                Icon(Icons.Default.DriveFileRenameOutline, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Rename", fontSize = 12.sp)
+            }
+            TextButton(
+                onClick = onDelete,
+                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                modifier = Modifier.testTag("delete_python_strategy_${strategy.id}")
+            ) {
+                Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Delete", fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SavePythonStrategyDialog(
+    suggestedName: String,
+    code: String,
+    onDismiss: () -> Unit,
+    onSave: (String, String) -> Unit
+) {
+    var name by remember { mutableStateOf(suggestedName) }
+    var className by remember { mutableStateOf("") }
+    val lineCount = remember(code) { code.lineSequence().count() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Save Python Strategy", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "Loaded $lineCount lines from .py file.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Strategy Name") },
+                    placeholder = { Text("e.g. Opening Range Breakout") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("python_strategy_name_input"),
+                    shape = RoundedCornerShape(12.dp)
+                )
+                OutlinedTextField(
+                    value = className,
+                    onValueChange = { className = it },
+                    label = { Text("Class Name (optional)") },
+                    placeholder = { Text("Leave blank to auto-detect") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("python_strategy_class_input"),
+                    shape = RoundedCornerShape(12.dp)
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (name.isNotBlank()) {
+                        onSave(name.trim(), className.trim())
+                    }
+                },
+                enabled = name.isNotBlank(),
+                modifier = Modifier.testTag("confirm_save_python_strategy")
+            ) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+private fun RenamePythonStrategyDialog(
+    strategy: PythonStrategy,
+    onDismiss: () -> Unit,
+    onSave: (String, String) -> Unit
+) {
+    var name by remember { mutableStateOf(strategy.name) }
+    var className by remember { mutableStateOf(strategy.className) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rename Strategy", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Strategy Name") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("rename_python_strategy_input"),
+                    shape = RoundedCornerShape(12.dp)
+                )
+                OutlinedTextField(
+                    value = className,
+                    onValueChange = { className = it },
+                    label = { Text("Class Name (optional)") },
+                    placeholder = { Text("Leave blank to auto-detect") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (name.isNotBlank()) {
+                        onSave(name.trim(), className.trim())
+                    }
+                },
+                enabled = name.isNotBlank(),
+                modifier = Modifier.testTag("confirm_rename_python_strategy")
+            ) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PythonCodeViewerSheet(
+    strategy: PythonStrategy,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val clipboardManager = LocalClipboardManager.current
+    var copied by remember { mutableStateOf(false) }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = strategy.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = if (strategy.className.isBlank()) "Class: Auto-detect" else "Class: ${strategy.className}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                OutlinedButton(
+                    onClick = {
+                        clipboardManager.setText(AnnotatedString(strategy.code))
+                        copied = true
+                    }
+                ) {
+                    Icon(
+                        if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
+                        contentDescription = "Copy Code",
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(if (copied) "Copied" else "Copy", fontSize = 12.sp)
+                }
+                Spacer(modifier = Modifier.width(4.dp))
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Default.Close, contentDescription = "Close")
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(420.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .horizontalScroll(rememberScrollState())
+                        .padding(12.dp)
+                ) {
+                    Text(
+                        text = strategy.code,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+        }
+    }
+}
+
+private fun resolveFileDisplayName(context: Context, uri: Uri): String {
+    context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+        ?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (idx >= 0) {
+                    val name = cursor.getString(idx)
+                    if (!name.isNullOrBlank()) return name
+                }
+            }
+        }
+    return uri.lastPathSegment ?: "strategy.py"
 }
 
 @Composable
