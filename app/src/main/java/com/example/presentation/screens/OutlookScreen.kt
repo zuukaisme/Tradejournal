@@ -207,7 +207,7 @@ fun OutlookScreen(
                     text = if (currentPrediction != null) {
                         "Target Release: ${currentPrediction.releaseDate}"
                     } else {
-                        "No upcoming release loaded. Add FRED/Finnhub API keys in Settings and tap Refresh."
+                        "No upcoming release loaded. Tap Refresh to load the free economic calendar."
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -356,18 +356,20 @@ fun OutlookScreen(
 
         // Historical Releases Table
         item {
-            Text(
-                text = "Past Releases & Gold Reaction",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
+            Column {
+                Text(
+                    text = "Past Releases & Gold Reaction",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
 
         if (eventReleases.isEmpty()) {
             item {
                 LiquidGlassCard {
                     Text(
-                        text = "No cached ${selectedEvent.name} releases yet. Sync via Finnhub in Settings to populate real calendar releases.",
+                        text = "No cached ${selectedEvent.name} releases yet. Tap Refresh to load the free economic calendar.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -691,7 +693,7 @@ fun HistoricalReleaseCard(release: NewsRelease) {
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "Act: ${release.actual ?: "-"} ${release.unit} | Exp: ${release.forecast} ${release.unit}",
+                    text = "Act: ${release.actual ?: "-"} ${release.unit} | Prev: ${release.previous} ${release.unit}",
                     style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

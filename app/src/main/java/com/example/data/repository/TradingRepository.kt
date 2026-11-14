@@ -477,66 +477,66 @@ class TradingRepository(private val database: TradingDatabase) {
             }
         }
 
-    suspend fun fetchFinnhubUsCalendar(apiKey: String): Result<List<com.example.domain.model.NewsRelease>> =
+    suspend fun fetchXoomarEconomicCalendar(): Result<List<com.example.domain.model.NewsRelease>> =
         withContext(Dispatchers.IO) {
-            if (apiKey.isBlank()) {
-                return@withContext Result.failure(IllegalArgumentException("Finnhub API key is not configured."))
-            }
             try {
                 val client = okhttp3.OkHttpClient()
-                val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
-                val cal = java.util.Calendar.getInstance()
-                cal.add(java.util.Calendar.DAY_OF_YEAR, -90)
-                val from = sdf.format(cal.time)
-                cal.add(java.util.Calendar.DAY_OF_YEAR, 120)
-                val to = sdf.format(cal.time)
-
-                val url = "https://finnhub.io/api/v1/calendar/economic?from=$from&to=$to&token=$apiKey"
-                val req = okhttp3.Request.Builder().url(url).build()
-                val body = client.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) throw IllegalStateException("Finnhub HTTP ${resp.code}")
-                    resp.body?.string() ?: throw IllegalStateException("Empty Finnhub response")
+                val request = okhttp3.Request.Builder()
+                    .url("https://xoomar.com/api/markets/calendar?importance=high")
+                    .header("Accept", "application/json")
+                    .build()
+                val body = client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) throw IllegalStateException("XOOMAR HTTP ${response.code}")
+                    response.body?.string() ?: throw IllegalStateException("Empty XOOMAR response")
                 }
-                val calendarArr = JSONObject(body).optJSONArray("economicCalendar") ?: JSONArray()
+                val events = JSONObject(body).optJSONArray("data") ?: JSONArray()
                 val releases = mutableListOf<com.example.domain.model.NewsRelease>()
-                for (i in 0 until calendarArr.length()) {
-                    val item = calendarArr.getJSONObject(i)
-                    if (!item.optString("country", "").equals("US", ignoreCase = true)) continue
-                    val eventName = item.optString("event", "")
+                for (i in 0 until events.length()) {
+                    val item = events.optJSONObject(i) ?: continue
+                    val eventName = item.optString("eventName", "")
                     val eventType = when {
-                        eventName.contains("Non Farm Payrolls", ignoreCase = true) ||
-                            eventName.contains("Nonfarm Payrolls", ignoreCase = true) -> com.example.domain.model.NewsEventType.NFP
-                        eventName.contains("CPI", ignoreCase = true) && !eventName.contains("Core", ignoreCase = true) -> com.example.domain.model.NewsEventType.CPI
+                        eventName.contains("nonfarm payroll", ignoreCase = true) ||
+                            eventName.contains("non-farm payroll", ignoreCase = true) ->
+                            com.example.domain.model.NewsEventType.NFP
+                        eventName.contains("CPI", ignoreCase = true) &&
+                            !eventName.contains("Core", ignoreCase = true) ->
+                            com.example.domain.model.NewsEventType.CPI
                         else -> null
                     } ?: continue
-
-                    val forecast = item.optDouble("estimate", Double.NaN).takeIf { !it.isNaN() } ?: continue
-                    val previous = item.optDouble("prev", Double.NaN).takeIf { !it.isNaN() } ?: 0.0
-                    val actual = item.optDouble("actual", Double.NaN).takeIf { !it.isNaN() }
-                    val timeStr = item.optString("time", "")
-                    val datePart = timeStr.take(10).ifBlank { sdf.format(java.util.Date()) }
-                    val ts = try {
-                        java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).parse(timeStr)?.time
-                            ?: sdf.parse(datePart)?.time
-                            ?: System.currentTimeMillis()
+                    val scheduledAt = item.optString("scheduledAt", "")
+                    val timestamp = try {
+                        java.time.Instant.parse(scheduledAt).toEpochMilli()
                     } catch (_: Exception) {
-                        System.currentTimeMillis()
+                        continue
+                    }
+                    val datePart = java.time.Instant.ofEpochMilli(timestamp)
+                        .atZone(java.time.ZoneOffset.UTC)
+                        .toLocalDate()
+                        .toString()
+                    val previous = item.optString("previous", "")
+                        .replace(",", "")
+                        .toDoubleOrNull() ?: 0.0
+                    val actual = item.optString("actual", "")
+                        .replace(",", "")
+                        .toDoubleOrNull()
+                    val unit = item.optString("unit", "").ifBlank {
+                        if (eventType == com.example.domain.model.NewsEventType.NFP) "K" else "%"
                     }
                     releases.add(
                         com.example.domain.model.NewsRelease(
                             eventType = eventType,
                             dateString = datePart,
-                            timestamp = ts,
-                            forecast = forecast,
+                            timestamp = timestamp,
+                            forecast = 0.0,
                             previous = previous,
                             actual = actual,
-                            surprise = actual?.let { it - forecast },
-                            unit = item.optString("unit", if (eventType == com.example.domain.model.NewsEventType.NFP) "K" else "%"),
+                            surprise = null,
+                            unit = unit,
                             isUpcoming = actual == null
                         )
                     )
                 }
-                Result.success(releases)
+                Result.success(releases.distinctBy { it.eventType to it.timestamp })
             } catch (e: Exception) {
                 Result.failure(e)
             }

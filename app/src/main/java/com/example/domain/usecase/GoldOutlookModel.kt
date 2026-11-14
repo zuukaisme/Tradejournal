@@ -22,7 +22,6 @@ object GoldOutlookModel {
         eventType: NewsEventType,
         releaseDate: String,
         releaseTimestamp: Long,
-        forecast: Double,
         previous: Double,
         claimsTrend: Double, // % change in 4-week moving average claims (e.g. +3.5%)
         unemploymentChange: Double, // change in UNRATE (e.g. +0.1%)
@@ -33,21 +32,21 @@ object GoldOutlookModel {
 
         // Feature normalization & z-score
         // For NFP:
-        // - Higher forecast vs previous = USD bullish -> Gold bearish (weight -0.85)
+        // The calendar feed has no consensus forecast, so this component is neutral.
         // - Higher claims = USD bearish -> Gold bullish (weight +0.70)
         // - Higher unemployment = USD bearish -> Gold bullish (weight +0.65)
         // - Higher wage growth = sticky inflation -> Fed hawkish -> Gold bearish (weight -0.55)
         val z = if (eventType == NewsEventType.NFP) {
-            val forecastDiffRatio = if (previous != 0.0) (forecast - previous) / previous else 0.0
+            val forecastDiffRatio = 0.0
             (-0.85 * forecastDiffRatio) +
                     (0.70 * (claimsTrend / 5.0)) +
                     (0.65 * (unemploymentChange / 0.2)) +
                     (-0.55 * ((wageGrowthYoY - 3.5) / 1.0))
         } else {
             // CPI:
-            // - Higher forecast CPI vs previous = Gold bearish (-0.90)
+            // The calendar feed has no consensus forecast, so this component is neutral.
             // - Higher wage growth = Gold bearish (-0.60)
-            val cpiDiff = forecast - previous
+            val cpiDiff = 0.0
             (-1.10 * cpiDiff) + (-0.50 * ((wageGrowthYoY - 3.5) / 1.0))
         }
 
@@ -68,7 +67,6 @@ object GoldOutlookModel {
         // Generate plain English reasoning
         val reasoning = buildReasoning(
             eventType = eventType,
-            forecast = forecast,
             previous = previous,
             claimsTrend = claimsTrend,
             unemploymentChange = unemploymentChange,
@@ -92,7 +90,6 @@ object GoldOutlookModel {
 
     private fun buildReasoning(
         eventType: NewsEventType,
-        forecast: Double,
         previous: Double,
         claimsTrend: Double,
         unemploymentChange: Double,
@@ -121,9 +118,11 @@ object GoldOutlookModel {
             factors.add("Wage inflation has moderated to ${String.format("%.1f", wageGrowth)}% YoY, decreasing sticky inflation pressure.")
         }
 
+        val previousText = if (previous == 0.0) "No previous figure is available." else {
+            "Previous reported figure: ${if (eventType == NewsEventType.NFP) "${previous.toInt()}k" else "${String.format("%.1f", previous)}"}."
+        }
         return "Statistical Model indicates a $probPercent% bias toward $biasWord.\n" +
-                factors.joinToString(" ") +
-                " Consensus projects ${if (eventType == NewsEventType.NFP) "${forecast.toInt()}k" else "${String.format("%.1f", forecast)}%"} versus ${if (eventType == NewsEventType.NFP) "${previous.toInt()}k" else "${String.format("%.1f", previous)}%"} previous."
+                factors.joinToString(" ") + " " + previousText
     }
 
     /**

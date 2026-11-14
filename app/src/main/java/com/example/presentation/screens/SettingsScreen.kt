@@ -148,7 +148,6 @@ fun SettingsScreen(
     }
 
     var fredApiKeyInput by remember(settings.fredApiKey) { mutableStateOf(settings.fredApiKey) }
-    var finnhubApiKeyInput by remember(settings.finnhubApiKey) { mutableStateOf(settings.finnhubApiKey) }
     var geminiApiKeyInput by remember(settings.geminiApiKey) { mutableStateOf(settings.geminiApiKey) }
 
     var isOutlookEnabled by remember(settings.isOutlookEnabled) { mutableStateOf(settings.isOutlookEnabled) }
@@ -563,18 +562,6 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.height(6.dp))
 
                         OutlinedTextField(
-                            value = finnhubApiKeyInput,
-                            onValueChange = { finnhubApiKeyInput = it },
-                            label = { Text("Consensus Calendar Key (Finnhub)") },
-                            placeholder = { Text("Optional economic calendar key") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(10.dp)
-                        )
-
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        OutlinedTextField(
                             value = geminiApiKeyInput,
                             onValueChange = { geminiApiKeyInput = it },
                             label = { Text("Gemini API Key (AI Summaries)") },
@@ -591,7 +578,6 @@ fun SettingsScreen(
                                 viewModel.updateSettings(
                                     settings.copy(
                                         fredApiKey = fredApiKeyInput.trim(),
-                                        finnhubApiKey = finnhubApiKeyInput.trim(),
                                         geminiApiKey = geminiApiKeyInput.trim(),
                                         isOutlookEnabled = isOutlookEnabled,
                                         newsAlertEnabled = newsAlertEnabled

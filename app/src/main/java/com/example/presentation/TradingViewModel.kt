@@ -537,36 +537,25 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
             outlookStatusMessage.value = null
             val currentSettings = settings.value
             val fredKey = currentSettings.fredApiKey.trim()
-            val finnhubKey = currentSettings.finnhubApiKey.trim()
-
-            if (fredKey.isBlank() && finnhubKey.isBlank()) {
-                outlookStatusMessage.value = "Add a FRED or Finnhub API key in Settings to fetch live macro data."
-                isOutlookLoading.value = false
-                return@launch
+            val calendarResult = repository.fetchXoomarEconomicCalendar()
+            val fetchedReleases = calendarResult.getOrElse { error ->
+                outlookStatusMessage.value = "Economic calendar fetch failed: ${error.message}"
+                emptyList()
+            }
+            if (fetchedReleases.isNotEmpty()) {
+                repository.insertAllReleases(fetchedReleases)
             }
 
             if (fredKey.isNotBlank()) {
-                val fredRes = repository.fetchFredMacroIndicators(fredKey)
-                fredRes.onSuccess { indicators ->
-                    macroIndicators.value = indicators
-                }.onFailure { err ->
-                    outlookStatusMessage.value = "FRED fetch failed: ${err.message}"
-                }
-            }
-
-            if (finnhubKey.isNotBlank()) {
-                val calRes = repository.fetchFinnhubUsCalendar(finnhubKey)
-                calRes.onSuccess { fetched ->
-                    if (fetched.isNotEmpty()) {
-                        repository.insertAllReleases(fetched)
-                    }
-                }.onFailure { err ->
-                    outlookStatusMessage.value = "Finnhub fetch failed: ${err.message}"
-                }
+                repository.fetchFredMacroIndicators(fredKey)
+                    .onSuccess { indicators -> macroIndicators.value = indicators }
+                    .onFailure { err -> outlookStatusMessage.value = "FRED fetch failed: ${err.message}" }
             }
 
             val event = selectedNewsEventType.value
-            val allEventReleases = newsReleases.value.filter { it.eventType == event }
+            val allEventReleases = (fetchedReleases + newsReleases.value)
+                .filter { it.eventType == event }
+                .distinctBy { it.timestamp }
             val upcoming = allEventReleases.firstOrNull { it.isUpcoming } ?: allEventReleases.firstOrNull()
             val historical = allEventReleases.filter { !it.isUpcoming }
             val indicators = macroIndicators.value
@@ -587,7 +576,7 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
                     eventType = event,
                     releaseDate = upcoming?.dateString ?: "Pending Calendar",
                     releaseTimestamp = upcoming?.timestamp ?: System.currentTimeMillis(),
-                    forecast = upcoming?.forecast ?: 0.0,
+                    forecast = 0.0,
                     previous = upcoming?.previous ?: 0.0,
                     claimsTrend = claimsTrend,
                     unemploymentChange = unrateChange,
