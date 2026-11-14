@@ -2,6 +2,8 @@ package com.example.presentation.screens
 
 import android.annotation.SuppressLint
 import android.graphics.Color as AndroidColor
+import android.util.Log
+import android.webkit.ConsoleMessage
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -29,19 +31,48 @@ fun TradingViewChartsScreen(modifier: Modifier = Modifier) {
             settings.javaScriptCanOpenWindowsAutomatically = true
             settings.setSupportMultipleWindows(false)
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-            webChromeClient = WebChromeClient()
+            webChromeClient = object : WebChromeClient() {
+                override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                    val detail = "${message.message()} -- ${message.sourceId()}:${message.lineNumber()}"
+                    when (message.messageLevel()) {
+                        ConsoleMessage.MessageLevel.ERROR -> Log.e("TradingViewWebView", detail)
+                        ConsoleMessage.MessageLevel.WARNING -> Log.w("TradingViewWebView", detail)
+                        else -> Log.d("TradingViewWebView", detail)
+                    }
+                    return true
+                }
+            }
             webViewClient = object : WebViewClient() {
                 override fun onReceivedError(
                     view: WebView,
                     request: WebResourceRequest,
                     error: WebResourceError
                 ) {
+                    Log.e(
+                        "TradingViewWebView",
+                        "Load error: ${error.errorCode} ${error.description}; url=${request.url}"
+                    )
                     if (request.isForMainFrame) {
                         view.evaluateJavascript(
-                            "document.getElementById('fallback').textContent='Unable to load charts. Check your connection and reload.';",
+                            "document.getElementById('fallback').textContent='Unable to load the chart page. Check your connection and review WebView logs.';",
                             null
                         )
                     }
+                }
+
+                override fun onReceivedHttpError(
+                    view: WebView,
+                    request: WebResourceRequest,
+                    errorResponse: android.webkit.WebResourceResponse
+                ) {
+                    Log.e(
+                        "TradingViewWebView",
+                        "HTTP ${errorResponse.statusCode} ${errorResponse.reasonPhrase}; url=${request.url}"
+                    )
+                }
+
+                override fun onPageFinished(view: WebView, url: String) {
+                    Log.d("TradingViewWebView", "Page finished: $url")
                 }
             }
             val html = context.assets.open("tradingview_chart.html")
