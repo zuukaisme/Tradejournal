@@ -2,7 +2,10 @@ package com.example.presentation.screens
 
 import android.annotation.SuppressLint
 import android.graphics.Color as AndroidColor
+import android.webkit.CookieManager
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.fillMaxSize
@@ -23,10 +26,34 @@ fun TradingViewChartsScreen(modifier: Modifier = Modifier) {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.loadsImagesAutomatically = true
-            settings.allowFileAccess = true
+            settings.javaScriptCanOpenWindowsAutomatically = true
+            settings.setSupportMultipleWindows(false)
+            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
             webChromeClient = WebChromeClient()
-            webViewClient = WebViewClient()
-            loadUrl("file:///android_asset/tradingview_chart.html")
+            webViewClient = object : WebViewClient() {
+                override fun onReceivedError(
+                    view: WebView,
+                    request: WebResourceRequest,
+                    error: WebResourceError
+                ) {
+                    if (request.isForMainFrame) {
+                        view.evaluateJavascript(
+                            "document.getElementById('fallback').textContent='Unable to load charts. Check your connection and reload.';",
+                            null
+                        )
+                    }
+                }
+            }
+            val html = context.assets.open("tradingview_chart.html")
+                .bufferedReader()
+                .use { it.readText() }
+            loadDataWithBaseURL(
+                "https://www.tradingview.com/",
+                html,
+                "text/html",
+                "UTF-8",
+                null
+            )
         }
     }
 
