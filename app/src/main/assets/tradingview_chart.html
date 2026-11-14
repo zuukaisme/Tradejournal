@@ -140,6 +140,7 @@ function renderChart() {
     support_host: "https://www.tradingview.com"
   });
   script.onload = () => { fallback.style.display = "none"; };
+  script.onerror = () => { fallback.textContent = "TradingView could not load. Check your internet connection and try again."; };
   container.appendChild(script);
   root.appendChild(container);
   fallback.textContent = "Loading " + activeSymbol.name + "…";
