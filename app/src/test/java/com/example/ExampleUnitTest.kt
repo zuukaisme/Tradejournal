@@ -95,7 +95,6 @@ class ExampleUnitTest {
             eventType = NewsEventType.NFP,
             releaseDate = "2026-11-14",
             releaseTimestamp = System.currentTimeMillis() + 86400000L,
-            forecast = 165.0,
             previous = 254.0,
             claimsTrend = 4.1,
             unemploymentChange = 0.1,
