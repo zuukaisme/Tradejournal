@@ -71,12 +71,26 @@ def load_candles(path: str) -> List[Candle]:
 
 
 def parse_candles(text: str) -> List[Candle]:
-    first = text.splitlines()[0]
+    """Accepts MT5 exports (<DATE> <TIME> ...), daily exports with only <DATE>,
+    and generic CSVs with date, datetime, time or timestamp columns."""
+    text = text.lstrip("\ufeff")
+    lines = [l for l in text.splitlines() if l.strip()]
+    if not lines:
+        raise ValueError("The CSV file is empty")
+    first = lines[0]
     delim = "\t" if "\t" in first else (";" if ";" in first else ",")
-    reader = csv.reader(io.StringIO(text), delimiter=delim)
+    reader = csv.reader(io.StringIO("\n".join(lines)), delimiter=delim)
 
     header = [h.strip().strip("<>").lower() for h in next(reader)]
     idx = {name: i for i, name in enumerate(header)}
+
+    missing = [k for k in ("open", "high", "low", "close") if k not in idx]
+    time_keys = [k for k in ("datetime", "timestamp", "date", "time") if k in idx]
+    if missing or not time_keys:
+        raise ValueError(
+            "This does not look like a candle CSV. It needs date or time plus open, "
+            "high, low, close columns. First header found: " + first[:80]
+        )
     vol_i = idx.get("tickvol", idx.get("volume"))
 
     candles = []
@@ -86,7 +100,7 @@ def parse_candles(text: str) -> List[Candle]:
         if "date" in idx and "time" in idx:
             t = row[idx["date"]] + " " + row[idx["time"]]
         else:
-            t = row[idx["time"]]
+            t = row[idx[time_keys[0]]]
         candles.append(Candle(
             time=t,
             open=float(row[idx["open"]]),
