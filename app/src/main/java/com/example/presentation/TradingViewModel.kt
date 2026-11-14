@@ -576,7 +576,6 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
                     eventType = event,
                     releaseDate = upcoming?.dateString ?: "Pending Calendar",
                     releaseTimestamp = upcoming?.timestamp ?: System.currentTimeMillis(),
-                    forecast = 0.0,
                     previous = upcoming?.previous ?: 0.0,
                     claimsTrend = claimsTrend,
                     unemploymentChange = unrateChange,
