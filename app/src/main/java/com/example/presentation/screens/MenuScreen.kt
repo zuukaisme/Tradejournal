@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.material.icons.filled.RateReview
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material.icons.filled.TrackChanges
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -152,6 +153,18 @@ fun MenuScreen(
                 fontWeight = FontWeight.Bold,
                 color = accentColor,
                 modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+            )
+        }
+
+        item {
+            MenuNavigationCard(
+                icon = Icons.Default.ShowChart,
+                iconTint = Color(0xFF00D4AA),
+                title = "TradingView Charts",
+                subtitle = "Advanced charts for Deriv synthetics, forex, metals & oil",
+                badgeText = "LIVE",
+                testTag = "menu_item_charts",
+                onClick = { viewModel.navigateTo(AppScreen.CHARTS) }
             )
         }
 
