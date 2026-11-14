@@ -720,6 +720,10 @@ class TradingRepository(private val database: TradingDatabase) {
         fredApiKey = fredApiKey,
         finnhubApiKey = finnhubApiKey,
         geminiApiKey = geminiApiKey,
+        claudeApiKey = claudeApiKey,
+        openAiApiKey = openAiApiKey,
+        backtestAiProvider = backtestAiProvider,
+        backtestAiModel = backtestAiModel,
         isOutlookEnabled = isOutlookEnabled,
         newsAlertEnabled = newsAlertEnabled
     )
@@ -738,6 +742,10 @@ class TradingRepository(private val database: TradingDatabase) {
         fredApiKey = fredApiKey,
         finnhubApiKey = finnhubApiKey,
         geminiApiKey = geminiApiKey,
+        claudeApiKey = claudeApiKey,
+        openAiApiKey = openAiApiKey,
+        backtestAiProvider = backtestAiProvider,
+        backtestAiModel = backtestAiModel,
         isOutlookEnabled = isOutlookEnabled,
         newsAlertEnabled = newsAlertEnabled
     )

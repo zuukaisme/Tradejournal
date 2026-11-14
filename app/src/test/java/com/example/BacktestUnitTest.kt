@@ -155,4 +155,45 @@ class BacktestUnitTest {
         val malformed = BacktestCodec.parseBacktestJson("not valid json")
         assertTrue(malformed is BacktestParseOutcome.Failure)
     }
+
+    @Test
+    fun aiModelCatalog_containsLatestModelsForClaudeGeminiAndOpenAi() {
+        val claudeIds = com.example.backtest.AiModelCatalog.modelsFor(com.example.backtest.AiProvider.CLAUDE).map { it.id }
+        assertTrue(claudeIds.contains("claude-opus-5-5"))
+        assertTrue(claudeIds.contains("claude-fable-5-2"))
+        assertTrue(claudeIds.contains("claude-haiku-5-5"))
+
+        val geminiIds = com.example.backtest.AiModelCatalog.modelsFor(com.example.backtest.AiProvider.GEMINI).map { it.id }
+        assertTrue(geminiIds.contains("gemini-4-argon"))
+        assertTrue(geminiIds.contains("gemini-4-hydrogen"))
+
+        val openAiIds = com.example.backtest.AiModelCatalog.modelsFor(com.example.backtest.AiProvider.OPENAI).map { it.id }
+        assertTrue(openAiIds.contains("gpt-6-astra"))
+        assertTrue(openAiIds.contains("gpt-6.1-sol"))
+    }
+
+    @Test
+    fun aiStrategyGenerator_extractsFencedPythonAndDetectsStrategyClass() {
+        val raw = """
+            Here is your strategy:
+            ```python
+            from backtest import Strategy, Signal
+
+            class EmaPullbackStrategy(Strategy):
+                def on_candle(self, i, candles):
+                    return None
+            ```
+        """.trimIndent()
+
+        val extracted = com.example.backtest.AiStrategyGenerator.extractPythonCode(raw)
+        assertTrue(extracted.startsWith("from backtest import Strategy, Signal"))
+        assertEquals("EmaPullbackStrategy", com.example.backtest.AiStrategyGenerator.detectStrategyClassName(extracted))
+
+        val sysPrompt = com.example.backtest.AiStrategyGenerator.SYSTEM_PROMPT
+        assertTrue(sysPrompt.contains("Python 3.11 standard library ONLY"))
+        assertTrue(sysPrompt.contains("Signal(side, sl, tp)"))
+        assertTrue(sysPrompt.contains("Candle"))
+        val detailed = com.example.backtest.AiStrategyGenerator.buildDetailedUserPrompt("Buy 20 SMA cross")
+        assertTrue(detailed.contains("Signal(side=\"buy\" | \"sell\", sl=float, tp=float)"))
+    }
 }

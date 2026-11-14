@@ -23,7 +23,7 @@ import kotlinx.coroutines.launch
         OutlookPredictionEntity::class,
         PythonStrategyEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -90,6 +90,10 @@ abstract class TradingDatabase : RoomDatabase() {
                         fredApiKey = "",
                         finnhubApiKey = "",
                         geminiApiKey = "",
+                        claudeApiKey = "",
+                        openAiApiKey = "",
+                        backtestAiProvider = "CLAUDE",
+                        backtestAiModel = "claude-opus-5-5",
                         isOutlookEnabled = true,
                         newsAlertEnabled = false
                     )

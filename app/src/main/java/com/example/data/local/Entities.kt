@@ -147,6 +147,10 @@ data class UserSettingsEntity(
     val fredApiKey: String,
     val finnhubApiKey: String,
     val geminiApiKey: String,
+    val claudeApiKey: String = "",
+    val openAiApiKey: String = "",
+    val backtestAiProvider: String = "CLAUDE",
+    val backtestAiModel: String = "claude-opus-5-5",
     val isOutlookEnabled: Boolean,
     val newsAlertEnabled: Boolean
 )

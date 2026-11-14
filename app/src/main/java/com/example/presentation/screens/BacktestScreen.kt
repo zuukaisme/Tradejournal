@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.PlayArrow
@@ -71,6 +72,7 @@ import com.example.backtest.Side
 import com.example.backtest.Trade
 import com.example.presentation.BacktestViewModel
 import com.example.presentation.components.LiquidGlassCard
+import com.example.presentation.components.LiquidGlassTabRow
 import com.example.ui.theme.AmberGold
 import java.util.Locale
 
@@ -95,81 +97,116 @@ fun BacktestScreen(
     val negativeColor = MaterialTheme.colorScheme.error
     val onPrimaryColor = MaterialTheme.colorScheme.onPrimary
 
-    LazyColumn(
+    Column(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+            .padding(horizontal = 16.dp, vertical = 8.dp)
     ) {
-        // Controls Card
-        item {
-            LiquidGlassCard {
-                Text(
-                    text = "Configuration",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.height(10.dp))
+        LiquidGlassTabRow(
+            tabs = listOf("Run Backtest", "AI Builder"),
+            icons = listOf(Icons.Default.PlayArrow, Icons.Default.AutoAwesome),
+            selectedIndex = state.selectedTab,
+            onTabSelected = { backtestViewModel.selectTab(it) }
+        )
 
-                // Pick CSV Button
-                OutlinedButton(
-                    onClick = { csvPickerLauncher.launch(arrayOf("*/*")) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .testTag("pick_csv_button"),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Icon(Icons.Default.UploadFile, contentDescription = "Pick CSV", modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = state.fileName ?: "Pick CSV / MT5 Export",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
+        Spacer(modifier = Modifier.height(10.dp))
 
-                if (state.fileName != null) {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "${state.estimatedRows} rows • ${state.detectedEncoding} • ${state.detectedDelimiter}",
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                        color = positiveColor
-                    )
-                }
+        if (state.selectedTab == 1) {
+            AiStrategyBuilderContent(
+                state = state,
+                backtestViewModel = backtestViewModel,
+                modifier = Modifier.weight(1f)
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Controls Card
+                item {
+                    LiquidGlassCard {
+                        Text(
+                            text = "Configuration",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
 
-                Spacer(modifier = Modifier.height(10.dp))
-
-                // Saved Python Strategy Dropdown
-                if (state.availableStrategies.isEmpty()) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
+                        // Pick CSV Button
+                        OutlinedButton(
+                            onClick = { csvPickerLauncher.launch(arrayOf("*/*")) },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 8.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                                .height(48.dp)
+                                .testTag("pick_csv_button"),
+                            shape = RoundedCornerShape(12.dp)
                         ) {
+                            Icon(Icons.Default.UploadFile, contentDescription = "Pick CSV", modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "No saved .py strategies yet",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.weight(1f)
+                                text = state.fileName ?: "Pick CSV / MT5 Export",
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
-                            TextButton(
-                                onClick = onOpenStrategies,
-                                modifier = Modifier.testTag("backtest_go_to_strategies_button")
-                            ) {
-                                Text("Add Strategy", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            }
                         }
-                    }
-                } else {
+
+                        if (state.fileName != null) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "${state.estimatedRows} rows • ${state.detectedEncoding} • ${state.detectedDelimiter}",
+                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                                color = positiveColor
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Saved Python Strategy Dropdown
+                        if (state.availableStrategies.isEmpty()) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                                ) {
+                                    Text(
+                                        text = "No saved .py strategies yet",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        OutlinedButton(
+                                            onClick = onOpenStrategies,
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .testTag("backtest_go_to_strategies_button"),
+                                            shape = RoundedCornerShape(10.dp)
+                                        ) {
+                                            Text("Upload .py", fontSize = 12.sp)
+                                        }
+                                        Button(
+                                            onClick = { backtestViewModel.selectTab(1) },
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .testTag("backtest_open_ai_builder_button"),
+                                            shape = RoundedCornerShape(10.dp)
+                                        ) {
+                                            Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(14.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Build with AI", fontSize = 12.sp)
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
                     Box(modifier = Modifier.fillMaxWidth()) {
                         OutlinedButton(
                             onClick = { strategyMenuExpanded = true },
@@ -484,10 +521,12 @@ fun BacktestScreen(
             }
         }
 
-        item {
-            Spacer(modifier = Modifier.height(24.dp))
+            item {
+                Spacer(modifier = Modifier.height(24.dp))
+            }
         }
     }
+}
 }
 
 @Composable

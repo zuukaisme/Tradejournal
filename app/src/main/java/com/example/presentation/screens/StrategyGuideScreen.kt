@@ -69,18 +69,27 @@ class ThreeBullishCandlesStrategy(Strategy):
         return Signal("buy", sl=price - risk, tp=price + 2.0 * risk)
 """
 
-private const val AI_STRATEGY_PROMPT = """Write a Python trading strategy file for my mobile Chaquopy backtester using ONLY Python's standard library (no pandas, numpy, or third-party packages).
+private const val AI_STRATEGY_PROMPT = """Write a single self-contained Python 3.11 trading strategy file for my embedded Chaquopy backtester (`backtest.py`).
 
-Follow this exact contract:
-1. Subclass `Strategy` (you may write `from backtest import Strategy, Signal`, and `Candle`, `List`, `Optional` are also available).
+PACKAGES & ENVIRONMENT:
+- Allowed packages: Python 3.11 standard library ONLY (`math`, `statistics`, `collections`, `datetime`, `dataclasses`, `typing`).
+- FORBIDDEN: Do NOT import `pandas`, `numpy`, `scipy`, `talib`, or any external pip package (they are not bundled in the APK).
+
+OBJECTS & RETURN TYPE (`from backtest import Strategy, Signal`):
+- Input `Candle` object fields: `.time` (str), `.open` (float), `.high` (float), `.low` (float), `.close` (float), `.volume` (float).
+- Returned `Signal` object: `Signal(side, sl, tp)` where `side` is `"buy"` or `"sell"` (lowercase), `sl` is stop-loss price (float), and `tp` is take-profit price (float).
+- `on_candle(self, i: int, candles: List[Candle]) -> Optional[Signal]` MUST return a `Signal(...)` object or `None`.
+
+ENGINE CONTRACT (9 RULES):
+1. Start with `from backtest import Strategy, Signal` and subclass `Strategy`.
 2. Implement `def on_candle(self, i: int, candles: List[Candle]) -> Optional[Signal]:`.
-3. Only read `candles[0..i]` (current and past candles). NEVER look ahead at `candles[i + 1:]`.
-4. Assume default `warmup = 50` candles before signals are taken; also guard any custom lookback index before slicing.
-5. Each `Candle` has `.time` (str), `.open` (float), `.high` (float), `.low` (float), `.close` (float), and `.volume` (float).
+3. Only read `candles[0..i]`. NEVER look ahead at `candles[i + 1:]`.
+4. Assume default `warmup = 50` candles before signals are taken; also guard custom lookback indices and zero risk/ATR before dividing.
+5. `Candle` provides `.time`, `.open`, `.high`, `.low`, `.close`, `.volume`.
 6. Return `Signal(side, sl, tp)` or `None`.
 7. `side` must be `"buy"` or `"sell"` (lowercase).
-8. Entry happens at `candles[i + 1].open`. Ensure for `"buy"`: `sl < entry < tp`, and for `"sell"`: `tp < entry < sl`.
-9. Output a single clean `.py` file with docstrings and comments explaining every entry, stop loss, and take profit rule.
+8. Entry happens at `candles[i + 1].open`. Ensure for `"buy"`: `sl < entry < tp`, and for `"sell"`: `tp < entry < sl`. (If both SL and TP hit in one candle, SL hits first.)
+9. Output ONLY valid raw Python code with docstrings and comments explaining every entry, stop loss, and take profit rule.
 
 My strategy idea:
 [DESCRIBE YOUR ENTRY RULES, STOP LOSS, AND TAKE PROFIT HERE]"""
