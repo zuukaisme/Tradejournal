@@ -362,11 +362,6 @@ fun OutlookScreen(
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
-                Text(
-                    text = "Calendar data: XOOMAR · xoomar.com/markets/api/calendar",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
         }
 
