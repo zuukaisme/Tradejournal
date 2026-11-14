@@ -564,7 +564,7 @@ class TradingRepository(private val database: TradingDatabase) {
                 }
                 val mediaType = okhttp3.MediaType.Companion.run { "application/json; charset=utf-8".toMediaType() }
                 val reqBody = okhttp3.RequestBody.Companion.run { payload.toString().toRequestBody(mediaType) }
-                val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$apiKey"
+                val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=$apiKey"
                 val req = okhttp3.Request.Builder().url(url).post(reqBody).build()
                 val body = client.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) throw IllegalStateException("Gemini HTTP ${resp.code}")
