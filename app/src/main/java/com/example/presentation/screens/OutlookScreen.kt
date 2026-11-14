@@ -367,7 +367,7 @@ fun OutlookScreen(
             item {
                 LiquidGlassCard {
                     Text(
-                        text = "No cached ${selectedEvent.name} releases yet. Sync via Finnhub in Settings to populate real calendar releases.",
+                        text = "No cached ${selectedEvent.name} releases yet. Tap Refresh to load the free economic calendar.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

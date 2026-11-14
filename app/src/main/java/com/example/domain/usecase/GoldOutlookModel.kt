@@ -90,7 +90,6 @@ object GoldOutlookModel {
 
     private fun buildReasoning(
         eventType: NewsEventType,
-        forecast: Double,
         previous: Double,
         claimsTrend: Double,
         unemploymentChange: Double,
