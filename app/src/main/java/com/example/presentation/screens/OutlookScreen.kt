@@ -356,11 +356,18 @@ fun OutlookScreen(
 
         // Historical Releases Table
         item {
-            Text(
-                text = "Past Releases & Gold Reaction",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
+            Column {
+                Text(
+                    text = "Past Releases & Gold Reaction",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "Calendar data: XOOMAR · xoomar.com/markets/api/calendar",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
 
         if (eventReleases.isEmpty()) {

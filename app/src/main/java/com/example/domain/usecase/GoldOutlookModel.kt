@@ -32,7 +32,7 @@ object GoldOutlookModel {
 
         // Feature normalization & z-score
         // For NFP:
-        // - Higher forecast vs previous = USD bullish -> Gold bearish (weight -0.85)
+        // The calendar feed has no consensus forecast, so this component is neutral.
         // - Higher claims = USD bearish -> Gold bullish (weight +0.70)
         // - Higher unemployment = USD bearish -> Gold bullish (weight +0.65)
         // - Higher wage growth = sticky inflation -> Fed hawkish -> Gold bearish (weight -0.55)
@@ -44,7 +44,7 @@ object GoldOutlookModel {
                     (-0.55 * ((wageGrowthYoY - 3.5) / 1.0))
         } else {
             // CPI:
-            // - Higher forecast CPI vs previous = Gold bearish (-0.90)
+            // The calendar feed has no consensus forecast, so this component is neutral.
             // - Higher wage growth = Gold bearish (-0.60)
             val cpiDiff = 0.0
             (-1.10 * cpiDiff) + (-0.50 * ((wageGrowthYoY - 3.5) / 1.0))
