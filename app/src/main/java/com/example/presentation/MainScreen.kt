@@ -50,8 +50,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.presentation.components.LiquidGlassBottomNavBar
 import com.example.presentation.components.LiquidGlassNavItem
+import com.example.presentation.components.ThemedBottomNavBar
 import com.example.presentation.screens.BacktestScreen
 import com.example.presentation.screens.BotsScreen
 import com.example.presentation.screens.CalendarScreen
@@ -239,7 +239,8 @@ fun MainScreen(
             )
         },
         bottomBar = {
-            LiquidGlassBottomNavBar(
+            ThemedBottomNavBar(
+                style = settings.bottomNavStyle,
                 isDarkTheme = isDarkTheme,
                 items = listOf(
                     LiquidGlassNavItem(

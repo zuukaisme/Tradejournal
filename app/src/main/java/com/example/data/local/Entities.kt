@@ -4,6 +4,7 @@ import androidx.room.Entity
 import androidx.room.PrimaryKey
 import com.example.domain.model.BotStatus
 import com.example.domain.model.BotType
+import com.example.domain.model.BottomNavStyle
 import com.example.domain.model.ConfidenceLevel
 import com.example.domain.model.CurrencyCode
 import com.example.domain.model.Emotion
@@ -152,7 +153,8 @@ data class UserSettingsEntity(
     val backtestAiProvider: String = "CLAUDE",
     val backtestAiModel: String = "claude-opus-5-5",
     val isOutlookEnabled: Boolean,
-    val newsAlertEnabled: Boolean
+    val newsAlertEnabled: Boolean,
+    val bottomNavStyle: BottomNavStyle = BottomNavStyle.LIQUID_GLASS
 )
 
 @Entity(tableName = "python_strategies")

@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Delete
@@ -32,7 +33,9 @@ import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.TrackChanges
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -47,6 +50,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -60,11 +65,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.CircleShape
+import com.example.domain.model.BottomNavStyle
 import com.example.domain.model.CurrencyCode
 import com.example.presentation.TradingViewModel
 import com.example.presentation.components.CurrencyFormatter
@@ -200,6 +209,126 @@ fun SettingsScreen(
                             onClick = { viewModel.updateCurrency(currency) },
                             activeColor = MaterialTheme.colorScheme.primary
                         )
+                    }
+                }
+            }
+        }
+
+        // 1b. Bottom Navigation Tab Style (Playful switcher)
+        item {
+            LiquidGlassCard(testTag = "settings_bottom_nav_style_card") {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Tune,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Column {
+                            Text(
+                                text = "Bottom Nav Tab Style",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Switch the look of the bottom bar anytime",
+                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    TextButton(
+                        onClick = {
+                            val others = BottomNavStyle.values().filter { it != settings.bottomNavStyle }
+                            if (others.isNotEmpty()) {
+                                viewModel.updateBottomNavStyle(others.random())
+                            }
+                        },
+                        modifier = Modifier.testTag("randomize_bottom_nav_style_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Shuffle,
+                            contentDescription = "Randomize style",
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Shuffle", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    BottomNavStyle.values().forEach { style ->
+                        val isSelected = settings.bottomNavStyle == style
+                        val primary = MaterialTheme.colorScheme.primary
+                        val rowBg = if (isSelected) {
+                            primary.copy(alpha = 0.14f)
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                        }
+                        val rowShape = if (style == BottomNavStyle.ARCADE_RETRO) {
+                            RoundedCornerShape(6.dp)
+                        } else {
+                            RoundedCornerShape(12.dp)
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .minimumInteractiveComponentSize()
+                                .clip(rowShape)
+                                .background(rowBg)
+                                .then(
+                                    if (isSelected) {
+                                        Modifier.border(1.dp, primary.copy(alpha = 0.5f), rowShape)
+                                    } else Modifier
+                                )
+                                .clickable { viewModel.updateBottomNavStyle(style) }
+                                .padding(horizontal = 10.dp, vertical = 8.dp)
+                                .testTag("bottom_nav_style_${style.name}"),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            BottomNavStyleMiniSwatch(style = style, primary = primary)
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = style.displayName,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = if (style == BottomNavStyle.ARCADE_RETRO) FontFamily.Monospace else FontFamily.Default,
+                                    color = if (isSelected) primary else MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = style.description,
+                                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            if (isSelected) {
+                                Surface(
+                                    color = primary,
+                                    shape = CircleShape,
+                                    modifier = Modifier.size(22.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = "Selected",
+                                            tint = MaterialTheme.colorScheme.onPrimary,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -620,5 +749,123 @@ fun SettingsScreen(
                 }
             }
         )
+    }
+}
+
+@Composable
+private fun BottomNavStyleMiniSwatch(
+    style: BottomNavStyle,
+    primary: Color
+) {
+    val swatchBg = MaterialTheme.colorScheme.surface
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+    Box(
+        modifier = Modifier
+            .size(width = 48.dp, height = 28.dp)
+            .clip(
+                when (style) {
+                    BottomNavStyle.ARCADE_RETRO -> RoundedCornerShape(3.dp)
+                    BottomNavStyle.MINIMAL_RAIL -> RoundedCornerShape(4.dp)
+                    else -> RoundedCornerShape(12.dp)
+                }
+            )
+            .background(swatchBg)
+            .then(
+                if (style == BottomNavStyle.ARCADE_RETRO) {
+                    Modifier.border(1.dp, primary.copy(alpha = 0.7f), RoundedCornerShape(3.dp))
+                } else Modifier
+            )
+            .padding(horizontal = 4.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        when (style) {
+            BottomNavStyle.LIQUID_GLASS -> {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(width = 14.dp, height = 14.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(primary.copy(alpha = 0.3f))
+                            .border(0.75.dp, primary, RoundedCornerShape(6.dp))
+                    )
+                    repeat(2) {
+                        Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(muted))
+                    }
+                }
+            }
+            BottomNavStyle.NEON_ORBIT -> {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(modifier = Modifier.size(12.dp).clip(CircleShape).background(primary))
+                    repeat(2) {
+                        Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(muted))
+                    }
+                }
+            }
+            BottomNavStyle.ARCADE_RETRO -> {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(modifier = Modifier.size(width = 12.dp, height = 14.dp).background(primary))
+                    repeat(2) {
+                        Box(
+                            modifier = Modifier
+                                .size(width = 10.dp, height = 14.dp)
+                                .border(0.75.dp, muted)
+                        )
+                    }
+                }
+            }
+            BottomNavStyle.MINIMAL_RAIL -> {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(width = 14.dp, height = 3.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(primary)
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(primary))
+                        Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(muted))
+                        Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(muted))
+                    }
+                }
+            }
+            BottomNavStyle.BUBBLE_BOUNCE -> {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(width = 20.dp, height = 14.dp)
+                            .clip(CircleShape)
+                            .background(primary.copy(alpha = 0.28f))
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.CenterStart)
+                                .padding(start = 4.dp)
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(primary)
+                        )
+                    }
+                    repeat(2) {
+                        Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(muted))
+                    }
+                }
+            }
+        }
     }
 }

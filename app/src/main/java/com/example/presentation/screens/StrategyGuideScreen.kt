@@ -51,9 +51,9 @@ private const val EXAMPLE_STRATEGY_CODE = """from backtest import Strategy, Sign
 
 
 class ThreeBullishCandlesStrategy(Strategy):
-    \"\"\"Placeholder rule: three bullish candles in a row, then buy.
+    '''Placeholder rule: three bullish candles in a row, then buy.
     Stop is one 14-candle average range below close, target is 2R.
-    \"\"\"
+    '''
 
     def on_candle(self, i, candles):
         if i < 13:

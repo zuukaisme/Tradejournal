@@ -6,6 +6,7 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.example.domain.model.BottomNavStyle
 import com.example.domain.model.CurrencyCode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -23,7 +24,7 @@ import kotlinx.coroutines.launch
         OutlookPredictionEntity::class,
         PythonStrategyEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -95,7 +96,8 @@ abstract class TradingDatabase : RoomDatabase() {
                         backtestAiProvider = "CLAUDE",
                         backtestAiModel = "claude-opus-5-5",
                         isOutlookEnabled = true,
-                        newsAlertEnabled = false
+                        newsAlertEnabled = false,
+                        bottomNavStyle = BottomNavStyle.LIQUID_GLASS
                     )
                 )
             }

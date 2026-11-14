@@ -725,7 +725,8 @@ class TradingRepository(private val database: TradingDatabase) {
         backtestAiProvider = backtestAiProvider,
         backtestAiModel = backtestAiModel,
         isOutlookEnabled = isOutlookEnabled,
-        newsAlertEnabled = newsAlertEnabled
+        newsAlertEnabled = newsAlertEnabled,
+        bottomNavStyle = bottomNavStyle
     )
 
     private fun UserSettings.toEntity() = UserSettingsEntity(
@@ -747,7 +748,8 @@ class TradingRepository(private val database: TradingDatabase) {
         backtestAiProvider = backtestAiProvider,
         backtestAiModel = backtestAiModel,
         isOutlookEnabled = isOutlookEnabled,
-        newsAlertEnabled = newsAlertEnabled
+        newsAlertEnabled = newsAlertEnabled,
+        bottomNavStyle = bottomNavStyle
     )
 
     private fun com.example.data.local.NewsReleaseEntity.toDomain() = com.example.domain.model.NewsRelease(

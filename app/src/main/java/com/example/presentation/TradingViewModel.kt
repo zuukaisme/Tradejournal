@@ -7,6 +7,7 @@ import com.example.data.local.TradingDatabase
 import com.example.data.repository.TradingRepository
 import com.example.domain.model.Bot
 import com.example.domain.model.BotVersion
+import com.example.domain.model.BottomNavStyle
 import com.example.domain.model.CurrencyCode
 import com.example.domain.model.DailyReview
 import com.example.domain.model.PerformanceSummary
@@ -427,6 +428,13 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             val current = settings.value
             repository.saveSettings(current.copy(currency = currency))
+        }
+    }
+
+    fun updateBottomNavStyle(style: BottomNavStyle) {
+        viewModelScope.launch {
+            val current = settings.value
+            repository.saveSettings(current.copy(bottomNavStyle = style))
         }
     }
 

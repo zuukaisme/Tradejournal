@@ -3,6 +3,7 @@ package com.example.data.local
 import androidx.room.TypeConverter
 import com.example.domain.model.BotStatus
 import com.example.domain.model.BotType
+import com.example.domain.model.BottomNavStyle
 import com.example.domain.model.ConfidenceLevel
 import com.example.domain.model.CurrencyCode
 import com.example.domain.model.Emotion
@@ -121,5 +122,16 @@ class Converters {
             GoldOutcome.valueOf(value ?: GoldOutcome.UNRESOLVED.name)
         } catch (e: Exception) {
             GoldOutcome.UNRESOLVED
+        }
+
+    @TypeConverter
+    fun fromBottomNavStyle(value: BottomNavStyle?): String = value?.name ?: BottomNavStyle.LIQUID_GLASS.name
+
+    @TypeConverter
+    fun toBottomNavStyle(value: String?): BottomNavStyle =
+        try {
+            BottomNavStyle.valueOf(value ?: BottomNavStyle.LIQUID_GLASS.name)
+        } catch (e: Exception) {
+            BottomNavStyle.LIQUID_GLASS
         }
 }

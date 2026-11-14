@@ -54,6 +54,17 @@ enum class CurrencyCode(val symbol: String, val displayName: String) {
     BTC("₿", "BTC (₿)")
 }
 
+enum class BottomNavStyle(
+    val displayName: String,
+    val description: String
+) {
+    LIQUID_GLASS("Liquid Glass", "Floating capsule with sliding glass pill"),
+    NEON_ORBIT("Neon Orbit", "Pop-up emerald badge with glowing dot"),
+    ARCADE_RETRO("8-Bit Arcade", "Chunky retro terminal pixel blocks"),
+    MINIMAL_RAIL("Minimal Underbar", "Sleek sliding emerald underline"),
+    BUBBLE_BOUNCE("Bouncy Pill", "Springy expanding label pill")
+}
+
 data class Trade(
     val id: Long = 0,
     val date: String, // "YYYY-MM-DD"
@@ -145,7 +156,8 @@ data class UserSettings(
     val backtestAiProvider: String = "CLAUDE",
     val backtestAiModel: String = "claude-opus-5-5",
     val isOutlookEnabled: Boolean = true,
-    val newsAlertEnabled: Boolean = true
+    val newsAlertEnabled: Boolean = true,
+    val bottomNavStyle: BottomNavStyle = BottomNavStyle.LIQUID_GLASS
 )
 
 data class DayPnLSummary(
