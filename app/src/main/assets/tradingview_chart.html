@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="color-scheme" content="dark">
+<title>Tradejournal Charts</title>
+<style>
+:root{color-scheme:dark;font-family:Inter,Roboto,Arial,sans-serif;background:#0a0f19;color:#f4f7fb}
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0a0f19}
+body{display:flex;flex-direction:column}
+.top{padding:12px 12px 10px;background:#0d1523;border-bottom:1px solid #1d2a3d}
+.heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.heading strong{font-size:14px;letter-spacing:.2px}
+.live{font-size:10px;font-weight:700;color:#25d695;background:rgba(37,214,149,.12);border:1px solid rgba(37,214,149,.25);border-radius:20px;padding:4px 8px}
+.categories{display:flex;gap:7px;overflow-x:auto;scrollbar-width:none;padding-bottom:10px}
+.categories::-webkit-scrollbar{display:none}
+.category{flex:0 0 auto;border:1px solid #26364b;border-radius:8px;background:#121e2e;color:#aab8ca;padding:8px 12px;font-size:12px;font-weight:600}
+.category.active{background:#0e3c31;border-color:#1caa78;color:#59e2ad}
+.selector{width:100%;height:40px;border:1px solid #2b3b50;border-radius:8px;background:#111d2c;color:#f4f7fb;padding:0 10px;font-size:13px;outline:none}
+.chart-area{position:relative;flex:1;min-height:260px;background:#0a0f19}
+#chart{height:100%;width:100%}
+.chart-widget-container{height:100%;width:100%}
+.chart-widget-container__widget{height:100%;width:100%}
+.fallback{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center;color:#8fa0b5;font-size:13px;pointer-events:none}
+.footer{height:25px;flex:0 0 25px;display:flex;align-items:center;justify-content:center;background:#0a0f19;border-top:1px solid #172334;font-size:10px;color:#8292a7}
+.footer a{color:#9bb8d7;text-decoration:none;font-weight:600}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="heading"><strong>MARKETS</strong><span class="live">● LIVE CHARTS</span></div>
+  <nav class="categories" id="categories"></nav>
+  <select class="selector" id="symbolSelect" aria-label="Select instrument"></select>
+</header>
+<main class="chart-area">
+  <div id="chart"></div>
+  <div class="fallback" id="fallback">Loading TradingView chart…</div>
+</main>
+<footer class="footer"><a id="chartCredit" href="https://www.tradingview.com/symbols/DERIV-VOLATILITY_100_1S_INDEX/" target="_blank" rel="noopener">VOLATILITY_100_1S_INDEX chart</a>&nbsp;by TradingView&nbsp;· Analysis only</footer>
+<script>
+const markets = {
+  "Deriv Synthetics": [
+    {name:"Volatility 10 Index",symbol:"DERIV:VOLATILITY_10_INDEX"},
+    {name:"Volatility 10 (1s)",symbol:"DERIV:VOLATILITY_10_1S_INDEX"},
+    {name:"Volatility 100 Index",symbol:"DERIV:VOLATILITY_100_INDEX"},
+    {name:"Volatility 100 (1s)",symbol:"DERIV:VOLATILITY_100_1S_INDEX"},
+    {name:"Boom 1000 Index",symbol:"DERIV:BOOM_1000_INDEX"},
+    {name:"Crash 1000 Index",symbol:"DERIV:CRASH_1000_INDEX"},
+    {name:"Jump 100 Index",symbol:"DERIV:JUMP_100_INDEX"},
+    {name:"Step Index",symbol:"DERIV:STEP_INDEX"}
+  ],
+  "Forex": [
+    {name:"EUR/USD",symbol:"FX:EURUSD"},
+    {name:"GBP/USD",symbol:"FX:GBPUSD"},
+    {name:"USD/JPY",symbol:"FX:USDJPY"},
+    {name:"AUD/USD",symbol:"FX:AUDUSD"},
+    {name:"USD/CAD",symbol:"FX:USDCAD"},
+    {name:"USD/CHF",symbol:"FX:USDCHF"},
+    {name:"NZD/USD",symbol:"FX:NZDUSD"}
+  ],
+  "Metals": [
+    {name:"Gold (XAU/USD)",symbol:"OANDA:XAUUSD"},
+    {name:"Silver (XAG/USD)",symbol:"OANDA:XAGUSD"}
+  ],
+  "Oil": [
+    {name:"WTI Crude Oil",symbol:"TVC:USOIL"},
+    {name:"Brent Crude Oil",symbol:"TVC:UKOIL"}
+  ]
+};
+
+let activeCategory = "Deriv Synthetics";
+let activeSymbol = markets[activeCategory][3];
+
+function renderCategories() {
+  const root = document.getElementById("categories");
+  root.innerHTML = "";
+  Object.keys(markets).forEach(category => {
+    const button = document.createElement("button");
+    button.className = "category" + (category === activeCategory ? " active" : "");
+    button.textContent = category;
+    button.onclick = () => {
+      activeCategory = category;
+      activeSymbol = markets[category][0];
+      renderCategories();
+      renderSymbols();
+      renderChart();
+    };
+    root.appendChild(button);
+  });
+}
+
+function renderSymbols() {
+  const select = document.getElementById("symbolSelect");
+  select.innerHTML = "";
+  markets[activeCategory].forEach(item => {
+    const option = document.createElement("option");
+    option.value = item.symbol;
+    option.textContent = item.name;
+    option.selected = item.symbol === activeSymbol.symbol;
+    select.appendChild(option);
+  });
+  select.onchange = () => {
+    activeSymbol = markets[activeCategory].find(item => item.symbol === select.value);
+    renderChart();
+  };
+}
+
+function renderChart() {
+  const root = document.getElementById("chart");
+  const fallback = document.getElementById("fallback");
+  const credit = document.getElementById("chartCredit");
+  credit.href = "https://www.tradingview.com/symbols/" + activeSymbol.symbol.replace(":", "-") + "/";
+  credit.textContent = activeSymbol.symbol.split(":")[1] + " chart";
+  root.innerHTML = "";
+  fallback.style.display = "flex";
+
+  const container = document.createElement("div");
+  container.className = "chart-widget-container";
+  const widget = document.createElement("div");
+  widget.className = "chart-widget-container__widget";
+  container.appendChild(widget);
+
+  const script = document.createElement("script");
+  script.type = "text/javascript";
+  script.src = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
+  script.async = true;
+  script.text = JSON.stringify({
+    autosize: true,
+    symbol: activeSymbol.symbol,
+    interval: "15",
+    timezone: "Etc/UTC",
+    theme: "dark",
+    style: "1",
+    locale: "en",
+    allow_symbol_change: false,
+    calendar: false,
+    hide_volume: activeSymbol.symbol.startsWith("DERIV:"),
+    withdateranges: true,
+    details: false,
+    hotlist: false,
+    support_host: "https://www.tradingview.com"
+  });
+  script.onload = () => { fallback.style.display = "none"; };
+  script.onerror = () => { fallback.textContent = "TradingView could not load. Check your internet connection and try again."; };
+  container.appendChild(script);
+  root.appendChild(container);
+  fallback.textContent = "Loading " + activeSymbol.name + "…";
+}
+
+renderCategories();
+renderSymbols();
+renderChart();
+</script>
+</body>
+</html>

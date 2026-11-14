@@ -65,6 +65,7 @@ import com.example.presentation.screens.StrategiesScreen
 import com.example.presentation.screens.StrategyGuideScreen
 import com.example.presentation.screens.TradeEntryBottomSheet
 import com.example.presentation.screens.TradesScreen
+import com.example.presentation.screens.TradingViewChartsScreen
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -109,6 +110,7 @@ fun MainScreen(
         AppScreen.OUTLOOK,
         AppScreen.BACKTEST,
         AppScreen.RISK_CALC,
+        AppScreen.CHARTS,
         AppScreen.SETTINGS
     )
 
@@ -177,6 +179,7 @@ fun MainScreen(
                                     AppScreen.OUTLOOK -> "Gold News Outlook"
                                     AppScreen.BACKTEST -> "Strategy Backtester"
                                     AppScreen.RISK_CALC -> "Risk & Lot Calculator"
+                                    AppScreen.CHARTS -> "Trading Charts"
                                     AppScreen.SETTINGS -> "Settings & Storage"
                                 },
                                 style = MaterialTheme.typography.titleMedium,
@@ -194,6 +197,7 @@ fun MainScreen(
                                     AppScreen.OUTLOOK -> "XAUUSD macro event probabilities"
                                     AppScreen.BACKTEST -> "Embedded Python & MT5 simulator"
                                     AppScreen.RISK_CALC -> "WLTrade SyntX, Gold & FX sizing"
+                                    AppScreen.CHARTS -> "TradingView charts for live markets"
                                     AppScreen.SETTINGS -> "Risk limits, backup & API keys"
                                 },
                                 style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
@@ -313,6 +317,7 @@ fun MainScreen(
                         backtestViewModel = backtestViewModel
                     )
                     AppScreen.RISK_CALC -> RiskCalculatorScreen(viewModel = viewModel)
+                    AppScreen.CHARTS -> TradingViewChartsScreen()
                     AppScreen.SETTINGS -> SettingsScreen(viewModel = viewModel)
                 }
             }

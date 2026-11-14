@@ -47,6 +47,7 @@ enum class AppScreen {
     OUTLOOK,
     BACKTEST,
     RISK_CALC,
+    CHARTS,
     SETTINGS
 }
 
