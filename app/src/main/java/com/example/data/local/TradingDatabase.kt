@@ -6,6 +6,7 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.example.domain.model.AppThemePreset
 import com.example.domain.model.BottomNavStyle
 import com.example.domain.model.CurrencyCode
 import kotlinx.coroutines.CoroutineScope
@@ -22,9 +23,10 @@ import kotlinx.coroutines.launch
         UserSettingsEntity::class,
         NewsReleaseEntity::class,
         OutlookPredictionEntity::class,
-        PythonStrategyEntity::class
+        PythonStrategyEntity::class,
+        BacktestRunEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -37,6 +39,7 @@ abstract class TradingDatabase : RoomDatabase() {
     abstract fun userSettingsDao(): UserSettingsDao
     abstract fun outlookDao(): OutlookDao
     abstract fun pythonStrategyDao(): PythonStrategyDao
+    abstract fun backtestRunDao(): BacktestRunDao
 
     companion object {
         @Volatile
@@ -82,12 +85,14 @@ abstract class TradingDatabase : RoomDatabase() {
                         currency = CurrencyCode.USD,
                         monthlyProfitTarget = 5000.0,
                         maxDailyLossLimit = 1000.0,
+                        maxTrailingDrawdown = 2500.0,
                         pinLockEnabled = false,
                         pinCode = "",
                         eveningReminderEnabled = false,
                         reminderHour = 20,
                         reminderMinute = 0,
                         isDarkTheme = true,
+                        themePreset = AppThemePreset.EMERALD_OBSIDIAN,
                         fredApiKey = "",
                         finnhubApiKey = "",
                         geminiApiKey = "",

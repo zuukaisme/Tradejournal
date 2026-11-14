@@ -1,6 +1,7 @@
 package com.example.data.local
 
 import androidx.room.TypeConverter
+import com.example.domain.model.AppThemePreset
 import com.example.domain.model.BotStatus
 import com.example.domain.model.BotType
 import com.example.domain.model.BottomNavStyle
@@ -133,5 +134,16 @@ class Converters {
             BottomNavStyle.valueOf(value ?: BottomNavStyle.LIQUID_GLASS.name)
         } catch (e: Exception) {
             BottomNavStyle.LIQUID_GLASS
+        }
+
+    @TypeConverter
+    fun fromAppThemePreset(value: AppThemePreset?): String = value?.name ?: AppThemePreset.EMERALD_OBSIDIAN.name
+
+    @TypeConverter
+    fun toAppThemePreset(value: String?): AppThemePreset =
+        try {
+            AppThemePreset.valueOf(value ?: AppThemePreset.EMERALD_OBSIDIAN.name)
+        } catch (e: Exception) {
+            AppThemePreset.EMERALD_OBSIDIAN
         }
 }

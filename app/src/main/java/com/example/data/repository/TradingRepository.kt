@@ -1,5 +1,7 @@
 package com.example.data.repository
 
+import com.example.backtest.SavedBacktestRun
+import com.example.data.local.BacktestRunEntity
 import com.example.data.local.BotEntity
 import com.example.data.local.BotVersionEntity
 import com.example.data.local.DailyReviewEntity
@@ -37,6 +39,7 @@ class TradingRepository(private val database: TradingDatabase) {
     private val settingsDao = database.userSettingsDao()
     private val outlookDao = database.outlookDao()
     private val pythonStrategyDao = database.pythonStrategyDao()
+    private val backtestRunDao = database.backtestRunDao()
 
     // --- News Outlook ---
     fun getAllReleases(): Flow<List<com.example.domain.model.NewsRelease>> = outlookDao.getAllReleases().map { list ->
@@ -97,6 +100,12 @@ class TradingRepository(private val database: TradingDatabase) {
         tradeDao.deleteTradeById(id)
     }
 
+    suspend fun insertAllTrades(trades: List<Trade>) = withContext(Dispatchers.IO) {
+        if (trades.isNotEmpty()) {
+            tradeDao.insertAllTrades(trades.map { it.toEntity() })
+        }
+    }
+
     // --- Strategies ---
     fun getAllStrategies(): Flow<List<Strategy>> = strategyDao.getAllStrategies().map { list ->
         list.map { it.toDomain() }
@@ -137,6 +146,19 @@ class TradingRepository(private val database: TradingDatabase) {
 
     suspend fun deletePythonStrategy(id: Long) = withContext(Dispatchers.IO) {
         pythonStrategyDao.deletePythonStrategyById(id)
+    }
+
+    // --- Saved Backtest Runs ---
+    fun getAllBacktestRuns(): Flow<List<SavedBacktestRun>> = backtestRunDao.getAllRuns().map { list ->
+        list.map { it.toDomain() }
+    }
+
+    suspend fun saveBacktestRun(run: SavedBacktestRun): Long = withContext(Dispatchers.IO) {
+        backtestRunDao.insertRun(run.toEntity())
+    }
+
+    suspend fun deleteBacktestRun(id: Long) = withContext(Dispatchers.IO) {
+        backtestRunDao.deleteRunById(id)
     }
 
     // --- Bots ---
@@ -370,6 +392,7 @@ class TradingRepository(private val database: TradingDatabase) {
         tradeDao.deleteAllTrades()
         strategyDao.deleteAllStrategies()
         pythonStrategyDao.deleteAllPythonStrategies()
+        backtestRunDao.deleteAllRuns()
         botDao.deleteAllBots()
         reviewDao.deleteAllReviews()
         outlookDao.deleteAllReleases()
@@ -711,12 +734,14 @@ class TradingRepository(private val database: TradingDatabase) {
         currency = currency,
         monthlyProfitTarget = monthlyProfitTarget,
         maxDailyLossLimit = maxDailyLossLimit,
+        maxTrailingDrawdown = maxTrailingDrawdown,
         pinLockEnabled = pinLockEnabled,
         pinCode = pinCode,
         eveningReminderEnabled = eveningReminderEnabled,
         reminderHour = reminderHour,
         reminderMinute = reminderMinute,
         isDarkTheme = isDarkTheme,
+        themePreset = themePreset,
         fredApiKey = fredApiKey,
         finnhubApiKey = finnhubApiKey,
         geminiApiKey = geminiApiKey,
@@ -734,12 +759,14 @@ class TradingRepository(private val database: TradingDatabase) {
         currency = currency,
         monthlyProfitTarget = monthlyProfitTarget,
         maxDailyLossLimit = maxDailyLossLimit,
+        maxTrailingDrawdown = maxTrailingDrawdown,
         pinLockEnabled = pinLockEnabled,
         pinCode = pinCode,
         eveningReminderEnabled = eveningReminderEnabled,
         reminderHour = reminderHour,
         reminderMinute = reminderMinute,
         isDarkTheme = isDarkTheme,
+        themePreset = themePreset,
         fredApiKey = fredApiKey,
         finnhubApiKey = finnhubApiKey,
         geminiApiKey = geminiApiKey,
@@ -830,5 +857,45 @@ class TradingRepository(private val database: TradingDatabase) {
         className = className,
         code = code,
         updatedAt = updatedAt
+    )
+
+    private fun BacktestRunEntity.toDomain() = SavedBacktestRun(
+        id = id,
+        strategyName = strategyName,
+        csvFileName = csvFileName,
+        maxStopPoints = maxStopPoints,
+        pointSize = pointSize,
+        totalTrades = totalTrades,
+        wins = wins,
+        losses = losses,
+        winRatePct = winRatePct,
+        netPoints = netPoints,
+        netR = netR,
+        avgR = avgR,
+        profitFactor = profitFactor,
+        maxDrawdownPoints = maxDrawdownPoints,
+        maxDrawdownR = maxDrawdownR,
+        equityCurve = equityCurveCsv.split(",").mapNotNull { it.trim().toDoubleOrNull() },
+        createdAt = createdAt
+    )
+
+    private fun SavedBacktestRun.toEntity() = BacktestRunEntity(
+        id = id,
+        strategyName = strategyName,
+        csvFileName = csvFileName,
+        maxStopPoints = maxStopPoints,
+        pointSize = pointSize,
+        totalTrades = totalTrades,
+        wins = wins,
+        losses = losses,
+        winRatePct = winRatePct,
+        netPoints = netPoints,
+        netR = netR,
+        avgR = avgR,
+        profitFactor = profitFactor,
+        maxDrawdownPoints = maxDrawdownPoints,
+        maxDrawdownR = maxDrawdownR,
+        equityCurveCsv = equityCurve.joinToString(","),
+        createdAt = createdAt
     )
 }

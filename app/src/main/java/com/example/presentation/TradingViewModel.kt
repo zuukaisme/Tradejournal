@@ -6,6 +6,8 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.local.TradingDatabase
 import com.example.data.repository.TradingRepository
 import com.example.domain.model.Bot
+import android.net.Uri
+import com.example.domain.model.AppThemePreset
 import com.example.domain.model.BotVersion
 import com.example.domain.model.BottomNavStyle
 import com.example.domain.model.CurrencyCode
@@ -17,7 +19,11 @@ import com.example.domain.model.TimePeriod
 import com.example.domain.model.Trade
 import com.example.domain.model.TradeResult
 import com.example.domain.model.UserSettings
+import com.example.domain.usecase.Mt5ImportResult
+import com.example.domain.usecase.Mt5TradeHistoryImporter
 import com.example.domain.usecase.StatsCalculator
+import com.example.notifications.EveningReminderScheduler
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -25,6 +31,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -39,6 +46,7 @@ enum class AppScreen {
     BOTS,
     OUTLOOK,
     BACKTEST,
+    RISK_CALC,
     SETTINGS
 }
 
@@ -438,15 +446,65 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun updateGoals(monthlyProfitTarget: Double, maxDailyLossLimit: Double) {
+    fun updateThemePreset(preset: AppThemePreset) {
+        viewModelScope.launch {
+            val current = settings.value
+            repository.saveSettings(
+                current.copy(
+                    themePreset = preset,
+                    isDarkTheme = !preset.forcesLight
+                )
+            )
+        }
+    }
+
+    fun updateEveningReminder(enabled: Boolean) {
+        viewModelScope.launch {
+            val current = settings.value
+            val updated = current.copy(eveningReminderEnabled = enabled)
+            repository.saveSettings(updated)
+            EveningReminderScheduler.sync(
+                context = getApplication(),
+                enabled = enabled,
+                hour = updated.reminderHour,
+                minute = updated.reminderMinute
+            )
+        }
+    }
+
+    fun updateGoals(
+        monthlyProfitTarget: Double,
+        maxDailyLossLimit: Double,
+        maxTrailingDrawdown: Double = settings.value.maxTrailingDrawdown
+    ) {
         viewModelScope.launch {
             val current = settings.value
             repository.saveSettings(
                 current.copy(
                     monthlyProfitTarget = monthlyProfitTarget,
-                    maxDailyLossLimit = maxDailyLossLimit
+                    maxDailyLossLimit = maxDailyLossLimit,
+                    maxTrailingDrawdown = maxTrailingDrawdown
                 )
             )
+        }
+    }
+
+    fun importMt5HistoryUri(uri: Uri, onComplete: (Mt5ImportResult) -> Unit) {
+        val context = getApplication<Application>()
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        ?: return@runCatching Mt5ImportResult(emptyList(), 0, "Unreadable file")
+                    Mt5TradeHistoryImporter.parseCsv(bytes)
+                }.getOrElse {
+                    Mt5ImportResult(emptyList(), 0, it.message ?: "Import failed")
+                }
+            }
+            if (result.trades.isNotEmpty()) {
+                repository.insertAllTrades(result.trades)
+            }
+            onComplete(result)
         }
     }
 

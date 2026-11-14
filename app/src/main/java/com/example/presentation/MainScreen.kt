@@ -58,6 +58,7 @@ import com.example.presentation.screens.CalendarScreen
 import com.example.presentation.screens.DailyReviewBottomSheet
 import com.example.presentation.screens.MenuScreen
 import com.example.presentation.screens.OutlookScreen
+import com.example.presentation.screens.RiskCalculatorScreen
 import com.example.presentation.screens.SettingsScreen
 import com.example.presentation.screens.StatsScreen
 import com.example.presentation.screens.StrategiesScreen
@@ -107,6 +108,7 @@ fun MainScreen(
         AppScreen.BOTS,
         AppScreen.OUTLOOK,
         AppScreen.BACKTEST,
+        AppScreen.RISK_CALC,
         AppScreen.SETTINGS
     )
 
@@ -174,6 +176,7 @@ fun MainScreen(
                                     AppScreen.BOTS -> "MQL5 Bot Library"
                                     AppScreen.OUTLOOK -> "Gold News Outlook"
                                     AppScreen.BACKTEST -> "Strategy Backtester"
+                                    AppScreen.RISK_CALC -> "Risk & Lot Calculator"
                                     AppScreen.SETTINGS -> "Settings & Storage"
                                 },
                                 style = MaterialTheme.typography.titleMedium,
@@ -190,6 +193,7 @@ fun MainScreen(
                                     AppScreen.BOTS -> "Offline expert advisors & scripts"
                                     AppScreen.OUTLOOK -> "XAUUSD macro event probabilities"
                                     AppScreen.BACKTEST -> "Embedded Python & MT5 simulator"
+                                    AppScreen.RISK_CALC -> "WLTrade SyntX, Gold & FX sizing"
                                     AppScreen.SETTINGS -> "Risk limits, backup & API keys"
                                 },
                                 style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
@@ -308,6 +312,7 @@ fun MainScreen(
                         onOpenStrategies = { viewModel.navigateTo(AppScreen.STRATEGIES) },
                         backtestViewModel = backtestViewModel
                     )
+                    AppScreen.RISK_CALC -> RiskCalculatorScreen(viewModel = viewModel)
                     AppScreen.SETTINGS -> SettingsScreen(viewModel = viewModel)
                 }
             }

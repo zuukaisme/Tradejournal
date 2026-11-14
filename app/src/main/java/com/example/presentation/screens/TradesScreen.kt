@@ -1,5 +1,9 @@
 package com.example.presentation.screens
 
+import android.net.Uri
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -25,6 +29,7 @@ import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
@@ -33,11 +38,13 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -93,6 +100,22 @@ fun TradesScreen(
 
     val totalPnL = remember(displayedTrades) {
         displayedTrades.filter { it.result != TradeResult.NO_TRADE }.sumOf { it.pnl }
+    }
+
+    val context = LocalContext.current
+    val mt5ImportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            viewModel.importMt5HistoryUri(uri) { result ->
+                val msg = if (result.trades.isNotEmpty()) {
+                    "Imported ${result.trades.size} trades (${result.detectedFormat})"
+                } else {
+                    "No closed trades found (${result.detectedFormat})"
+                }
+                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     val primaryColor = MaterialTheme.colorScheme.primary
@@ -235,17 +258,36 @@ fun TradesScreen(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Sub-header: Count and Total P&L
+            // Sub-header: Count, Import MT5 & Total P&L
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "${displayedTrades.size} trades shown",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "${displayedTrades.size} shown",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedButton(
+                        onClick = { mt5ImportLauncher.launch(arrayOf("*/*")) },
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        modifier = Modifier.testTag("import_mt5_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.UploadFile,
+                            contentDescription = "Import MT5 CSV",
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Import MT5", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
                 Text(
                     text = "Net: ${CurrencyFormatter.format(totalPnL, settings.currency)}",
                     style = MaterialTheme.typography.titleSmall,

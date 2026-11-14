@@ -15,6 +15,7 @@ import com.example.backtest.BacktestError
 import com.example.backtest.BacktestParseOutcome
 import com.example.backtest.BacktestResult
 import com.example.backtest.PythonBacktestRunner
+import com.example.backtest.SavedBacktestRun
 import com.example.data.local.TradingDatabase
 import com.example.data.repository.TradingRepository
 import com.example.domain.model.PythonStrategy
@@ -55,7 +56,12 @@ data class BacktestUiState(
     val generatedStrategyName: String = "",
     val generatedClassName: String = "",
     val aiError: String? = null,
-    val aiStatusMessage: String? = null
+    val aiStatusMessage: String? = null,
+    // Saved Runs & Comparison
+    val savedRuns: List<SavedBacktestRun> = emptyList(),
+    val compareRunAId: Long? = null,
+    val compareRunBId: Long? = null,
+    val runSavedFeedback: String? = null
 )
 
 class BacktestViewModel(application: Application) : AndroidViewModel(application) {
@@ -80,6 +86,22 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                     current.copy(
                         availableStrategies = strategies,
                         selectedStrategy = matched
+                    )
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            repository.getAllBacktestRuns().collect { runs ->
+                _uiState.update { current ->
+                    val validIds = runs.map { it.id }.toSet()
+                    val a = current.compareRunAId?.takeIf { it in validIds } ?: runs.getOrNull(0)?.id
+                    val b = current.compareRunBId?.takeIf { it in validIds && it != a }
+                        ?: runs.firstOrNull { it.id != a }?.id
+                    current.copy(
+                        savedRuns = runs,
+                        compareRunAId = a,
+                        compareRunBId = b
                     )
                 }
             }
@@ -243,7 +265,8 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                             it.copy(
                                 isLoading = false,
                                 result = outcome.result,
-                                backtestError = null
+                                backtestError = null,
+                                runSavedFeedback = null
                             )
                         }
                     }
@@ -269,6 +292,52 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                     )
                 }
             }
+        }
+    }
+
+    fun saveCurrentResult() {
+        val snapshot = _uiState.value
+        val result = snapshot.result ?: return
+        val run = SavedBacktestRun(
+            strategyName = snapshot.selectedStrategy?.name ?: "Strategy",
+            csvFileName = snapshot.fileName ?: "candles.csv",
+            maxStopPoints = snapshot.maxStopPointsInput.toDoubleOrNull() ?: 0.0,
+            pointSize = snapshot.pointSizeInput.toDoubleOrNull() ?: 1.0,
+            totalTrades = result.summary.totalTrades,
+            wins = result.summary.wins,
+            losses = result.summary.losses,
+            winRatePct = result.summary.winRatePct,
+            netPoints = result.summary.netPoints,
+            netR = result.summary.netR,
+            avgR = result.summary.avgR,
+            profitFactor = result.summary.profitFactor,
+            maxDrawdownPoints = result.risk.maxDrawdownPoints,
+            maxDrawdownR = result.risk.maxDrawdownR,
+            equityCurve = result.equityCurve,
+            createdAt = System.currentTimeMillis()
+        )
+        viewModelScope.launch {
+            repository.saveBacktestRun(run)
+            _uiState.update { it.copy(runSavedFeedback = "Saved \"${run.strategyName}\" to Compare tab.") }
+        }
+    }
+
+    fun selectCompareSlot(runId: Long) {
+        _uiState.update { current ->
+            when {
+                current.compareRunAId == runId -> current
+                current.compareRunBId == runId -> current
+                else -> current.copy(
+                    compareRunBId = current.compareRunAId,
+                    compareRunAId = runId
+                )
+            }
+        }
+    }
+
+    fun deleteSavedRun(runId: Long) {
+        viewModelScope.launch {
+            repository.deleteBacktestRun(runId)
         }
     }
 

@@ -2,6 +2,7 @@ package com.example.data.local
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import com.example.domain.model.AppThemePreset
 import com.example.domain.model.BotStatus
 import com.example.domain.model.BotType
 import com.example.domain.model.BottomNavStyle
@@ -139,12 +140,14 @@ data class UserSettingsEntity(
     val currency: CurrencyCode,
     val monthlyProfitTarget: Double,
     val maxDailyLossLimit: Double,
+    val maxTrailingDrawdown: Double = 2000.0,
     val pinLockEnabled: Boolean,
     val pinCode: String,
     val eveningReminderEnabled: Boolean,
     val reminderHour: Int,
     val reminderMinute: Int,
     val isDarkTheme: Boolean,
+    val themePreset: AppThemePreset = AppThemePreset.EMERALD_OBSIDIAN,
     val fredApiKey: String,
     val finnhubApiKey: String,
     val geminiApiKey: String,
@@ -165,5 +168,27 @@ data class PythonStrategyEntity(
     val className: String,
     val code: String,
     val updatedAt: Long
+)
+
+@Entity(tableName = "backtest_runs")
+data class BacktestRunEntity(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+    val strategyName: String,
+    val csvFileName: String,
+    val maxStopPoints: Double,
+    val pointSize: Double,
+    val totalTrades: Int,
+    val wins: Int,
+    val losses: Int,
+    val winRatePct: Double,
+    val netPoints: Double,
+    val netR: Double,
+    val avgR: Double,
+    val profitFactor: Double?,
+    val maxDrawdownPoints: Double,
+    val maxDrawdownR: Double,
+    val equityCurveCsv: String,
+    val createdAt: Long
 )
 

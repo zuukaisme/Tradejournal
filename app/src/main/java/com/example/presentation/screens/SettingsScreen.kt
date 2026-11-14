@@ -1,10 +1,16 @@
 package com.example.presentation.screens
 
+import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -126,6 +132,20 @@ fun SettingsScreen(
     var maxDailyLossInput by remember(settings.maxDailyLossLimit) {
         mutableStateOf(settings.maxDailyLossLimit.toString())
     }
+    var maxTrailingDrawdownInput by remember(settings.maxTrailingDrawdown) {
+        mutableStateOf(settings.maxTrailingDrawdown.toString())
+    }
+
+    val dailyLossUsed = remember(todayNetPnL) { if (todayNetPnL < 0) abs(todayNetPnL) else 0.0 }
+    val dailyLossProgress = remember(dailyLossUsed, settings.maxDailyLossLimit) {
+        if (settings.maxDailyLossLimit > 0) (dailyLossUsed / settings.maxDailyLossLimit).toFloat().coerceIn(0f, 1f) else 0f
+    }
+    val trailingDrawdownStats = remember(allTrades) { computeTrailingDrawdown(allTrades) }
+    val currentDrawdownFromPeak = trailingDrawdownStats.first
+    val maxHistoricalDrawdown = trailingDrawdownStats.second
+    val trailingDrawdownProgress = remember(currentDrawdownFromPeak, settings.maxTrailingDrawdown) {
+        if (settings.maxTrailingDrawdown > 0) (currentDrawdownFromPeak / settings.maxTrailingDrawdown).toFloat().coerceIn(0f, 1f) else 0f
+    }
 
     var fredApiKeyInput by remember(settings.fredApiKey) { mutableStateOf(settings.fredApiKey) }
     var finnhubApiKeyInput by remember(settings.finnhubApiKey) { mutableStateOf(settings.finnhubApiKey) }
@@ -138,6 +158,20 @@ fun SettingsScreen(
     var pinCodeInput by remember(settings.pinCode) { mutableStateOf(settings.pinCode) }
 
     var eveningReminderEnabled by remember(settings.eveningReminderEnabled) { mutableStateOf(settings.eveningReminderEnabled) }
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            eveningReminderEnabled = true
+            viewModel.updateEveningReminder(true)
+            Toast.makeText(context, "Evening journal reminder scheduled for 20:00", Toast.LENGTH_SHORT).show()
+        } else {
+            eveningReminderEnabled = false
+            viewModel.updateEveningReminder(false)
+            Toast.makeText(context, "Notification permission denied", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     // Dialogs
     var showRestoreDialog by remember { mutableStateOf(false) }
@@ -212,6 +246,14 @@ fun SettingsScreen(
                     }
                 }
             }
+        }
+
+        // 1a. App Color Theme Preset Selector
+        item {
+            ThemePresetSelectorCard(
+                selectedPreset = settings.themePreset,
+                onSelectPreset = { preset -> viewModel.updateThemePreset(preset) }
+            )
         }
 
         // 1b. Bottom Navigation Tab Style (Playful switcher)
@@ -366,6 +408,44 @@ fun SettingsScreen(
                     trackColor = MaterialTheme.colorScheme.surfaceVariant
                 )
 
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Daily Loss Limit Meter
+                    Text(
+                        text = "Daily Loss Used: ${CurrencyFormatter.format(dailyLossUsed, settings.currency, false)} / ${CurrencyFormatter.format(settings.maxDailyLossLimit, settings.currency, false)} (${(dailyLossProgress * 100).toInt()}%)",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    LinearProgressIndicator(
+                        progress = { dailyLossProgress },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                            .clip(RoundedCornerShape(4.dp)),
+                        color = if (dailyLossProgress >= 0.85f) MaterialTheme.colorScheme.error else Color(0xFFF59E0B),
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Trailing Drawdown Meter
+                    Text(
+                        text = "Trailing Drawdown: ${CurrencyFormatter.format(currentDrawdownFromPeak, settings.currency, false)} / ${CurrencyFormatter.format(settings.maxTrailingDrawdown, settings.currency, false)} (Max ${CurrencyFormatter.format(maxHistoricalDrawdown, settings.currency, false)})",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    LinearProgressIndicator(
+                        progress = { trailingDrawdownProgress },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                            .clip(RoundedCornerShape(4.dp)),
+                        color = if (trailingDrawdownProgress >= 0.8f) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+
                     Spacer(modifier = Modifier.height(12.dp))
 
                     Row(
@@ -375,7 +455,7 @@ fun SettingsScreen(
                         OutlinedTextField(
                             value = monthlyTargetInput,
                             onValueChange = { monthlyTargetInput = it },
-                            label = { Text("Target ($)") },
+                            label = { Text("Target") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             singleLine = true,
                             modifier = Modifier.weight(1f),
@@ -384,7 +464,16 @@ fun SettingsScreen(
                         OutlinedTextField(
                             value = maxDailyLossInput,
                             onValueChange = { maxDailyLossInput = it },
-                            label = { Text("Daily Loss Limit ($)") },
+                            label = { Text("Daily Loss") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp)
+                        )
+                        OutlinedTextField(
+                            value = maxTrailingDrawdownInput,
+                            onValueChange = { maxTrailingDrawdownInput = it },
+                            label = { Text("Max DD") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             singleLine = true,
                             modifier = Modifier.weight(1f),
@@ -398,13 +487,14 @@ fun SettingsScreen(
                         onClick = {
                             val target = monthlyTargetInput.toDoubleOrNull() ?: 2500.0
                             val lossLimit = maxDailyLossInput.toDoubleOrNull() ?: 300.0
-                            viewModel.updateGoals(target, lossLimit)
-                            Toast.makeText(context, "Goals updated", Toast.LENGTH_SHORT).show()
+                            val trailingDd = maxTrailingDrawdownInput.toDoubleOrNull() ?: 2000.0
+                            viewModel.updateGoals(target, lossLimit, trailingDd)
+                            Toast.makeText(context, "Goals & risk limits updated", Toast.LENGTH_SHORT).show()
                         },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(10.dp)
                     ) {
-                        Text("Save Goals")
+                        Text("Save Goals & Risk Limits")
                     }
             }
         }
@@ -539,10 +629,24 @@ fun SettingsScreen(
                         }
                         Switch(
                             checked = eveningReminderEnabled,
-                            onCheckedChange = {
-                                eveningReminderEnabled = it
-                                viewModel.updateSettings(settings.copy(eveningReminderEnabled = it))
-                            }
+                            onCheckedChange = { enabled ->
+                                if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                    val granted = ContextCompat.checkSelfPermission(
+                                        context,
+                                        Manifest.permission.POST_NOTIFICATIONS
+                                    ) == PackageManager.PERMISSION_GRANTED
+                                    if (!granted) {
+                                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                    } else {
+                                        eveningReminderEnabled = true
+                                        viewModel.updateEveningReminder(true)
+                                    }
+                                } else {
+                                    eveningReminderEnabled = enabled
+                                    viewModel.updateEveningReminder(enabled)
+                                }
+                            },
+                            modifier = Modifier.testTag("evening_reminder_switch")
                         )
                     }
 
@@ -566,10 +670,16 @@ fun SettingsScreen(
                         }
                         Switch(
                             checked = pinLockEnabled,
-                            onCheckedChange = {
-                                pinLockEnabled = it
-                                viewModel.updateSettings(settings.copy(pinLockEnabled = it))
-                            }
+                            onCheckedChange = { enabled ->
+                                pinLockEnabled = enabled
+                                viewModel.updateSettings(
+                                    settings.copy(
+                                        pinLockEnabled = enabled,
+                                        pinCode = pinCodeInput
+                                    )
+                                )
+                            },
+                            modifier = Modifier.testTag("pin_lock_switch")
                         )
                     }
 
@@ -577,12 +687,35 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.height(6.dp))
                         OutlinedTextField(
                             value = pinCodeInput,
-                            onValueChange = { if (it.length <= 4) pinCodeInput = it },
+                            onValueChange = { raw ->
+                                val filtered = raw.filter(Char::isDigit).take(4)
+                                pinCodeInput = filtered
+                                if (filtered.length == 4) {
+                                    viewModel.updateSettings(
+                                        settings.copy(
+                                            pinLockEnabled = true,
+                                            pinCode = filtered
+                                        )
+                                    )
+                                    Toast.makeText(context, "4-digit PIN saved", Toast.LENGTH_SHORT).show()
+                                }
+                            },
                             label = { Text("4-Digit PIN") },
+                            supportingText = {
+                                Text(
+                                    text = if (pinCodeInput.length == 4) {
+                                        "PIN active — required on next app launch"
+                                    } else {
+                                        "Enter 4 digits to activate lock"
+                                    }
+                                )
+                            },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                             visualTransformation = PasswordVisualTransformation(),
                             singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("pin_code_input"),
                             shape = RoundedCornerShape(10.dp)
                         )
                     }

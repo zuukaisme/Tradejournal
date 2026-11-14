@@ -88,3 +88,23 @@ sealed interface BacktestParseOutcome {
     data class Success(val result: BacktestResult) : BacktestParseOutcome
     data class Failure(val error: BacktestError) : BacktestParseOutcome
 }
+
+data class SavedBacktestRun(
+    val id: Long = 0,
+    val strategyName: String,
+    val csvFileName: String,
+    val maxStopPoints: Double,
+    val pointSize: Double,
+    val totalTrades: Int,
+    val wins: Int,
+    val losses: Int,
+    val winRatePct: Double,
+    val netPoints: Double,
+    val netR: Double,
+    val avgR: Double,
+    val profitFactor: Double?,
+    val maxDrawdownPoints: Double,
+    val maxDrawdownR: Double,
+    val equityCurve: List<Double>,
+    val createdAt: Long = System.currentTimeMillis()
+)

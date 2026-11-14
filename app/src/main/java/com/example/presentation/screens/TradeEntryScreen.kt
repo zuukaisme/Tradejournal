@@ -35,6 +35,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -49,6 +51,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -481,6 +484,92 @@ fun TradeEntryBottomSheet(
                                 strategyDropdownExpanded = false
                             }
                         )
+                    }
+                }
+            }
+
+            // Interactive Pre-Trade Strategy Rules Checklist
+            val strategyRules = currentStrategy?.checklist.orEmpty()
+            var checkedRuleIndices by remember(currentStrategy?.id, tradeToEdit?.id) {
+                mutableStateOf(
+                    if (followedRules) strategyRules.indices.toSet() else emptySet()
+                )
+            }
+            if (strategyRules.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("pre_trade_checklist_card"),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Pre-Trade Checklist (${checkedRuleIndices.size}/${strategyRules.size})",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            TextButton(
+                                onClick = {
+                                    val checkAll = checkedRuleIndices.size < strategyRules.size
+                                    checkedRuleIndices = if (checkAll) strategyRules.indices.toSet() else emptySet()
+                                    followedRules = checkAll
+                                }
+                            ) {
+                                Text(
+                                    text = if (checkedRuleIndices.size == strategyRules.size) "Clear" else "Check All",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
+                        strategyRules.forEachIndexed { idx, ruleText ->
+                            val isChecked = idx in checkedRuleIndices
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        val next = if (isChecked) {
+                                            checkedRuleIndices - idx
+                                        } else {
+                                            checkedRuleIndices + idx
+                                        }
+                                        checkedRuleIndices = next
+                                        followedRules = next.size == strategyRules.size
+                                    }
+                                    .padding(vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(
+                                    checked = isChecked,
+                                    onCheckedChange = { checked ->
+                                        val next = if (checked) {
+                                            checkedRuleIndices + idx
+                                        } else {
+                                            checkedRuleIndices - idx
+                                        }
+                                        checkedRuleIndices = next
+                                        followedRules = next.size == strategyRules.size
+                                    },
+                                    colors = CheckboxDefaults.colors(checkedColor = MaterialTheme.colorScheme.primary)
+                                )
+                                Text(
+                                    text = ruleText,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (isChecked) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
                     }
                 }
             }

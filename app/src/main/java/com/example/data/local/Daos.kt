@@ -198,4 +198,19 @@ interface PythonStrategyDao {
     suspend fun deleteAllPythonStrategies()
 }
 
+@Dao
+interface BacktestRunDao {
+    @Query("SELECT * FROM backtest_runs ORDER BY createdAt DESC")
+    fun getAllRuns(): Flow<List<BacktestRunEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertRun(run: BacktestRunEntity): Long
+
+    @Query("DELETE FROM backtest_runs WHERE id = :id")
+    suspend fun deleteRunById(id: Long)
+
+    @Query("DELETE FROM backtest_runs")
+    suspend fun deleteAllRuns()
+}
+
 

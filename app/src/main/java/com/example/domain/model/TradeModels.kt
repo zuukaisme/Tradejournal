@@ -65,6 +65,19 @@ enum class BottomNavStyle(
     BUBBLE_BOUNCE("Bouncy Pill", "Springy expanding label pill")
 }
 
+enum class AppThemePreset(
+    val displayName: String,
+    val description: String,
+    val forcesLight: Boolean = false
+) {
+    EMERALD_OBSIDIAN("Emerald Obsidian", "Deep dark obsidian with neon emerald"),
+    TRUE_AMOLED("True Black AMOLED", "Pure black OLED background & sharp emerald"),
+    TERMINAL_AMBER("Terminal Amber", "Charcoal desk with institutional amber accents"),
+    PHOSPHOR_MATRIX("Phosphor Matrix", "Dark forest-black terminal with mint phosphor"),
+    MIDNIGHT_ICE("Midnight Ice", "Cool obsidian navy with cyan-teal glow"),
+    HIGH_CONTRAST_LIGHT("Pro Daylight", "High-contrast crisp paper light theme", forcesLight = true)
+}
+
 data class Trade(
     val id: Long = 0,
     val date: String, // "YYYY-MM-DD"
@@ -142,12 +155,14 @@ data class UserSettings(
     val currency: CurrencyCode = CurrencyCode.USD,
     val monthlyProfitTarget: Double = 2500.0,
     val maxDailyLossLimit: Double = 300.0,
+    val maxTrailingDrawdown: Double = 2000.0,
     val pinLockEnabled: Boolean = false,
     val pinCode: String = "",
     val eveningReminderEnabled: Boolean = true,
     val reminderHour: Int = 20,
     val reminderMinute: Int = 0,
     val isDarkTheme: Boolean = true,
+    val themePreset: AppThemePreset = AppThemePreset.EMERALD_OBSIDIAN,
     val fredApiKey: String = "",
     val finnhubApiKey: String = "",
     val geminiApiKey: String = "",

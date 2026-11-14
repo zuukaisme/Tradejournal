@@ -24,6 +24,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.BookmarkAdd
+import androidx.compose.material.icons.filled.CompareArrows
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.PlayArrow
@@ -103,23 +105,31 @@ fun BacktestScreen(
             .background(MaterialTheme.colorScheme.background)
             .padding(horizontal = 16.dp, vertical = 8.dp)
     ) {
+        val compareLabel = if (state.savedRuns.isEmpty()) "Compare" else "Compare (${state.savedRuns.size})"
         LiquidGlassTabRow(
-            tabs = listOf("Run Backtest", "AI Builder"),
-            icons = listOf(Icons.Default.PlayArrow, Icons.Default.AutoAwesome),
+            tabs = listOf("Backtest", "AI Builder", compareLabel),
+            icons = listOf(Icons.Default.PlayArrow, Icons.Default.AutoAwesome, Icons.Default.CompareArrows),
             selectedIndex = state.selectedTab,
             onTabSelected = { backtestViewModel.selectTab(it) }
         )
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        if (state.selectedTab == 1) {
-            AiStrategyBuilderContent(
+        when (state.selectedTab) {
+            1 -> AiStrategyBuilderContent(
                 state = state,
                 backtestViewModel = backtestViewModel,
                 modifier = Modifier.weight(1f)
             )
-        } else {
-            LazyColumn(
+            2 -> BacktestCompareContent(
+                savedRuns = state.savedRuns,
+                runAId = state.compareRunAId,
+                runBId = state.compareRunBId,
+                onSelectRun = backtestViewModel::selectCompareSlot,
+                onDeleteRun = backtestViewModel::deleteSavedRun,
+                modifier = Modifier.weight(1f)
+            )
+            else -> LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
@@ -373,6 +383,44 @@ fun BacktestScreen(
             // Row of 4 Summary Stat Cards
             item {
                 BacktestSummaryCardsRow(result = result)
+            }
+
+            // Save Run for Side-by-Side Comparison
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    OutlinedButton(
+                        onClick = { backtestViewModel.saveCurrentResult() },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("save_backtest_run_button"),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.BookmarkAdd,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Save Run to Compare", fontWeight = FontWeight.Bold)
+                    }
+
+                    state.runSavedFeedback?.let { feedback ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = feedback,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = positiveColor
+                            )
+                            TextButton(onClick = { backtestViewModel.selectTab(2) }) {
+                                Text("View Compare", fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
             }
 
             // Equity Curve Line Chart (Canvas)

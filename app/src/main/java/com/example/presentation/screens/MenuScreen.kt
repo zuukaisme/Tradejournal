@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
 import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.QueryStats
@@ -199,6 +200,18 @@ fun MenuScreen(
                 badgeText = "Engine",
                 testTag = "menu_item_backtest",
                 onClick = { viewModel.navigateTo(AppScreen.BACKTEST) }
+            )
+        }
+
+        item {
+            MenuNavigationCard(
+                icon = Icons.Default.Calculate,
+                iconTint = Color(0xFF00D4AA),
+                title = "Lot Size & Risk Calculator",
+                subtitle = "Position sizing for SyntX indices, XAUUSD & FX pairs",
+                badgeText = "1R-3R",
+                testTag = "menu_item_risk_calc",
+                onClick = { viewModel.navigateTo(AppScreen.RISK_CALC) }
             )
         }
 
