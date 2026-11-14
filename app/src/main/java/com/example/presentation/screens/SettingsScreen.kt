@@ -716,6 +716,11 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold
                     )
+                    Text(
+                        text = "Automatic Android backup is enabled by default. When Google device backup is enabled on your phone, TradePulse backs up its database, including trades, strategies, bots, settings and saved API keys, so Android can restore them after reinstalling.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     Spacer(modifier = Modifier.height(10.dp))
 
                     // Export CSV
