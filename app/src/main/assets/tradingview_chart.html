@@ -142,8 +142,26 @@ function renderChart() {
     hotlist: false,
     support_host: "https://www.tradingview.com"
   });
-  script.onload = () => { fallback.style.display = "none"; };
-  script.onerror = () => { fallback.textContent = "TradingView could not load. Check your internet connection and try again."; };
+  script.onerror = () => {
+    fallback.textContent = "TradingView could not load. Check your internet connection and try again.";
+  };
+
+  const observer = new MutationObserver(() => {
+    const frame = container.querySelector("iframe");
+    if (frame) {
+      frame.addEventListener("load", () => {
+        fallback.style.display = "none";
+      }, { once: true });
+      observer.disconnect();
+    }
+  });
+  observer.observe(container, { childList: true, subtree: true });
+
+  const loadTimeout = window.setTimeout(() => {
+    if (fallback.style.display !== "none") {
+      fallback.textContent = "Chart is taking too long to load. Check your connection or open it on TradingView.";
+    }
+  }, 20000);
   container.appendChild(script);
   root.appendChild(container);
   fallback.textContent = "Loading " + activeSymbol.name + "…";
