@@ -1,0 +1,6 @@
+{
+  "name": "TradePulse",
+  "description": "Offline trading journal with trade logging, PnL calendar, performance analytics, strategy management, and MQL5 bot library.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
