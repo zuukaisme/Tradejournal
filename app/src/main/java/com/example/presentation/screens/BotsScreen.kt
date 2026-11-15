@@ -1,5 +1,9 @@
 package com.example.presentation.screens
 
+import android.provider.OpenableColumns
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -54,6 +58,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -553,6 +558,7 @@ fun BotEditorBottomSheet(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val strategies by viewModel.strategies.collectAsState()
+    val context = LocalContext.current
 
     var name by remember { mutableStateOf(bot?.name ?: "") }
     var description by remember { mutableStateOf(bot?.description ?: "") }
@@ -565,6 +571,48 @@ fun BotEditorBottomSheet(
     var code by remember { mutableStateOf(bot?.code ?: "// Paste your MQL5 source code here\n") }
     var backtestNotes by remember { mutableStateOf(bot?.backtestNotes ?: "") }
     var changeNote by remember { mutableStateOf("") }
+
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val fileName = context.contentResolver.query(
+                    uri,
+                    arrayOf(OpenableColumns.DISPLAY_NAME),
+                    null,
+                    null,
+                    null
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) cursor.getString(0) else null
+                } ?: "ImportedBot.mq5"
+                val extension = fileName.substringAfterLast('.', "").lowercase(Locale.US)
+                require(extension in setOf("mq5", "mq4", "mqh", "txt")) {
+                    "Choose an MQL source file: .mq5, .mq4, .mqh or .txt."
+                }
+                val importedCode = context.contentResolver.openInputStream(uri)
+                    ?.bufferedReader()
+                    ?.use { it.readText() }
+                    ?: error("The selected file could not be read.")
+                require(importedCode.isNotBlank()) { "The selected file is empty." }
+                require(importedCode.length <= 2_000_000) { "The selected file is larger than 2 MB." }
+                code = importedCode
+                if (bot == null || name.isBlank()) {
+                    name = fileName.substringBeforeLast('.')
+                }
+                if (bot == null) {
+                    type = if (extension == "mqh") BotType.LIBRARY else BotType.EXPERT_ADVISOR
+                }
+                Toast.makeText(context, "Imported $fileName", Toast.LENGTH_SHORT).show()
+            } catch (error: Exception) {
+                Toast.makeText(
+                    context,
+                    error.message ?: "Unable to import this file.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
 
     var typeDropdownExpanded by remember { mutableStateOf(false) }
     var statusDropdownExpanded by remember { mutableStateOf(false) }
@@ -678,10 +726,20 @@ fun BotEditorBottomSheet(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "MQL5 Source Code (.mq5)",
+                text = "Source Code File",
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold
             )
+            Spacer(modifier = Modifier.height(4.dp))
+            OutlinedButton(
+                onClick = { filePickerLauncher.launch(arrayOf("*/*")) },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Icon(Icons.Default.Code, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Import .mq5, .mq4, .mqh or .txt")
+            }
             Spacer(modifier = Modifier.height(4.dp))
 
             // Editable MQL5 Code Area
