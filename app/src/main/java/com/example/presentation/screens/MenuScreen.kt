@@ -150,6 +150,13 @@ fun MenuScreen(
         item {
             Text(
                 text = "TRADING TOOLS",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = accentColor,
+                modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+            )
+        }
+
         item {
             MenuNavigationCard(
                 icon = Icons.Default.CalendarMonth,
@@ -159,13 +166,6 @@ fun MenuScreen(
                 badgeText = "NEWS",
                 testTag = "menu_item_economic_calendar",
                 onClick = { viewModel.navigateTo(AppScreen.ECONOMIC_CALENDAR) }
-            )
-        }
-
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Bold,
-                color = accentColor,
-                modifier = Modifier.padding(start = 4.dp, top = 2.dp)
             )
         }
 
