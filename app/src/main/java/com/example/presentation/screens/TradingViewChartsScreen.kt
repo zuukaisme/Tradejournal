@@ -87,7 +87,7 @@ fun TradingViewChartsScreen(modifier: Modifier = Modifier) {
                 .bufferedReader()
                 .use { it.readText() }
             loadDataWithBaseURL(
-                "https://www.tradingview.com/",
+                "https://localhost/",
                 html,
                 "text/html",
                 "UTF-8",
