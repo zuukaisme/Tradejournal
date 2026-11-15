@@ -26,6 +26,7 @@ import com.example.data.local.TradingDatabase
 import com.example.data.repository.TradingRepository
 import com.example.domain.model.PythonStrategy
 import com.example.domain.model.UserSettings
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
@@ -196,8 +197,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
         val cacheFile = File(context.cacheDir, "tradepulse_csv_${totalBytes}_${displayName.hashCode()}_${System.currentTimeMillis()}.csv")
 
         lateinit var job: Job
-        job = viewModelScope.launch {
-            csvImportJob = job
+        job = viewModelScope.launch(start = CoroutineStart.LAZY) {
             _uiState.update {
                 it.copy(
                     isImportingCsv = true,
@@ -281,6 +281,8 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                 if (csvImportJob === job) csvImportJob = null
             }
         }
+        csvImportJob = job
+        job.start()
     }
 
     fun cancelCsvImport() {
