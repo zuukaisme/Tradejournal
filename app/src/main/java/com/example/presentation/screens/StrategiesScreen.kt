@@ -74,6 +74,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.backtest.BacktestCodec
 import com.example.domain.model.PythonStrategy
 import com.example.domain.model.Strategy
 import com.example.presentation.TradingViewModel
@@ -124,9 +125,9 @@ fun StrategiesScreen(
                 val readResult = withContext(Dispatchers.IO) {
                     runCatching {
                         val fileName = resolveFileDisplayName(context, uri)
-                        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                            ?: error("Unable to open selected .py file.")
-                        val text = String(bytes, Charsets.UTF_8).removePrefix("\uFEFF")
+                        val text = context.contentResolver.openInputStream(uri)?.use { stream ->
+                            BacktestCodec.readTextStreamWithBom(stream, 12L * 1024L * 1024L)
+                        } ?: error("Unable to open selected .py file.")
                         if (text.isBlank()) error("Selected .py file is empty.")
                         val baseName = fileName.removeSuffix(".py").ifBlank { "Custom Strategy" }
                         PendingPythonUpload(suggestedName = baseName, code = text)

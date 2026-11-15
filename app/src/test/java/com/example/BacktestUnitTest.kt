@@ -1,6 +1,8 @@
 package com.example
 
 import com.example.backtest.BacktestCodec
+import com.example.backtest.BacktestTimeframe
+import com.example.backtest.CandleTimeframeResampler
 import com.example.backtest.BacktestParseOutcome
 import com.example.backtest.ExitReason
 import com.example.backtest.Side
@@ -8,8 +10,62 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayInputStream
+import java.io.File
 
 class BacktestUnitTest {
+
+    @Test
+    fun streamCsvToCacheFile_handlesUtf16AndKeepsOnlyPreviewInMemory() {
+        val csv = buildString {
+            appendLine("<DATE>\t<TIME>\t<OPEN>\t<HIGH>\t<LOW>\t<CLOSE>\t<TICKVOL>")
+            repeat(700) {
+                appendLine("2025.01.02\t09:00:00\t100\t102\t99\t101\t10")
+            }
+        }
+        val bytes = byteArrayOf(0xFF.toByte(), 0xFE.toByte()) + csv.toByteArray(Charsets.UTF_16LE)
+        val output = File.createTempFile("tradepulse-stream-", ".csv")
+
+        try {
+            val inspection = BacktestCodec.streamCsvToCacheFile(ByteArrayInputStream(bytes), output)
+
+            assertEquals("UTF-16LE (BOM)", inspection.detectedEncoding)
+            assertEquals("Tab (MT5)", inspection.detectedDelimiter)
+            assertEquals(700, inspection.estimatedRows)
+            assertTrue(inspection.sampleLines.size <= 605)
+            assertTrue(output.length() > 0L)
+            assertTrue(output.readText(Charsets.UTF_8).startsWith("<DATE>\t<TIME>"))
+        } finally {
+            output.delete()
+        }
+    }
+
+    @Test
+    fun resampleCsvFile_matchesInMemoryResamplerForChronologicalData() {
+        val csv = buildString {
+            appendLine("<DATE>\t<TIME>\t<OPEN>\t<HIGH>\t<LOW>\t<CLOSE>\t<TICKVOL>")
+            appendLine("2025.02.07\t10:00:00\t2850.0\t2854.0\t2849.0\t2852.0\t100")
+            appendLine("2025.02.07\t10:05:00\t2852.0\t2858.5\t2851.0\t2856.0\t150")
+            appendLine("2025.02.07\t10:10:00\t2856.0\t2857.0\t2847.5\t2853.5\t200")
+            appendLine("2025.02.07\t10:15:00\t2853.5\t2861.0\t2853.0\t2860.0\t120")
+            appendLine("2025.02.07\t10:20:00\t2860.0\t2862.0\t2858.0\t2859.0\t80")
+        }
+        val source = File.createTempFile("tradepulse-source-", ".csv")
+        val output = File.createTempFile("tradepulse-resampled-", ".csv")
+
+        try {
+            source.writeText(csv, Charsets.UTF_8)
+            val expected = CandleTimeframeResampler.resampleCsv(csv, BacktestTimeframe.M15)
+            val actual = CandleTimeframeResampler.resampleCsvFile(source, BacktestTimeframe.M15, output)
+
+            assertEquals(expected.sourceCandleCount, actual.sourceCandleCount)
+            assertEquals(expected.outputCandleCount, actual.outputCandleCount)
+            assertEquals(expected.csvText, output.readText(Charsets.UTF_8))
+        } finally {
+            source.delete()
+            output.delete()
+        }
+    }
 
     @Test
     fun decodeCsvBytes_handlesUtf16LeAndBeBom() {
