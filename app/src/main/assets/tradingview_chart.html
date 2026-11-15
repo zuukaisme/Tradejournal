@@ -74,8 +74,23 @@ let activeCategory = "Deriv Synthetics";
 let activeSymbol = markets[activeCategory][3];
 
 function setStatus(message) {
-  document.getElementById("fallback").textContent = message;
+  const fallback = document.getElementById("fallback");
+  fallback.textContent = message;
+  fallback.style.display = "block";
 }
+
+window.showNativeError = function(message) {
+  setStatus("TradingView error: " + message);
+};
+
+window.onerror = function(message, source, line, column) {
+  setStatus("Chart JavaScript error: " + message + " (" + source + ":" + line + ")");
+};
+
+window.addEventListener("unhandledrejection", event => {
+  const reason = event.reason && event.reason.message ? event.reason.message : String(event.reason);
+  setStatus("Chart script error: " + reason);
+});
 
 function renderCategories() {
   const root = document.getElementById("categories");
@@ -146,9 +161,12 @@ function renderChart() {
     support_host: "https://www.tradingview.com"
   });
 
+  script.onload = () => {
+    setStatus("TradingView's chart script loaded. Waiting for the chart frame…");
+  };
+
   script.onerror = () => {
-    setStatus("TradingView's chart script failed to load. Check the connection or review WebView logs.");
-    console.error("TradingView embed script failed:", script.src);
+    setStatus("TradingView's chart script could not download. Check your connection or the TradingView service.");
   };
 
   const observer = new MutationObserver(() => {
@@ -157,8 +175,7 @@ function renderChart() {
       observer.disconnect();
       setStatus("TradingView frame created. Waiting for chart content; frame loading alone does not confirm a working chart.");
       frame.addEventListener("load", () => {
-        setStatus("TradingView frame loaded. If the chart is still blank, check the TradingViewWebView errors in Android logs.");
-        console.info("TradingView iframe load event fired; chart rendering is not confirmed.");
+        setStatus("TradingView frame loaded, but chart rendering is not confirmed. If this remains blank, the embed may be blocked or the symbol may not be supported.");
       }, { once: true });
     }
   });
@@ -166,15 +183,14 @@ function renderChart() {
 
   window.setTimeout(() => {
     if (!container.querySelector("iframe")) {
-      setStatus("No TradingView chart frame appeared. Check the TradingViewWebView errors in Android logs.");
-      console.error("TradingView iframe was not created within 20 seconds.");
+      setStatus("No TradingView chart frame appeared after 20 seconds. The embed script may be blocked or unavailable.");
     } else {
-      setStatus("TradingView frame exists, but chart rendering has not been verified. If blank, check Android logs for TradingViewWebView errors.");
+      setStatus("TradingView frame exists, but its chart content has not been confirmed. Check for a visible error above.");
     }
   }, 20000);
 
-  container.appendChild(script);
   root.appendChild(container);
+  container.appendChild(script);
 }
 
 renderCategories();
