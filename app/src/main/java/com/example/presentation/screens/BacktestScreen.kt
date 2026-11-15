@@ -385,6 +385,10 @@ fun BacktestScreen(
                 BacktestSummaryCardsRow(result = result)
             }
 
+            item {
+                BacktestTradeProgressCard(result = result)
+            }
+
             // Save Run for Side-by-Side Comparison
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -647,6 +651,106 @@ private fun BacktestErrorCard(error: BacktestError) {
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun BacktestTradeProgressCard(result: BacktestResult) {
+    val summary = result.summary
+    val total = summary.totalTrades
+    val winProgress = if (total > 0) summary.wins.toFloat() / total else 0f
+    val lossProgress = if (total > 0) summary.losses.toFloat() / total else 0f
+    val positiveColor = MaterialTheme.colorScheme.primary
+    val negativeColor = MaterialTheme.colorScheme.error
+
+    LiquidGlassCard {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(
+                    text = "Trade Progress",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "$total trades taken",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Text(
+                text = "${formatOneDec(summary.winRatePct)}%",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = if (summary.winRatePct >= 50.0) positiveColor else negativeColor
+            )
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            if (winProgress > 0f) {
+                Box(
+                    modifier = Modifier
+                        .weight(winProgress)
+                        .height(9.dp)
+                        .background(positiveColor, RoundedCornerShape(8.dp))
+                )
+            }
+            if (lossProgress > 0f) {
+                Box(
+                    modifier = Modifier
+                        .weight(lossProgress)
+                        .height(9.dp)
+                        .background(negativeColor, RoundedCornerShape(8.dp))
+                )
+            }
+            if (total == 0) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(9.dp)
+                        .background(
+                            MaterialTheme.colorScheme.surfaceVariant,
+                            RoundedCornerShape(8.dp)
+                        )
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            ProgressMetric("Wins", summary.wins.toString(), positiveColor)
+            ProgressMetric("Losses", summary.losses.toString(), negativeColor)
+            ProgressMetric("Skipped", summary.skippedByStopCap.toString(), MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun ProgressMetric(label: String, value: String, color: Color) {
+    Column {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            color = color
+        )
     }
 }
 
