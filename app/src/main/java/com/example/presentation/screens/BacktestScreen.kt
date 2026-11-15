@@ -730,10 +730,27 @@ private fun BacktestTradeProgressCard(result: BacktestResult) {
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            MetricRow("Wins", summary.wins.toString(), positiveColor)
-            MetricRow("Losses", summary.losses.toString(), negativeColor)
-            MetricRow("Skipped by stop cap", summary.skippedByStopCap.toString())
+            ProgressMetric("Wins", summary.wins.toString(), positiveColor)
+            ProgressMetric("Losses", summary.losses.toString(), negativeColor)
+            ProgressMetric("Skipped", summary.skippedByStopCap.toString(), MaterialTheme.colorScheme.onSurfaceVariant)
         }
+    }
+}
+
+@Composable
+private fun ProgressMetric(label: String, value: String, color: Color) {
+    Column {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            color = color
+        )
     }
 }
 
