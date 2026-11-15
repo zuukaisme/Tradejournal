@@ -92,7 +92,7 @@ fun DailyReviewBottomSheet(
             ) {
                 Column {
                     Text(
-                        text = "End of Day Reflection",
+                        text = "Daily Trading Psychology Review",
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold
                     )
@@ -170,8 +170,8 @@ fun DailyReviewBottomSheet(
             OutlinedTextField(
                 value = reflection,
                 onValueChange = { reflection = it },
-                label = { Text("What went well today?") },
-                placeholder = { Text("Patience, clean execution, sticking to stop loss...") },
+                label = { Text("How did you feel and what went well?") },
+                placeholder = { Text("Confident, anxious, impatient, focused, patient...") },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(95.dp),
@@ -183,8 +183,8 @@ fun DailyReviewBottomSheet(
             OutlinedTextField(
                 value = lessons,
                 onValueChange = { lessons = it },
-                label = { Text("Lessons learned & What to improve?") },
-                placeholder = { Text("Avoid trading during low liquidity, don't rush...") },
+                label = { Text("Mistakes, triggers & lessons learned") },
+                placeholder = { Text("FOMO, revenge trading, overtrading, early exits, missed confirmations...") },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(95.dp),
