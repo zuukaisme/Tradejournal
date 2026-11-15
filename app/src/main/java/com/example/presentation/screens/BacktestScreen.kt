@@ -175,6 +175,55 @@ fun BacktestScreen(
                             )
                         }
 
+                        if (state.isImportingCsv) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f), RoundedCornerShape(12.dp))
+                                    .padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("Importing large CSV", fontWeight = FontWeight.SemiBold)
+                                    Text(
+                                        if (state.importTotalBytes > 0L) {
+                                            "${(state.importProgress * 100).toInt()}%"
+                                        } else {
+                                            "Reading..."
+                                        },
+                                        color = positiveColor,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                LinearProgressIndicator(
+                                    progress = { state.importProgress },
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                val readMb = state.importBytesRead / (1024.0 * 1024.0)
+                                val totalMb = state.importTotalBytes / (1024.0 * 1024.0)
+                                Text(
+                                    if (state.importTotalBytes > 0L) {
+                                        String.format(Locale.US, "%.1f MB of %.1f MB", readMb, totalMb)
+                                    } else {
+                                        String.format(Locale.US, "%.1f MB processed", readMb)
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                TextButton(
+                                    onClick = backtestViewModel::cancelCsvImport,
+                                    modifier = Modifier.align(Alignment.End)
+                                ) {
+                                    Text("Cancel import")
+                                }
+                            }
+                        }
+
                         if (state.fileName != null) {
                             Spacer(modifier = Modifier.height(6.dp))
                             val tfSummary = state.detectedTimeframeLabel.ifBlank { "Unknown" }
@@ -391,7 +440,7 @@ fun BacktestScreen(
                 // Run Button + Loading state
                 Button(
                     onClick = { backtestViewModel.run() },
-                    enabled = !state.isLoading && state.hasCsvBytes && state.selectedStrategy != null,
+                    enabled = !state.isLoading && !state.isImportingCsv && state.hasCsvBytes && state.selectedStrategy != null,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = positiveColor,
                         contentColor = onPrimaryColor
