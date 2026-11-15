@@ -353,10 +353,13 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                 }
                 val runTuple = withContext(Dispatchers.Default) {
                     val targetTf = snapshot.selectedTimeframe
-                    val backtestFile = if (targetTf == BacktestTimeframe.NATIVE) {
-                        sourceFile
+                    val backtestFile: File
+                    val candleCount: Int
+                    if (targetTf == BacktestTimeframe.NATIVE) {
+                        backtestFile = sourceFile
+                        candleCount = snapshot.estimatedRows
                     } else {
-                        resampledCache[targetTf] ?: CandleTimeframeResampler.resampleCsvFile(
+                        val resampled = resampledCache[targetTf] ?: CandleTimeframeResampler.resampleCsvFile(
                             sourceFile = sourceFile,
                             target = targetTf,
                             outputFile = File(
@@ -364,6 +367,8 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                                 "tradepulse_resampled_${sourceFile.name}_${targetTf.shortLabel}.csv"
                             )
                         ).also { resampledCache[targetTf] = it }
+                        backtestFile = resampled.file
+                        candleCount = resampled.outputCandleCount
                     }
                     val jsonString = PythonBacktestRunner.runWithStrategyFile(
                         context = appContext,
@@ -374,11 +379,6 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                         pointSize = pointSize,
                         progressListener = listener
                     )
-                    val candleCount = if (targetTf == BacktestTimeframe.NATIVE) {
-                        snapshot.estimatedRows
-                    } else {
-                        (backtestFile as ResampledCsvFileResult).outputCandleCount
-                    }
                     val parsed = BacktestCodec.parseBacktestJson(jsonString)
                     Triple(parsed, candleCount, targetTf)
                 }
