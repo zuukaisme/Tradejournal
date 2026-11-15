@@ -66,6 +66,8 @@ import com.example.presentation.screens.StrategyGuideScreen
 import com.example.presentation.screens.TradeEntryBottomSheet
 import com.example.presentation.screens.TradesScreen
 import com.example.presentation.screens.TradingViewChartsScreen
+import com.example.presentation.screens.EconomicCalendarScreen
+import com.example.presentation.screens.PsychologyScreen
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -111,6 +113,8 @@ fun MainScreen(
         AppScreen.BACKTEST,
         AppScreen.RISK_CALC,
         AppScreen.CHARTS,
+        AppScreen.ECONOMIC_CALENDAR,
+        AppScreen.PSYCHOLOGY,
         AppScreen.SETTINGS
     )
 
@@ -180,6 +184,8 @@ fun MainScreen(
                                     AppScreen.BACKTEST -> "Strategy Backtester"
                                     AppScreen.RISK_CALC -> "Risk & Lot Calculator"
                                     AppScreen.CHARTS -> "Trading Charts"
+                                    AppScreen.ECONOMIC_CALENDAR -> "Economic Calendar"
+                                    AppScreen.PSYCHOLOGY -> "Trading Psychology"
                                     AppScreen.SETTINGS -> "Settings & Storage"
                                 },
                                 style = MaterialTheme.typography.titleMedium,
@@ -198,6 +204,8 @@ fun MainScreen(
                                     AppScreen.BACKTEST -> "Embedded Python & MT5 simulator"
                                     AppScreen.RISK_CALC -> "WLTrade SyntX, Gold & FX sizing"
                                     AppScreen.CHARTS -> "TradingView charts for live markets"
+                                    AppScreen.ECONOMIC_CALENDAR -> "News by impact, currency and date"
+                                    AppScreen.PSYCHOLOGY -> "Emotions, discipline and execution patterns"
                                     AppScreen.SETTINGS -> "Risk limits, backup & API keys"
                                 },
                                 style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
@@ -318,6 +326,8 @@ fun MainScreen(
                     )
                     AppScreen.RISK_CALC -> RiskCalculatorScreen(viewModel = viewModel)
                     AppScreen.CHARTS -> TradingViewChartsScreen()
+                    AppScreen.ECONOMIC_CALENDAR -> EconomicCalendarScreen(viewModel = viewModel)
+                    AppScreen.PSYCHOLOGY -> PsychologyScreen(viewModel = viewModel)
                     AppScreen.SETTINGS -> SettingsScreen(viewModel = viewModel)
                 }
             }
