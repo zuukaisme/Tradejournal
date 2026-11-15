@@ -10,7 +10,12 @@ import com.example.data.local.VaultRestoreSummary
 import com.example.data.repository.TradingRepository
 import com.example.data.repository.EconomicCalendarRepository
 import com.example.domain.model.Bot
+import android.content.Context
 import android.net.Uri
+import com.example.backtest.AiModelCatalog
+import com.example.backtest.AiModelOption
+import com.example.backtest.AiProvider
+import com.example.backtest.AiStrategyGenerator
 import com.example.domain.model.AppThemePreset
 import com.example.domain.model.BotVersion
 import com.example.domain.model.BottomNavStyle
@@ -24,6 +29,8 @@ import com.example.domain.model.TimePeriod
 import com.example.domain.model.Trade
 import com.example.domain.model.TradeResult
 import com.example.domain.model.UserSettings
+import com.example.domain.usecase.GoldNewsFeedMapper
+import com.example.domain.usecase.GoldOutlookModel
 import com.example.domain.usecase.Mt5ImportResult
 import com.example.domain.usecase.Mt5TradeHistoryImporter
 import com.example.domain.usecase.StatsCalculator
@@ -38,11 +45,25 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
+
+data class OutlookAiConfigState(
+    val selectedProvider: AiProvider = AiProvider.CLAUDE,
+    val selectedModelId: String = AiModelCatalog.defaultModelFor(AiProvider.CLAUDE).id,
+    val availableModels: List<AiModelOption> = AiModelCatalog.modelsFor(AiProvider.CLAUDE),
+    val useCustomModel: Boolean = false,
+    val customModelInput: String = "",
+    val apiKeyInput: String = "",
+    val isFetchingModels: Boolean = false,
+    val aiStatusMessage: String? = null,
+    val aiError: String? = null,
+    val lastUsedModelLabel: String? = null
+)
 
 enum class AppScreen {
     CALENDAR,
@@ -152,9 +173,15 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
     private val _vaultNoticeMessage = MutableStateFlow<String?>(null)
     val vaultNoticeMessage: StateFlow<String?> = _vaultNoticeMessage.asStateFlow()
 
-    init {
-        startLocalVaultLifecycle()
-    }
+    private var latestSettings: UserSettings = UserSettings()
+    private var hasHydratedOutlookAiPrefs = false
+    private var hasTriggeredStartupGoldNewsPull = false
+    private var lastOutlookFetchAt = 0L
+    private var lastFetchedFredKey = ""
+    private val outlookLiveModelsByProvider = mutableMapOf<AiProvider, List<AiModelOption>>()
+
+    private val _outlookAiState = MutableStateFlow(OutlookAiConfigState())
+    val outlookAiState: StateFlow<OutlookAiConfigState> = _outlookAiState.asStateFlow()
 
     val newsReleases: StateFlow<List<com.example.domain.model.NewsRelease>> = repository.getAllReleases()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -165,10 +192,17 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
     val selectedNewsEventType = MutableStateFlow(com.example.domain.model.NewsEventType.NFP)
 
     val macroIndicators = MutableStateFlow<List<com.example.domain.model.MacroIndicator>>(emptyList())
+    val goldNewsEvents = MutableStateFlow<List<EconomicCalendarEvent>>(emptyList())
+    val lastGoldNewsSyncAt = MutableStateFlow(0L)
 
     val isOutlookLoading = MutableStateFlow(false)
     val outlookAiSummary = MutableStateFlow<String?>(null)
     val outlookStatusMessage = MutableStateFlow<String?>(null)
+
+    init {
+        startLocalVaultLifecycle()
+        startOutlookAiSettingsSync()
+    }
 
     val calibrationStats: StateFlow<com.example.domain.model.ModelCalibrationStats> = outlookPredictions.combine(outlookPredictions) { preds, _ ->
         com.example.domain.usecase.GoldOutlookModel.calculateCalibration(preds)
@@ -569,6 +603,9 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             repository.clearAllData()
             macroIndicators.value = emptyList()
+            goldNewsEvents.value = emptyList()
+            lastGoldNewsSyncAt.value = 0L
+            lastOutlookFetchAt = 0L
             outlookAiSummary.value = null
             outlookStatusMessage.value = null
         }
@@ -579,6 +616,9 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
         selectedNewsEventType.value = type
         outlookAiSummary.value = null
         outlookStatusMessage.value = null
+        if (outlookPredictions.value.none { it.eventType == type }) {
+            refreshOutlook(force = false)
+        }
     }
 
     fun togglePredictionTraded(prediction: com.example.domain.model.OutlookPrediction) {
@@ -588,59 +628,131 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun refreshOutlook() {
+    fun refreshOutlook(force: Boolean = true) {
+        if (isOutlookLoading.value) return
+        val now = System.currentTimeMillis()
+        if (!force &&
+            lastOutlookFetchAt > 0L &&
+            now - lastOutlookFetchAt < 5 * 60 * 1000L &&
+            (goldNewsEvents.value.isNotEmpty() || outlookPredictions.value.isNotEmpty())
+        ) {
+            return
+        }
+        lastOutlookFetchAt = now
+
         viewModelScope.launch {
             isOutlookLoading.value = true
             outlookStatusMessage.value = null
-            val currentSettings = settings.value
+
+            val currentSettings = latestSettings
             val fredKey = currentSettings.fredApiKey.trim()
-            val calendarResult = repository.fetchXoomarEconomicCalendar()
-            val fetchedReleases = calendarResult.getOrElse { error ->
-                outlookStatusMessage.value = "Economic calendar fetch failed: ${error.message}"
+
+            // Pull both structured NFP/CPI calendar and live Faireconomy weekly USD Gold catalysts
+            val xoomarResult = repository.fetchXoomarEconomicCalendar()
+            val xoomarReleases = xoomarResult.getOrElse { emptyList() }
+
+            val calendarResult = economicCalendarRepository.fetchEvents()
+            val calendarEvents = calendarResult.getOrElse { emptyList() }
+            if (calendarEvents.isNotEmpty()) {
+                economicCalendarEvents.value = calendarEvents
+                lastEconomicCalendarFetchAt = System.currentTimeMillis()
+                goldNewsEvents.value = GoldNewsFeedMapper.filterGoldMovingEvents(calendarEvents, now)
+            }
+            val calendarReleases = if (calendarEvents.isNotEmpty()) {
+                GoldNewsFeedMapper.toNewsReleases(calendarEvents, now)
+            } else {
                 emptyList()
             }
-            if (fetchedReleases.isNotEmpty()) {
-                repository.insertAllReleases(fetchedReleases)
+
+            val combinedFetched = (xoomarReleases + calendarReleases)
+                .distinctBy { it.eventType to it.timestamp }
+            val existingReleaseKeys = newsReleases.value
+                .map { it.eventType to it.timestamp }
+                .toHashSet()
+            val newReleasesToInsert = combinedFetched.filter {
+                (it.eventType to it.timestamp) !in existingReleaseKeys
+            }
+            if (newReleasesToInsert.isNotEmpty()) {
+                repository.insertAllReleases(newReleasesToInsert)
             }
 
+            var fredError: String? = null
             if (fredKey.isNotBlank()) {
+                lastFetchedFredKey = fredKey
                 repository.fetchFredMacroIndicators(fredKey)
                     .onSuccess { indicators -> macroIndicators.value = indicators }
-                    .onFailure { err -> outlookStatusMessage.value = "FRED fetch failed: ${err.message}" }
+                    .onFailure { err -> fredError = err.message }
             }
 
-            val event = selectedNewsEventType.value
-            val allEventReleases = (fetchedReleases + newsReleases.value)
-                .filter { it.eventType == event }
-                .distinctBy { it.timestamp }
-            val upcoming = allEventReleases.firstOrNull { it.isUpcoming } ?: allEventReleases.firstOrNull()
-            val historical = allEventReleases.filter { !it.isUpcoming }
+            val allKnownReleases = (combinedFetched + newsReleases.value)
+                .distinctBy { it.eventType to it.timestamp }
             val indicators = macroIndicators.value
+            val claimsInd = indicators.firstOrNull { it.id == "claims" }
+            val claimsTrend = if (claimsInd != null && claimsInd.previousValue != 0.0) {
+                ((claimsInd.currentValue - claimsInd.previousValue) / claimsInd.previousValue) * 100.0
+            } else 0.0
+            val unrateInd = indicators.firstOrNull { it.id == "unrate" }
+            val unrateChange = if (unrateInd != null) unrateInd.currentValue - unrateInd.previousValue else 0.0
+            val wageInd = indicators.firstOrNull { it.id == "wages" }
+            val wageGrowth = if (wageInd != null && wageInd.previousValue != 0.0) {
+                ((wageInd.currentValue - wageInd.previousValue) / wageInd.previousValue) * 100.0
+            } else 0.0
 
-            if (upcoming != null || indicators.isNotEmpty()) {
-                val claimsInd = indicators.firstOrNull { it.id == "claims" }
-                val claimsTrend = if (claimsInd != null && claimsInd.previousValue != 0.0) {
-                    ((claimsInd.currentValue - claimsInd.previousValue) / claimsInd.previousValue) * 100.0
-                } else 0.0
-                val unrateInd = indicators.firstOrNull { it.id == "unrate" }
-                val unrateChange = if (unrateInd != null) unrateInd.currentValue - unrateInd.previousValue else 0.0
-                val wageInd = indicators.firstOrNull { it.id == "wages" }
-                val wageGrowth = if (wageInd != null && wageInd.previousValue != 0.0) {
-                    ((wageInd.currentValue - wageInd.previousValue) / wageInd.previousValue) * 100.0
-                } else 0.0
+            val nextGoldCatalyst = goldNewsEvents.value.firstOrNull { it.timestamp >= now - 30 * 60_000L }
+                ?: goldNewsEvents.value.firstOrNull()
+            val utcDateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
+                timeZone = java.util.TimeZone.getTimeZone("UTC")
+            }
 
-                val newPred = com.example.domain.usecase.GoldOutlookModel.computePrediction(
-                    eventType = event,
-                    releaseDate = upcoming?.dateString ?: "Pending Calendar",
-                    releaseTimestamp = upcoming?.timestamp ?: System.currentTimeMillis(),
-                    previous = upcoming?.previous ?: 0.0,
-                    claimsTrend = claimsTrend,
-                    unemploymentChange = unrateChange,
-                    wageGrowthYoY = wageGrowth,
-                    historicalReleases = historical
-                )
-                repository.savePrediction(newPred)
-            } else if (outlookStatusMessage.value == null) {
+            // Recompute predictions for both NFP & CPI so tab switching and Menu preview stay fresh
+            var anyPredictionUpdated = false
+            for (eventType in com.example.domain.model.NewsEventType.entries) {
+                val eventReleases = allKnownReleases.filter { it.eventType == eventType }
+                val upcoming = eventReleases.firstOrNull { it.isUpcoming } ?: eventReleases.firstOrNull()
+                val historical = eventReleases.filter { !it.isUpcoming }
+
+                if (upcoming != null || indicators.isNotEmpty() || nextGoldCatalyst != null) {
+                    val releaseDate = upcoming?.dateString ?: nextGoldCatalyst?.let {
+                        "${it.title} (${utcDateFormat.format(java.util.Date(it.timestamp))})"
+                    } ?: "Live Macro Model"
+                    val releaseTimestamp = upcoming?.timestamp
+                        ?: nextGoldCatalyst?.timestamp
+                        ?: now
+
+                    val computed = GoldOutlookModel.computePrediction(
+                        eventType = eventType,
+                        releaseDate = releaseDate,
+                        releaseTimestamp = releaseTimestamp,
+                        previous = upcoming?.previous ?: 0.0,
+                        claimsTrend = claimsTrend,
+                        unemploymentChange = unrateChange,
+                        wageGrowthYoY = wageGrowth,
+                        historicalReleases = historical
+                    )
+                    val existing = outlookPredictions.value.firstOrNull { it.eventType == eventType }
+                    val toSave = if (existing != null) {
+                        computed.copy(
+                            id = existing.id,
+                            userTradedRelease = existing.userTradedRelease
+                        )
+                    } else {
+                        computed
+                    }
+                    repository.savePrediction(toSave)
+                    anyPredictionUpdated = true
+                }
+            }
+
+            if (xoomarResult.isSuccess || calendarResult.isSuccess || fredError == null && fredKey.isNotBlank()) {
+                lastGoldNewsSyncAt.value = System.currentTimeMillis()
+            }
+
+            if (fredError != null && force) {
+                outlookStatusMessage.value = "FRED fetch failed: $fredError"
+            } else if (xoomarResult.isFailure && calendarResult.isFailure) {
+                val calErr = calendarResult.exceptionOrNull()?.message ?: xoomarResult.exceptionOrNull()?.message
+                outlookStatusMessage.value = "Gold news auto-pull failed: ${calErr ?: "Check internet connection"}"
+            } else if (!anyPredictionUpdated && outlookStatusMessage.value == null && force) {
                 outlookStatusMessage.value = "No live releases or indicators returned yet."
             }
 
@@ -648,34 +760,303 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    private fun outlookPrefs() = getApplication<Application>()
+        .getSharedPreferences("tradepulse_ai_prefs", Context.MODE_PRIVATE)
+
+    private fun startOutlookAiSettingsSync() {
+        viewModelScope.launch {
+            repository.getSettings().collect { loaded ->
+                latestSettings = loaded
+                if (!hasHydratedOutlookAiPrefs) {
+                    hasHydratedOutlookAiPrefs = true
+                    val prefs = outlookPrefs()
+                    val savedProviderRaw = prefs.getString("outlook_ai_provider", null)
+                        ?: loaded.backtestAiProvider
+                    val provider = AiProvider.entries.firstOrNull {
+                        it.name.equals(savedProviderRaw, ignoreCase = true)
+                    } ?: AiProvider.CLAUDE
+                    val models = mergedOutlookModelsFor(provider)
+                    val savedModelRaw = (prefs.getString("outlook_ai_model", null)
+                        ?: loaded.backtestAiModel).trim()
+                    val isKnownModel = models.any { it.id == savedModelRaw }
+                    val isCustom = savedModelRaw.isNotBlank() && !isKnownModel
+                    val savedKey = outlookKeyForProvider(loaded, provider)
+                    _outlookAiState.update {
+                        it.copy(
+                            selectedProvider = provider,
+                            availableModels = models,
+                            selectedModelId = if (isKnownModel) savedModelRaw else models.first().id,
+                            useCustomModel = isCustom,
+                            customModelInput = if (isCustom) savedModelRaw else "",
+                            apiKeyInput = savedKey
+                        )
+                    }
+                } else {
+                    val activeProvider = _outlookAiState.value.selectedProvider
+                    val storedKey = outlookKeyForProvider(loaded, activeProvider)
+                    if (_outlookAiState.value.apiKeyInput.isBlank() && storedKey.isNotBlank()) {
+                        _outlookAiState.update { it.copy(apiKeyInput = storedKey) }
+                    }
+                }
+
+                // Auto-pull Gold news once at startup when Outlook is enabled,
+                // and re-pull if a FRED API key is newly added/restored later.
+                val trimmedFred = loaded.fredApiKey.trim()
+                if (loaded.isOutlookEnabled) {
+                    if (!hasTriggeredStartupGoldNewsPull) {
+                        hasTriggeredStartupGoldNewsPull = true
+                        refreshOutlook(force = false)
+                    } else if (trimmedFred.isNotBlank() && trimmedFred != lastFetchedFredKey) {
+                        refreshOutlook(force = true)
+                    }
+                }
+            }
+        }
+    }
+
+    fun selectOutlookAiProvider(provider: AiProvider) {
+        val current = _outlookAiState.value
+        val previousProvider = current.selectedProvider
+        if (current.apiKeyInput.isNotBlank()) {
+            val prevUpdated = withOutlookProviderKey(
+                latestSettings,
+                previousProvider,
+                current.apiKeyInput.trim()
+            )
+            latestSettings = prevUpdated
+            viewModelScope.launch { repository.saveSettings(prevUpdated) }
+        }
+
+        val models = mergedOutlookModelsFor(provider)
+        val defaultModelId = models.first().id
+        val savedKey = outlookKeyForProvider(latestSettings, provider)
+        persistOutlookAiChoice(provider, defaultModelId)
+
+        _outlookAiState.update {
+            it.copy(
+                selectedProvider = provider,
+                availableModels = models,
+                selectedModelId = defaultModelId,
+                useCustomModel = false,
+                customModelInput = "",
+                apiKeyInput = savedKey,
+                aiError = null,
+                aiStatusMessage = null
+            )
+        }
+    }
+
+    fun selectOutlookAiModel(modelId: String) {
+        val provider = _outlookAiState.value.selectedProvider
+        _outlookAiState.update {
+            it.copy(
+                selectedModelId = modelId,
+                useCustomModel = false,
+                aiError = null,
+                aiStatusMessage = null
+            )
+        }
+        persistOutlookAiChoice(provider, modelId)
+    }
+
+    fun enableOutlookCustomModel(customId: String) {
+        val provider = _outlookAiState.value.selectedProvider
+        _outlookAiState.update {
+            it.copy(
+                useCustomModel = true,
+                customModelInput = customId,
+                aiError = null
+            )
+        }
+        if (customId.isNotBlank()) {
+            persistOutlookAiChoice(provider, customId.trim())
+        }
+    }
+
+    fun updateOutlookCustomModelInput(input: String) {
+        val provider = _outlookAiState.value.selectedProvider
+        _outlookAiState.update { it.copy(customModelInput = input, useCustomModel = true, aiError = null) }
+        if (input.isNotBlank()) {
+            persistOutlookAiChoice(provider, input.trim())
+        }
+    }
+
+    fun updateOutlookApiKeyInput(input: String) {
+        val provider = _outlookAiState.value.selectedProvider
+        _outlookAiState.update { it.copy(apiKeyInput = input, aiError = null, aiStatusMessage = null) }
+        latestSettings = withOutlookProviderKey(latestSettings, provider, input.trim())
+    }
+
+    fun saveOutlookApiKey() {
+        val state = _outlookAiState.value
+        val trimmed = state.apiKeyInput.trim()
+        val effectiveModel = if (state.useCustomModel) state.customModelInput.trim() else state.selectedModelId
+        persistOutlookAiChoice(state.selectedProvider, effectiveModel.ifBlank { state.selectedModelId })
+        val updated = withOutlookProviderKey(latestSettings, state.selectedProvider, trimmed)
+        latestSettings = updated
+        viewModelScope.launch {
+            repository.saveSettings(updated)
+            _outlookAiState.update {
+                it.copy(
+                    aiError = null,
+                    aiStatusMessage = "${state.selectedProvider.displayName} API key saved locally (shared with Backtester & Vault)."
+                )
+            }
+        }
+    }
+
+    fun fetchOutlookLiveModels() {
+        val state = _outlookAiState.value
+        val provider = state.selectedProvider
+        val key = state.apiKeyInput.trim().ifBlank { outlookKeyForProvider(latestSettings, provider).trim() }
+        if (key.isEmpty()) {
+            _outlookAiState.update { it.copy(aiError = "Enter your ${provider.keyLabel} to fetch live models.") }
+            return
+        }
+
+        val updated = withOutlookProviderKey(latestSettings, provider, key)
+        latestSettings = updated
+
+        viewModelScope.launch {
+            repository.saveSettings(updated)
+            _outlookAiState.update { it.copy(isFetchingModels = true, aiError = null, aiStatusMessage = null) }
+            val result = withContext(Dispatchers.IO) {
+                AiStrategyGenerator.fetchAvailableModels(provider, key)
+            }
+            result.onSuccess { liveModels ->
+                outlookLiveModelsByProvider[provider] = liveModels
+                val merged = mergedOutlookModelsFor(provider)
+                _outlookAiState.update {
+                    it.copy(
+                        isFetchingModels = false,
+                        availableModels = merged,
+                        aiStatusMessage = "Loaded ${liveModels.size} live ${provider.displayName} models from API."
+                    )
+                }
+            }.onFailure { err ->
+                _outlookAiState.update {
+                    it.copy(
+                        isFetchingModels = false,
+                        aiError = err.message ?: "Failed to fetch live models."
+                    )
+                }
+            }
+        }
+    }
+
+    private fun mergedOutlookModelsFor(provider: AiProvider): List<AiModelOption> {
+        val curated = AiModelCatalog.modelsFor(provider)
+        val live = outlookLiveModelsByProvider[provider].orEmpty()
+        if (live.isEmpty()) return curated
+        val curatedIds = curated.map { it.id }.toSet()
+        val extraLive = live.filterNot { it.id in curatedIds }
+        return curated + extraLive
+    }
+
+    private fun persistOutlookAiChoice(provider: AiProvider, modelId: String) {
+        outlookPrefs().edit()
+            .putString("outlook_ai_provider", provider.name)
+            .putString("outlook_ai_model", modelId)
+            .apply()
+    }
+
+    private fun outlookKeyForProvider(settings: UserSettings, provider: AiProvider): String = when (provider) {
+        AiProvider.CLAUDE -> settings.claudeApiKey
+        AiProvider.GEMINI -> settings.geminiApiKey
+        AiProvider.OPENAI -> settings.openAiApiKey
+    }
+
+    private fun withOutlookProviderKey(settings: UserSettings, provider: AiProvider, key: String): UserSettings =
+        when (provider) {
+            AiProvider.CLAUDE -> settings.copy(claudeApiKey = key)
+            AiProvider.GEMINI -> settings.copy(geminiApiKey = key)
+            AiProvider.OPENAI -> settings.copy(openAiApiKey = key)
+        }
+
     fun generateAiExplanation(prediction: com.example.domain.model.OutlookPrediction) {
+        val aiState = _outlookAiState.value
+        val provider = aiState.selectedProvider
+        val effectiveModel = if (aiState.useCustomModel) {
+            aiState.customModelInput.trim()
+        } else {
+            aiState.selectedModelId.trim()
+        }
+        val apiKey = aiState.apiKeyInput.trim()
+            .ifBlank { outlookKeyForProvider(latestSettings, provider).trim() }
+
+        if (apiKey.isEmpty()) {
+            val msg = "Enter your ${provider.keyLabel} in the AI Analysis Engine card below to run ${provider.displayName}."
+            outlookStatusMessage.value = msg
+            _outlookAiState.update { it.copy(aiError = msg) }
+            return
+        }
+        if (effectiveModel.isEmpty()) {
+            val msg = "Select or enter a valid ${provider.displayName} model ID first."
+            outlookStatusMessage.value = msg
+            _outlookAiState.update { it.copy(aiError = msg) }
+            return
+        }
+
+        persistOutlookAiChoice(provider, effectiveModel)
+        val updatedSettings = withOutlookProviderKey(latestSettings, provider, apiKey)
+        latestSettings = updatedSettings
+
         viewModelScope.launch {
             isOutlookLoading.value = true
             outlookStatusMessage.value = null
-            val geminiKey = settings.value.geminiApiKey.trim()
-            if (geminiKey.isBlank()) {
-                outlookStatusMessage.value = "Add your Gemini API key in Settings to generate an AI summary."
-                isOutlookLoading.value = false
-                return@launch
-            }
+            _outlookAiState.update { it.copy(aiError = null, aiStatusMessage = null) }
+            repository.saveSettings(updatedSettings)
+
             val probRisePct = (prediction.probGoldRise * 100).toInt()
             val probFallPct = (prediction.probGoldFall * 100).toInt()
             val indicatorText = macroIndicators.value.joinToString("; ") {
                 "${it.name}: ${it.currentValue}${it.unit} (prev ${it.previousValue}${it.unit})"
             }.ifBlank { "No macro indicators cached" }
+            val liveNewsText = goldNewsEvents.value.take(5).joinToString("; ") { ev ->
+                val actualPart = ev.actual?.let { "act=$it" } ?: "upcoming"
+                val fcstPart = ev.forecast?.let { "fcst=$it" } ?: ""
+                "${ev.title} (${ev.impact}, $actualPart $fcstPart)".trim()
+            }.ifBlank { "No weekly USD calendar catalysts loaded" }
 
-            val prompt = """
-                Summarize this quantitative statistical gold (XAUUSD) event outlook in 3 concise sentences without changing the probabilities:
+            val systemPrompt = "You are an institutional quantitative macro analyst specializing in XAUUSD (spot gold) volatility around US Tier-1 macroeconomic releases. Be concise, objective, and never alter or invent quantitative probabilities."
+            val userPrompt = """
+                Summarize this quantitative statistical gold (XAUUSD) event outlook in 3-4 concise sentences without changing the model probabilities:
                 Event: ${prediction.eventType.name} on ${prediction.releaseDate}
                 Model Probabilities: $probRisePct% Buy Gold / $probFallPct% Sell Gold (${prediction.confidence.label}, sample size ${prediction.sampleSize})
                 Statistical Rationale: ${prediction.reasoning}
                 Cached Macro Inputs: $indicatorText
-                Include a brief risk note.
+                This Week USD/Gold Catalysts: $liveNewsText
+                Include a brief execution/slippage risk note.
             """.trimIndent()
 
-            repository.requestGeminiSummary(geminiKey, prompt)
-                .onSuccess { summary -> outlookAiSummary.value = summary }
-                .onFailure { err -> outlookStatusMessage.value = "AI summary failed: ${err.message}" }
+            val result = withContext(Dispatchers.IO) {
+                AiStrategyGenerator.generateTextCompletion(
+                    provider = provider,
+                    modelId = effectiveModel,
+                    apiKey = apiKey,
+                    systemPrompt = systemPrompt,
+                    userPrompt = userPrompt,
+                    temperature = 0.2
+                )
+            }
+
+            result
+                .onSuccess { summary ->
+                    outlookAiSummary.value = summary
+                    val modelLabel = "${provider.displayName} • $effectiveModel"
+                    _outlookAiState.update {
+                        it.copy(
+                            lastUsedModelLabel = modelLabel,
+                            aiError = null,
+                            aiStatusMessage = "Generated analysis via $modelLabel."
+                        )
+                    }
+                }
+                .onFailure { err ->
+                    val errMsg = err.message ?: "Unknown AI error"
+                    outlookStatusMessage.value = "AI summary failed: $errMsg"
+                    _outlookAiState.update { it.copy(aiError = errMsg) }
+                }
             isOutlookLoading.value = false
         }
     }

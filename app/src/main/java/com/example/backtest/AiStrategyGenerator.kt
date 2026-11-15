@@ -73,15 +73,17 @@ object AiStrategyGenerator {
         - Verify all slice indices stay within `candles[0..i]` and return `None` when insufficient bars exist or risk <= 0.
     """.trimIndent()
 
-    fun generateStrategy(
+    fun generateTextCompletion(
         provider: AiProvider,
         modelId: String,
         apiKey: String,
-        userDescription: String
-    ): Result<GeneratedStrategyOutput> {
+        systemPrompt: String,
+        userPrompt: String,
+        temperature: Double = 0.2
+    ): Result<String> {
         val trimmedKey = apiKey.trim()
         val trimmedModel = modelId.trim()
-        val trimmedPrompt = userDescription.trim()
+        val trimmedPrompt = userPrompt.trim()
 
         if (trimmedKey.isEmpty()) {
             return Result.failure(IllegalArgumentException("Enter your ${provider.keyLabel} first."))
@@ -90,33 +92,66 @@ object AiStrategyGenerator {
             return Result.failure(IllegalArgumentException("Select or enter a valid model ID."))
         }
         if (trimmedPrompt.isEmpty()) {
+            return Result.failure(IllegalArgumentException("Prompt cannot be empty."))
+        }
+
+        return try {
+            val rawResponse = when (provider) {
+                AiProvider.CLAUDE -> callAnthropic(trimmedKey, trimmedModel, systemPrompt, trimmedPrompt)
+                AiProvider.GEMINI -> callGemini(trimmedKey, trimmedModel, systemPrompt, trimmedPrompt, temperature)
+                AiProvider.OPENAI -> callOpenAi(trimmedKey, trimmedModel, systemPrompt, trimmedPrompt)
+            }
+            val cleaned = rawResponse.trim()
+            if (cleaned.isEmpty()) {
+                Result.failure(IllegalStateException("Model returned an empty response."))
+            } else {
+                Result.success(cleaned)
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    fun generateStrategy(
+        provider: AiProvider,
+        modelId: String,
+        apiKey: String,
+        userDescription: String
+    ): Result<GeneratedStrategyOutput> {
+        val trimmedPrompt = userDescription.trim()
+        if (trimmedPrompt.isEmpty()) {
             return Result.failure(IllegalArgumentException("Describe the trading strategy you want AI to build."))
         }
 
         val detailedUserPrompt = buildDetailedUserPrompt(trimmedPrompt)
+        val rawResult = generateTextCompletion(
+            provider = provider,
+            modelId = modelId,
+            apiKey = apiKey,
+            systemPrompt = SYSTEM_PROMPT,
+            userPrompt = detailedUserPrompt,
+            temperature = 0.2
+        )
 
-        return try {
-            val rawResponse = when (provider) {
-                AiProvider.CLAUDE -> callAnthropic(trimmedKey, trimmedModel, detailedUserPrompt)
-                AiProvider.GEMINI -> callGemini(trimmedKey, trimmedModel, detailedUserPrompt)
-                AiProvider.OPENAI -> callOpenAi(trimmedKey, trimmedModel, detailedUserPrompt)
-            }
-            val cleanedCode = extractPythonCode(rawResponse)
-            if (cleanedCode.isBlank()) {
-                return Result.failure(IllegalStateException("Model returned empty code."))
-            }
-            val detectedClass = detectStrategyClassName(cleanedCode)
-            val displayName = formatDisplayName(detectedClass)
-            Result.success(
-                GeneratedStrategyOutput(
-                    code = cleanedCode,
-                    detectedClassName = detectedClass,
-                    suggestedDisplayName = displayName
-                )
-            )
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
+        return rawResult.fold(
+            onSuccess = { rawResponse ->
+                val cleanedCode = extractPythonCode(rawResponse)
+                if (cleanedCode.isBlank()) {
+                    Result.failure(IllegalStateException("Model returned empty code."))
+                } else {
+                    val detectedClass = detectStrategyClassName(cleanedCode)
+                    val displayName = formatDisplayName(detectedClass)
+                    Result.success(
+                        GeneratedStrategyOutput(
+                            code = cleanedCode,
+                            detectedClassName = detectedClass,
+                            suggestedDisplayName = displayName
+                        )
+                    )
+                }
+            },
+            onFailure = { err -> Result.failure(err) }
+        )
     }
 
     fun fetchAvailableModels(
@@ -139,8 +174,13 @@ object AiStrategyGenerator {
         }
     }
 
-    private fun callAnthropic(apiKey: String, modelId: String, userDescription: String): String {
-        val payload = buildAnthropicRequestJson(modelId, SYSTEM_PROMPT, userDescription)
+    private fun callAnthropic(
+        apiKey: String,
+        modelId: String,
+        systemPrompt: String,
+        userPrompt: String
+    ): String {
+        val payload = buildAnthropicRequestJson(modelId, systemPrompt, userPrompt)
         val req = Request.Builder()
             .url("https://api.anthropic.com/v1/messages")
             .addHeader("x-api-key", apiKey)
@@ -162,9 +202,15 @@ object AiStrategyGenerator {
         return sb.toString()
     }
 
-    private fun callGemini(apiKey: String, modelId: String, userDescription: String): String {
+    private fun callGemini(
+        apiKey: String,
+        modelId: String,
+        systemPrompt: String,
+        userPrompt: String,
+        temperature: Double = 0.2
+    ): String {
         val normalizedId = modelId.removePrefix("models/")
-        val payload = buildGeminiRequestJson(SYSTEM_PROMPT, userDescription)
+        val payload = buildGeminiRequestJson(systemPrompt, userPrompt, temperature)
         val url = "https://generativelanguage.googleapis.com/v1beta/models/$normalizedId:generateContent?key=$apiKey"
         val req = Request.Builder()
             .url(url)
@@ -187,8 +233,13 @@ object AiStrategyGenerator {
         return sb.toString()
     }
 
-    private fun callOpenAi(apiKey: String, modelId: String, userDescription: String): String {
-        val payload = buildOpenAiRequestJson(modelId, SYSTEM_PROMPT, userDescription)
+    private fun callOpenAi(
+        apiKey: String,
+        modelId: String,
+        systemPrompt: String,
+        userPrompt: String
+    ): String {
+        val payload = buildOpenAiRequestJson(modelId, systemPrompt, userPrompt)
         val req = Request.Builder()
             .url("https://api.openai.com/v1/chat/completions")
             .addHeader("Authorization", "Bearer $apiKey")
@@ -309,7 +360,8 @@ object AiStrategyGenerator {
 
     internal fun buildGeminiRequestJson(
         systemPrompt: String,
-        userPrompt: String
+        userPrompt: String,
+        temperature: Double = 0.2
     ): JSONObject = JSONObject().apply {
         put("systemInstruction", JSONObject().apply {
             put("parts", JSONArray().apply {
@@ -325,7 +377,7 @@ object AiStrategyGenerator {
             })
         })
         put("generationConfig", JSONObject().apply {
-            put("temperature", 0.2)
+            put("temperature", temperature)
         })
     }
 
