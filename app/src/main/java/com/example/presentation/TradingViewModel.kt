@@ -362,26 +362,42 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
     // Python Backtest Strategy actions
     fun savePythonStrategy(name: String, className: String, code: String) {
         viewModelScope.launch {
-            repository.insertPythonStrategy(
-                PythonStrategy(
-                    name = name.trim(),
-                    className = className.trim(),
-                    code = code,
-                    updatedAt = System.currentTimeMillis()
+            runCatching {
+                repository.insertPythonStrategy(
+                    PythonStrategy(
+                        name = name.trim(),
+                        className = className.trim(),
+                        code = code,
+                        updatedAt = System.currentTimeMillis()
+                    )
                 )
-            )
+            }.onFailure { error ->
+                android.widget.Toast.makeText(
+                    getApplication(),
+                    error.message ?: "Could not save strategy.",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
         }
     }
 
     fun renamePythonStrategy(strategy: PythonStrategy, newName: String, newClassName: String = strategy.className) {
         viewModelScope.launch {
-            repository.updatePythonStrategy(
-                strategy.copy(
-                    name = newName.trim(),
-                    className = newClassName.trim(),
-                    updatedAt = System.currentTimeMillis()
+            runCatching {
+                repository.updatePythonStrategy(
+                    strategy.copy(
+                        name = newName.trim(),
+                        className = newClassName.trim(),
+                        updatedAt = System.currentTimeMillis()
+                    )
                 )
-            )
+            }.onFailure { error ->
+                android.widget.Toast.makeText(
+                    getApplication(),
+                    error.message ?: "Could not rename strategy.",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
         }
     }
 
