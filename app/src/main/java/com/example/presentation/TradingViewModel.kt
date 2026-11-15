@@ -3,7 +3,10 @@ package com.example.presentation
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.local.LocalVaultStorage
 import com.example.data.local.TradingDatabase
+import com.example.data.local.VaultJsonCodec
+import com.example.data.local.VaultRestoreSummary
 import com.example.data.repository.TradingRepository
 import com.example.data.repository.EconomicCalendarRepository
 import com.example.domain.model.Bot
@@ -26,11 +29,14 @@ import com.example.domain.usecase.Mt5TradeHistoryImporter
 import com.example.domain.usecase.StatsCalculator
 import com.example.notifications.EveningReminderScheduler
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -129,6 +135,26 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
 
     val settings: StateFlow<UserSettings> = repository.getSettings()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UserSettings())
+
+    // Local Vault persistence state (on-device Downloads/TradePulse snapshot & fresh-install restore)
+    private val _autoVaultEnabled = MutableStateFlow(LocalVaultStorage.isAutoVaultEnabled(application))
+    val autoVaultEnabled: StateFlow<Boolean> = _autoVaultEnabled.asStateFlow()
+
+    private val _lastVaultSavedAt = MutableStateFlow(LocalVaultStorage.getLastSavedAt(application))
+    val lastVaultSavedAt: StateFlow<Long> = _lastVaultSavedAt.asStateFlow()
+
+    private val _lastVaultLocation = MutableStateFlow(LocalVaultStorage.getLastLocation(application))
+    val lastVaultLocation: StateFlow<String> = _lastVaultLocation.asStateFlow()
+
+    private val _showFreshInstallRestorePrompt = MutableStateFlow(false)
+    val showFreshInstallRestorePrompt: StateFlow<Boolean> = _showFreshInstallRestorePrompt.asStateFlow()
+
+    private val _vaultNoticeMessage = MutableStateFlow<String?>(null)
+    val vaultNoticeMessage: StateFlow<String?> = _vaultNoticeMessage.asStateFlow()
+
+    init {
+        startLocalVaultLifecycle()
+    }
 
     val newsReleases: StateFlow<List<com.example.domain.model.NewsRelease>> = repository.getAllReleases()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -652,5 +678,152 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
                 .onFailure { err -> outlookStatusMessage.value = "AI summary failed: ${err.message}" }
             isOutlookLoading.value = false
         }
+    }
+
+    // --- Local Persistent Vault (On-device uninstall/reinstall recovery) ---
+
+    @OptIn(FlowPreview::class)
+    private fun startLocalVaultLifecycle() {
+        val app = getApplication<Application>()
+        viewModelScope.launch {
+            val initialSnap = repository.captureVaultSnapshot()
+            var hasDataAfterStartup = VaultJsonCodec.hasMeaningfulData(initialSnap)
+
+            if (!hasDataAfterStartup) {
+                val readableJson = withContext(Dispatchers.IO) {
+                    LocalVaultStorage.tryFindReadableVaultJson(app)
+                }
+                if (!readableJson.isNullOrBlank()) {
+                    val summary = repository.restoreCompleteVaultJson(readableJson)
+                    if (summary.success) {
+                        val updatedSnap = repository.captureVaultSnapshot()
+                        hasDataAfterStartup = VaultJsonCodec.hasMeaningfulData(updatedSnap)
+                        if (hasDataAfterStartup) {
+                            _vaultNoticeMessage.value = "Auto-restored Vault: ${summary.toUserMessage()}"
+                        }
+                    }
+                }
+            }
+
+            _showFreshInstallRestorePrompt.value =
+                !hasDataAfterStartup && !LocalVaultStorage.isRestorePromptDismissed(app)
+
+            // Auto-sync Downloads/TradePulse/tradepulse_vault.json whenever user data/settings change
+            combine(
+                trades,
+                strategies,
+                pythonStrategies,
+                bots,
+                dailyReviews,
+                settings
+            ) { values -> values }
+                .drop(1)
+                .debounce(1500L)
+                .collect {
+                    val snap = repository.captureVaultSnapshot()
+                    if (VaultJsonCodec.hasMeaningfulData(snap)) {
+                        _showFreshInstallRestorePrompt.value = false
+                        if (_autoVaultEnabled.value) {
+                            persistVaultSnapshotInternal(app)
+                        }
+                    }
+                }
+        }
+    }
+
+    private suspend fun persistVaultSnapshotInternal(app: Application): Result<String> {
+        val snap = repository.captureVaultSnapshot()
+        if (!VaultJsonCodec.hasMeaningfulData(snap)) {
+            return Result.failure(IllegalStateException("Add a trade, strategy, bot, or API key first before saving a Vault."))
+        }
+        val json = withContext(Dispatchers.Default) { VaultJsonCodec.encode(snap) }
+        val result = withContext(Dispatchers.IO) { LocalVaultStorage.saveVaultSnapshot(app, json) }
+        result.onSuccess {
+            _lastVaultSavedAt.value = LocalVaultStorage.getLastSavedAt(app)
+            _lastVaultLocation.value = LocalVaultStorage.getLastLocation(app)
+        }
+        return result
+    }
+
+    fun toggleAutoVault(enabled: Boolean) {
+        val app = getApplication<Application>()
+        LocalVaultStorage.setAutoVaultEnabled(app, enabled)
+        _autoVaultEnabled.value = enabled
+        if (enabled) {
+            viewModelScope.launch {
+                val snap = repository.captureVaultSnapshot()
+                if (VaultJsonCodec.hasMeaningfulData(snap)) {
+                    persistVaultSnapshotInternal(app)
+                }
+            }
+        }
+    }
+
+    fun saveVaultNow(onComplete: (Result<String>) -> Unit) {
+        val app = getApplication<Application>()
+        viewModelScope.launch {
+            val result = persistVaultSnapshotInternal(app)
+            onComplete(result)
+        }
+    }
+
+    fun exportVaultToUri(uri: Uri, onComplete: (Result<String>) -> Unit) {
+        val app = getApplication<Application>()
+        viewModelScope.launch {
+            val json = repository.exportCompleteVaultJson()
+            val writeResult = withContext(Dispatchers.IO) {
+                LocalVaultStorage.writeUriText(app, uri, json)
+            }
+            onComplete(writeResult.map { "Vault file saved successfully." })
+        }
+    }
+
+    fun restoreVaultFromUri(uri: Uri, onComplete: (VaultRestoreSummary) -> Unit) {
+        val app = getApplication<Application>()
+        viewModelScope.launch {
+            val readResult = withContext(Dispatchers.IO) {
+                LocalVaultStorage.readUriText(app, uri)
+            }
+            val summary = readResult.fold(
+                onSuccess = { json -> repository.restoreCompleteVaultJson(json) },
+                onFailure = { err ->
+                    VaultRestoreSummary(
+                        success = false,
+                        errorMessage = err.message ?: "Unable to read selected Vault file."
+                    )
+                }
+            )
+            if (summary.success) {
+                _showFreshInstallRestorePrompt.value = false
+                LocalVaultStorage.setRestorePromptDismissed(app, false)
+                if (_autoVaultEnabled.value) {
+                    persistVaultSnapshotInternal(app)
+                }
+            }
+            onComplete(summary)
+        }
+    }
+
+    fun restoreVaultFromJson(json: String, onComplete: (VaultRestoreSummary) -> Unit) {
+        val app = getApplication<Application>()
+        viewModelScope.launch {
+            val summary = repository.restoreCompleteVaultJson(json)
+            if (summary.success) {
+                _showFreshInstallRestorePrompt.value = false
+                if (_autoVaultEnabled.value) {
+                    persistVaultSnapshotInternal(app)
+                }
+            }
+            onComplete(summary)
+        }
+    }
+
+    fun dismissFreshInstallRestorePrompt() {
+        LocalVaultStorage.setRestorePromptDismissed(getApplication(), true)
+        _showFreshInstallRestorePrompt.value = false
+    }
+
+    fun clearVaultNotice() {
+        _vaultNoticeMessage.value = null
     }
 }

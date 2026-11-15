@@ -10,6 +10,9 @@ import com.example.data.local.StrategyEntity
 import com.example.data.local.TradeEntity
 import com.example.data.local.TradingDatabase
 import com.example.data.local.UserSettingsEntity
+import com.example.data.local.VaultJsonCodec
+import com.example.data.local.VaultRestoreSummary
+import com.example.data.local.VaultSnapshot
 import com.example.domain.model.Bot
 import com.example.domain.model.BotStatus
 import com.example.domain.model.BotType
@@ -25,6 +28,7 @@ import com.example.domain.model.TradeResult
 import com.example.domain.model.UserSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -232,160 +236,138 @@ class TradingRepository(private val database: TradingDatabase) {
         sb.toString()
     }
 
-    // --- JSON Backup & Restore ---
-    suspend fun exportFullBackupJson(trades: List<Trade>, strategies: List<Strategy>, bots: List<Bot>): String = withContext(Dispatchers.Default) {
-        val root = JSONObject()
-        root.put("version", 1)
-        root.put("timestamp", System.currentTimeMillis())
-
-        val tradesArray = JSONArray()
-        for (t in trades) {
-            val obj = JSONObject()
-            obj.put("date", t.date)
-            obj.put("time", t.time)
-            obj.put("result", t.result.name)
-            obj.put("pnl", t.pnl)
-            obj.put("instrument", t.instrument)
-            obj.put("direction", t.direction.name)
-            obj.put("entryPrice", t.entryPrice ?: JSONObject.NULL)
-            obj.put("exitPrice", t.exitPrice ?: JSONObject.NULL)
-            obj.put("stopLoss", t.stopLoss ?: JSONObject.NULL)
-            obj.put("takeProfit", t.takeProfit ?: JSONObject.NULL)
-            obj.put("lotSize", t.lotSize ?: JSONObject.NULL)
-            obj.put("strategyName", t.strategyName)
-            obj.put("botName", t.botName)
-            obj.put("notes", t.notes)
-            obj.put("emotion", t.emotion.name)
-            obj.put("followedRules", t.followedRules)
-            tradesArray.put(obj)
-        }
-        root.put("trades", tradesArray)
-
-        val strategiesArray = JSONArray()
-        for (s in strategies) {
-            val obj = JSONObject()
-            obj.put("name", s.name)
-            obj.put("description", s.description)
-            obj.put("checklist", JSONArray(s.checklist))
-            obj.put("tags", JSONArray(s.tags))
-            obj.put("colorHex", s.colorHex)
-            strategiesArray.put(obj)
-        }
-        root.put("strategies", strategiesArray)
-
-        val botsArray = JSONArray()
-        for (b in bots) {
-            val obj = JSONObject()
-            obj.put("name", b.name)
-            obj.put("description", b.description)
-            obj.put("version", b.version)
-            obj.put("type", b.type.name)
-            obj.put("instrument", b.instrument)
-            obj.put("timeframe", b.timeframe)
-            obj.put("strategyName", b.strategyName)
-            obj.put("status", b.status.name)
-            obj.put("notes", b.notes)
-            obj.put("code", b.code)
-            obj.put("backtestNotes", b.backtestNotes)
-            botsArray.put(obj)
-        }
-        root.put("bots", botsArray)
-
-        root.toString(2)
+    // --- Complete Local Vault JSON Backup & Restore (V2 + V1 compatible) ---
+    suspend fun captureVaultSnapshot(): VaultSnapshot = withContext(Dispatchers.IO) {
+        val currentSettings = settingsDao.getSettingsOnce() ?: UserSettings().toEntity()
+        VaultSnapshot(
+            settings = currentSettings,
+            trades = tradeDao.getAllTrades().first(),
+            strategies = strategyDao.getAllStrategies().first(),
+            pythonStrategies = pythonStrategyDao.getAllPythonStrategies().first(),
+            bots = botDao.getAllBots().first(),
+            dailyReviews = reviewDao.getAllReviews().first(),
+            backtestRuns = backtestRunDao.getAllRuns().first()
+        )
     }
 
-    suspend fun restoreFullBackupJson(jsonString: String): Boolean = withContext(Dispatchers.IO) {
+    suspend fun exportCompleteVaultJson(): String = withContext(Dispatchers.Default) {
+        val snapshot = captureVaultSnapshot()
+        VaultJsonCodec.encode(snapshot)
+    }
+
+    suspend fun exportFullBackupJson(
+        trades: List<Trade>,
+        strategies: List<Strategy>,
+        bots: List<Bot>
+    ): String = exportCompleteVaultJson()
+
+    suspend fun restoreCompleteVaultJson(jsonString: String): VaultRestoreSummary = withContext(Dispatchers.IO) {
         try {
-            val root = JSONObject(jsonString)
-            if (root.has("strategies")) {
-                val array = root.getJSONArray("strategies")
-                for (i in 0 until array.length()) {
-                    val obj = array.getJSONObject(i)
-                    val checklistJson = obj.optJSONArray("checklist")
-                    val checklist = mutableListOf<String>()
-                    if (checklistJson != null) {
-                        for (k in 0 until checklistJson.length()) checklist.add(checklistJson.getString(k))
-                    }
-                    val tagsJson = obj.optJSONArray("tags")
-                    val tags = mutableListOf<String>()
-                    if (tagsJson != null) {
-                        for (k in 0 until tagsJson.length()) tags.add(tagsJson.getString(k))
-                    }
-                    strategyDao.insertStrategy(
-                        StrategyEntity(
-                            name = obj.getString("name"),
-                            description = obj.optString("description", ""),
-                            checklist = checklist,
-                            tags = tags,
-                            colorHex = obj.optString("colorHex", "#10B981")
-                        )
-                    )
+            val currentSettings = settingsDao.getSettingsOnce() ?: UserSettings().toEntity()
+            val payload = VaultJsonCodec.decode(jsonString, currentSettings)
+
+            var settingsRestored = false
+            var apiKeysCount = 0
+            if (payload.hasSettingsSection && payload.settings != null) {
+                settingsDao.saveSettings(payload.settings)
+                settingsRestored = true
+                apiKeysCount = VaultJsonCodec.countConfiguredApiKeys(payload.settings)
+            }
+
+            val existingStrategyNames = strategyDao.getAllStrategies().first()
+                .map { it.name.trim().lowercase(java.util.Locale.US) }
+                .toHashSet()
+            var strategiesRestored = 0
+            for (s in payload.strategies) {
+                val key = s.name.trim().lowercase(java.util.Locale.US)
+                if (key.isNotEmpty() && existingStrategyNames.add(key)) {
+                    strategyDao.insertStrategy(s)
+                    strategiesRestored++
                 }
             }
 
-            if (root.has("bots")) {
-                val array = root.getJSONArray("bots")
-                for (i in 0 until array.length()) {
-                    val obj = array.getJSONObject(i)
-                    botDao.insertBot(
-                        BotEntity(
-                            name = obj.getString("name"),
-                            description = obj.optString("description", ""),
-                            version = obj.optString("version", "1.0.0"),
-                            type = try { BotType.valueOf(obj.getString("type")) } catch (e: Exception) { BotType.EXPERT_ADVISOR },
-                            instrument = obj.optString("instrument", "Universal"),
-                            timeframe = obj.optString("timeframe", "H1"),
-                            strategyId = null,
-                            strategyName = obj.optString("strategyName", ""),
-                            status = try { BotStatus.valueOf(obj.getString("status")) } catch (e: Exception) { BotStatus.TESTING },
-                            tags = emptyList(),
-                            notes = obj.optString("notes", ""),
-                            code = obj.optString("code", ""),
-                            backtestNotes = obj.optString("backtestNotes", ""),
-                            createdAt = System.currentTimeMillis(),
-                            updatedAt = System.currentTimeMillis()
-                        )
-                    )
+            val existingPyKeys = pythonStrategyDao.getAllPythonStrategies().first()
+                .map { "${it.name.trim()}::${it.code.trim()}" }
+                .toHashSet()
+            var pyRestored = 0
+            for (py in payload.pythonStrategies) {
+                val key = "${py.name.trim()}::${py.code.trim()}"
+                if (existingPyKeys.add(key)) {
+                    pythonStrategyDao.insertPythonStrategy(py)
+                    pyRestored++
                 }
             }
 
-            if (root.has("trades")) {
-                val array = root.getJSONArray("trades")
-                for (i in 0 until array.length()) {
-                    val obj = array.getJSONObject(i)
-                    tradeDao.insertTrade(
-                        TradeEntity(
-                            date = obj.getString("date"),
-                            time = obj.optString("time", "12:00"),
-                            timestamp = System.currentTimeMillis(),
-                            result = try { TradeResult.valueOf(obj.getString("result")) } catch (e: Exception) { TradeResult.WIN },
-                            pnl = obj.getDouble("pnl"),
-                            instrument = obj.getString("instrument"),
-                            direction = try { TradeDirection.valueOf(obj.getString("direction")) } catch (e: Exception) { TradeDirection.BUY },
-                            entryPrice = if (obj.has("entryPrice") && !obj.isNull("entryPrice")) obj.getDouble("entryPrice") else null,
-                            exitPrice = if (obj.has("exitPrice") && !obj.isNull("exitPrice")) obj.getDouble("exitPrice") else null,
-                            stopLoss = if (obj.has("stopLoss") && !obj.isNull("stopLoss")) obj.getDouble("stopLoss") else null,
-                            takeProfit = if (obj.has("takeProfit") && !obj.isNull("takeProfit")) obj.getDouble("takeProfit") else null,
-                            lotSize = if (obj.has("lotSize") && !obj.isNull("lotSize")) obj.getDouble("lotSize") else null,
-                            riskRewardRatio = null,
-                            strategyId = null,
-                            strategyName = obj.optString("strategyName", ""),
-                            botId = null,
-                            botName = obj.optString("botName", ""),
-                            notes = obj.optString("notes", ""),
-                            emotion = try { Emotion.valueOf(obj.optString("emotion", "CALM")) } catch (e: Exception) { Emotion.CALM },
-                            followedRules = obj.optBoolean("followedRules", true),
-                            screenshotUri = null,
-                            tags = emptyList()
-                        )
-                    )
+            val existingBotNames = botDao.getAllBots().first()
+                .map { it.name.trim().lowercase(java.util.Locale.US) }
+                .toHashSet()
+            var botsRestored = 0
+            for (b in payload.bots) {
+                val key = b.name.trim().lowercase(java.util.Locale.US)
+                if (key.isNotEmpty() && existingBotNames.add(key)) {
+                    botDao.insertBot(b)
+                    botsRestored++
                 }
             }
-            true
+
+            val existingTradeKeys = tradeDao.getAllTrades().first()
+                .map { "${it.date}|${it.time}|${it.instrument}|${it.direction.name}|${it.pnl}" }
+                .toHashSet()
+            var tradesRestored = 0
+            for (t in payload.trades) {
+                val key = "${t.date}|${t.time}|${t.instrument}|${t.direction.name}|${t.pnl}"
+                if (existingTradeKeys.add(key)) {
+                    tradeDao.insertTrade(t)
+                    tradesRestored++
+                }
+            }
+
+            val existingReviewDates = reviewDao.getAllReviews().first()
+                .map { it.date }
+                .toHashSet()
+            var reviewsRestored = 0
+            for (r in payload.dailyReviews) {
+                if (existingReviewDates.add(r.date)) {
+                    reviewDao.insertReview(r)
+                    reviewsRestored++
+                }
+            }
+
+            val existingRunKeys = backtestRunDao.getAllRuns().first()
+                .map { "${it.strategyName}|${it.csvFileName}|${it.totalTrades}|${it.netPoints}" }
+                .toHashSet()
+            var runsRestored = 0
+            for (run in payload.backtestRuns) {
+                val key = "${run.strategyName}|${run.csvFileName}|${run.totalTrades}|${run.netPoints}"
+                if (existingRunKeys.add(key)) {
+                    backtestRunDao.insertRun(run)
+                    runsRestored++
+                }
+            }
+
+            VaultRestoreSummary(
+                success = true,
+                schemaVersion = payload.schemaVersion,
+                settingsRestored = settingsRestored,
+                apiKeysRestoredCount = apiKeysCount,
+                tradesRestored = tradesRestored,
+                strategiesRestored = strategiesRestored,
+                pythonStrategiesRestored = pyRestored,
+                botsRestored = botsRestored,
+                reviewsRestored = reviewsRestored,
+                backtestRunsRestored = runsRestored
+            )
         } catch (e: Exception) {
             e.printStackTrace()
-            false
+            VaultRestoreSummary(
+                success = false,
+                errorMessage = e.message ?: "Invalid TradePulse Vault JSON format."
+            )
         }
+    }
+
+    suspend fun restoreFullBackupJson(jsonString: String): Boolean {
+        return restoreCompleteVaultJson(jsonString).success
     }
 
     suspend fun clearAllData() = withContext(Dispatchers.IO) {

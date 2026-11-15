@@ -196,4 +196,82 @@ class BacktestUnitTest {
         val detailed = com.example.backtest.AiStrategyGenerator.buildDetailedUserPrompt("Buy 20 SMA cross")
         assertTrue(detailed.contains("Signal(side=\"buy\" | \"sell\", sl=float, tp=float)"))
     }
+
+    @Test
+    fun candleTimeframeResampler_detectsM5WithGapsAndResamplesToM15AndH1() {
+        val xauM5Csv = buildString {
+            appendLine("<DATE>\t<TIME>\t<OPEN>\t<HIGH>\t<LOW>\t<CLOSE>\t<TICKVOL>\t<VOL>\t<SPREAD>")
+            // 10:00..10:10 -> 10:00 M15 bucket
+            appendLine("2025.02.07\t10:00:00\t2850.0\t2854.0\t2849.0\t2852.0\t100\t0\t12")
+            appendLine("2025.02.07\t10:05:00\t2852.0\t2858.5\t2851.0\t2856.0\t150\t0\t12")
+            appendLine("2025.02.07\t10:10:00\t2856.0\t2857.0\t2847.5\t2853.5\t200\t0\t12")
+            // 10:15..10:25 -> 10:15 M15 bucket
+            appendLine("2025.02.07\t10:15:00\t2853.5\t2861.0\t2853.0\t2860.0\t120\t0\t12")
+            appendLine("2025.02.07\t10:20:00\t2860.0\t2862.0\t2858.0\t2859.0\t80\t0\t12")
+            // Weekend gap to Monday 2025.02.10 -> 00:00 M15 & H1 bucket
+            appendLine("2025.02.10\t00:00:00\t2865.0\t2870.0\t2864.0\t2868.0\t300\t0\t15")
+            appendLine("2025.02.10\t00:05:00\t2868.0\t2869.0\t2866.0\t2867.5\t110\t0\t15")
+        }
+
+        val detected = com.example.backtest.CandleTimeframeResampler.detectTimeframe(xauM5Csv)
+        assertEquals(5, detected.minutes)
+        assertEquals("5m (M5)", detected.label)
+
+        val targets = com.example.backtest.CandleTimeframeResampler.availableTargets(detected.minutes)
+        assertEquals(
+            listOf(
+                com.example.backtest.BacktestTimeframe.NATIVE,
+                com.example.backtest.BacktestTimeframe.M15,
+                com.example.backtest.BacktestTimeframe.M30,
+                com.example.backtest.BacktestTimeframe.H1,
+                com.example.backtest.BacktestTimeframe.H2,
+                com.example.backtest.BacktestTimeframe.H4,
+                com.example.backtest.BacktestTimeframe.D1,
+                com.example.backtest.BacktestTimeframe.W1
+            ),
+            targets
+        )
+
+        val m15 = com.example.backtest.CandleTimeframeResampler.resampleCsv(
+            xauM5Csv,
+            com.example.backtest.BacktestTimeframe.M15
+        )
+        assertEquals(7, m15.sourceCandleCount)
+        assertEquals(3, m15.outputCandleCount)
+        val m15Lines = m15.csvText.trim().lines()
+        assertEquals("datetime,open,high,low,close,volume", m15Lines[0])
+        assertEquals("2025-02-07 10:00:00,2850,2858.5,2847.5,2853.5,450", m15Lines[1])
+        assertEquals("2025-02-07 10:15:00,2853.5,2862,2853,2859,200", m15Lines[2])
+        assertEquals("2025-02-10 00:00:00,2865,2870,2864,2867.5,410", m15Lines[3])
+
+        val h1 = com.example.backtest.CandleTimeframeResampler.resampleCsv(
+            xauM5Csv,
+            com.example.backtest.BacktestTimeframe.H1
+        )
+        assertEquals(2, h1.outputCandleCount)
+        val h1Lines = h1.csvText.trim().lines()
+        assertEquals("2025-02-07 10:00:00,2850,2862,2847.5,2859,650", h1Lines[1])
+        assertEquals("2025-02-10 00:00:00,2865,2870,2864,2867.5,410", h1Lines[2])
+    }
+
+    @Test
+    fun candleTimeframeResampler_sortsUnsortedUnixCsvAndAggregatesDaily() {
+        val unsortedUnixCsv = buildString {
+            appendLine("time,open,high,low,close")
+            appendLine("1736953200,105,110,104,108") // 2025-01-15 15:00:00 UTC
+            appendLine("1736949600,100,106,99,105")  // 2025-01-15 14:00:00 UTC
+        }
+
+        val detected = com.example.backtest.CandleTimeframeResampler.detectTimeframe(unsortedUnixCsv)
+        assertEquals(60, detected.minutes)
+        assertEquals("1H (H1)", detected.label)
+
+        val daily = com.example.backtest.CandleTimeframeResampler.resampleCsv(
+            unsortedUnixCsv,
+            com.example.backtest.BacktestTimeframe.D1
+        )
+        assertEquals(1, daily.outputCandleCount)
+        val lines = daily.csvText.trim().lines()
+        assertEquals("2025-01-15 00:00:00,100,110,99,108,0", lines[1])
+    }
 }

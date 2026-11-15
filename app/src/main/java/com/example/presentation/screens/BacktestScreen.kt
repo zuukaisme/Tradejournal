@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -29,6 +31,7 @@ import androidx.compose.material.icons.filled.CompareArrows
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
@@ -36,6 +39,8 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -70,6 +75,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.backtest.BacktestError
 import com.example.backtest.BacktestResult
+import com.example.backtest.BacktestTimeframe
 import com.example.backtest.Side
 import com.example.backtest.Trade
 import com.example.presentation.BacktestViewModel
@@ -165,11 +171,82 @@ fun BacktestScreen(
 
                         if (state.fileName != null) {
                             Spacer(modifier = Modifier.height(6.dp))
+                            val tfSummary = state.detectedTimeframeLabel.ifBlank { "Unknown" }
                             Text(
-                                text = "${state.estimatedRows} rows • ${state.detectedEncoding} • ${state.detectedDelimiter}",
+                                text = "${state.estimatedRows} rows • TF: $tfSummary • ${state.detectedEncoding} • ${state.detectedDelimiter}",
                                 style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                                color = positiveColor
+                                color = positiveColor,
+                                modifier = Modifier.testTag("detected_timeframe_label")
                             )
+
+                            if (state.hasCsvBytes && state.availableTimeframes.size > 1) {
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Schedule,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Text(
+                                        text = "Candle Timeframe",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(6.dp))
+                                LazyRow(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    items(state.availableTimeframes) { tf ->
+                                        val isSelected = tf == state.selectedTimeframe
+                                        val chipText = if (tf == BacktestTimeframe.NATIVE) {
+                                            val shortSrc = state.detectedTimeframeLabel.substringBefore(" ")
+                                                .ifBlank { "Native" }
+                                            "$shortSrc (Auto)"
+                                        } else {
+                                            tf.label
+                                        }
+                                        FilterChip(
+                                            selected = isSelected,
+                                            onClick = { backtestViewModel.selectTimeframe(tf) },
+                                            label = {
+                                                Text(
+                                                    text = chipText,
+                                                    fontSize = 11.sp,
+                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                                )
+                                            },
+                                            colors = FilterChipDefaults.filterChipColors(
+                                                selectedContainerColor = positiveColor,
+                                                selectedLabelColor = onPrimaryColor
+                                            ),
+                                            modifier = Modifier.testTag("timeframe_chip_${tf.shortLabel}")
+                                        )
+                                    }
+                                }
+                                if (state.selectedTimeframe != BacktestTimeframe.NATIVE) {
+                                    val srcMin = state.detectedTimeframeMinutes ?: 0
+                                    val estBars = if (srcMin > 0 && state.selectedTimeframe.minutes > 0) {
+                                        ((state.estimatedRows.toLong() * srcMin) / state.selectedTimeframe.minutes)
+                                            .coerceAtLeast(1L)
+                                    } else {
+                                        state.estimatedRows.toLong()
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "Resampling ${state.detectedTimeframeLabel} → ${state.selectedTimeframe.label} (~$estBars OHLCV bars)",
+                                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                                        color = AmberGold,
+                                        modifier = Modifier.testTag("resampling_preview_label")
+                                    )
+                                }
+                            }
                         }
 
                         Spacer(modifier = Modifier.height(10.dp))
@@ -375,6 +452,37 @@ fun BacktestScreen(
                                     )
                                 }
                             }
+                        }
+                    }
+                }
+            }
+
+            state.lastRunTimeframeLabel?.let { tfLabel ->
+                item {
+                    val barText = state.lastRunCandleCount?.let { " • $it bars" } ?: ""
+                    Surface(
+                        color = positiveColor.copy(alpha = 0.12f),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Schedule,
+                                contentDescription = null,
+                                tint = positiveColor,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "Tested on $tfLabel$barText",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = positiveColor,
+                                modifier = Modifier.testTag("tested_timeframe_banner")
+                            )
                         }
                     }
                 }

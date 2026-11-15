@@ -36,9 +36,11 @@ import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.TrackChanges
 import androidx.compose.material.icons.filled.Tune
@@ -88,6 +90,7 @@ import com.example.presentation.components.LiquidGlassPill
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Date
 import java.util.Locale
 import kotlin.math.abs
 
@@ -101,7 +104,39 @@ fun SettingsScreen(
     val settings by viewModel.settings.collectAsState()
     val allTrades by viewModel.trades.collectAsState()
     val allStrategies by viewModel.strategies.collectAsState()
+    val allPythonStrategies by viewModel.pythonStrategies.collectAsState()
     val allBots by viewModel.bots.collectAsState()
+    val autoVaultEnabled by viewModel.autoVaultEnabled.collectAsState()
+    val lastVaultSavedAt by viewModel.lastVaultSavedAt.collectAsState()
+    val lastVaultLocation by viewModel.lastVaultLocation.collectAsState()
+
+    val saveVaultFileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) {
+            viewModel.exportVaultToUri(uri) { result ->
+                Toast.makeText(
+                    context,
+                    result.getOrElse { it.message ?: "Failed to save Vault file" },
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
+    val restoreVaultFileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            viewModel.restoreVaultFromUri(uri) { summary ->
+                Toast.makeText(
+                    context,
+                    summary.toUserMessage(),
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
 
     val sdfDay = remember { SimpleDateFormat("yyyy-MM-dd", Locale.US) }
     val todayStr = remember { sdfDay.format(Calendar.getInstance().time) }
@@ -708,23 +743,154 @@ fun SettingsScreen(
             }
         }
 
-        // 5. Data Management: CSV Export, Backup & Restore JSON, Reset
+        // 5. Local Vault & Data Management: Persistent Phone Vault (.json), CSV Export, Clipboard Backup
         item {
+            val savedApiKeyCount = remember(settings) {
+                listOf(
+                    settings.fredApiKey,
+                    settings.finnhubApiKey,
+                    settings.geminiApiKey,
+                    settings.claudeApiKey,
+                    settings.openAiApiKey
+                ).count { it.isNotBlank() }
+            }
+            val vaultTimestampFormat = remember { SimpleDateFormat("MMM d, HH:mm", Locale.US) }
+
             LiquidGlassCard {
                     Text(
-                        text = "Data Backup & Export",
+                        text = "Local Vault & Data Backup",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Automatic Android backup is enabled by default. When Google device backup is enabled on your phone, TradePulse backs up its database, including trades, strategies, bots, settings and saved API keys, so Android can restore them after reinstalling.",
+                        text = "Keeps a local .json Vault file on your phone containing all API keys, settings, themes, trades, checklists, .py strategies, bots, reviews, and saved backtests — so deleting and reinstalling never wipes your setup.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = "${allTrades.size} trades • $savedApiKeyCount API key(s) • ${allPythonStrategies.size} .py • ${allBots.size} bots • Settings",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            val statusLine = if (lastVaultSavedAt > 0L) {
+                                val whenStr = vaultTimestampFormat.format(Date(lastVaultSavedAt))
+                                val loc = lastVaultLocation.ifBlank { "Downloads/TradePulse/tradepulse_vault.json" }
+                                "Last saved $whenStr → $loc"
+                            } else {
+                                "Auto-Vault saves to Downloads/TradePulse/tradepulse_vault.json once you add data or API keys."
+                            }
+                            Text(
+                                text = statusLine,
+                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Auto-Save Vault on Phone",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "Auto-updates Downloads/TradePulse when data or API keys change",
+                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Switch(
+                            checked = autoVaultEnabled,
+                            onCheckedChange = { viewModel.toggleAutoVault(it) },
+                            modifier = Modifier.testTag("auto_vault_switch")
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Save Vault File (.json) via SAF + Save to Downloads Now
+                    Button(
+                        onClick = {
+                            saveVaultFileLauncher.launch("TradePulse_Vault_$todayStr.json")
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("export_vault_file_button"),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Save Vault File (.json)")
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Button(
+                        onClick = {
+                            restoreVaultFileLauncher.launch(arrayOf("application/json", "*/*"))
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("restore_vault_file_button"),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Restore Vault from .json File")
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    OutlinedButton(
+                        onClick = {
+                            viewModel.saveVaultNow { result ->
+                                val msg = result.fold(
+                                    onSuccess = { path -> "Vault updated: $path" },
+                                    onFailure = { err -> err.message ?: "Failed to update local Vault" }
+                                )
+                                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("sync_vault_now_button"),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Update Downloads/TradePulse Now")
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
                     Spacer(modifier = Modifier.height(10.dp))
 
                     // Export CSV
-                    Button(
+                    OutlinedButton(
                         onClick = {
                             coroutineScope.launch {
                                 val csv = viewModel.repository.exportTradesToCsv(allTrades)
@@ -749,15 +915,15 @@ fun SettingsScreen(
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    // Full JSON Backup
+                    // Full JSON Backup (Clipboard)
                     OutlinedButton(
                         onClick = {
                             coroutineScope.launch {
-                                val json = viewModel.repository.exportFullBackupJson(allTrades, allStrategies, allBots)
+                                val json = viewModel.repository.exportCompleteVaultJson()
                                 val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                val clip = ClipData.newPlainText("TradePulse Backup", json)
+                                val clip = ClipData.newPlainText("TradePulse Vault", json)
                                 clipboard.setPrimaryClip(clip)
-                                Toast.makeText(context, "Full JSON Backup copied to clipboard", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "Complete Vault JSON (with API keys & settings) copied", Toast.LENGTH_SHORT).show()
                             }
                         },
                         modifier = Modifier
@@ -767,12 +933,12 @@ fun SettingsScreen(
                     ) {
                         Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Backup All Data to JSON (Clipboard)")
+                        Text("Copy Complete Vault JSON")
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    // Restore from JSON
+                    // Restore from JSON (Paste)
                     OutlinedButton(
                         onClick = { showRestoreDialog = true },
                         modifier = Modifier
@@ -782,7 +948,7 @@ fun SettingsScreen(
                     ) {
                         Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Restore from JSON Backup")
+                        Text("Paste Vault JSON Backup")
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
@@ -812,12 +978,12 @@ fun SettingsScreen(
     if (showRestoreDialog) {
         AlertDialog(
             onDismissRequest = { showRestoreDialog = false },
-            title = { Text("Paste JSON Backup") },
+            title = { Text("Paste Vault JSON Backup") },
             text = {
                 OutlinedTextField(
                     value = restoreJsonInput,
                     onValueChange = { restoreJsonInput = it },
-                    placeholder = { Text("Paste your full JSON backup string here...") },
+                    placeholder = { Text("Paste your full JSON Vault string here...") },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(160.dp),
@@ -827,14 +993,13 @@ fun SettingsScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        coroutineScope.launch {
-                            val success = viewModel.repository.restoreFullBackupJson(restoreJsonInput)
+                        viewModel.restoreVaultFromJson(restoreJsonInput) { summary ->
                             showRestoreDialog = false
-                            if (success) {
-                                Toast.makeText(context, "Data restored successfully", Toast.LENGTH_SHORT).show()
-                            } else {
-                                Toast.makeText(context, "Invalid JSON backup format", Toast.LENGTH_LONG).show()
-                            }
+                            Toast.makeText(
+                                context,
+                                summary.toUserMessage(),
+                                Toast.LENGTH_LONG
+                            ).show()
                         }
                     }
                 ) {
