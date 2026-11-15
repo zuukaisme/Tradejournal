@@ -59,7 +59,7 @@ fun EconomicCalendarScreen(
     val status by viewModel.economicCalendarStatus.collectAsState()
     var selectedImpact by remember { mutableStateOf("All") }
     var selectedCurrency by remember { mutableStateOf("All") }
-    var selectedRange by remember { mutableStateOf("This week") }
+    var selectedRange by remember { mutableStateOf("All dates") }
     var searchQuery by remember { mutableStateOf("") }
     var currencyMenuExpanded by remember { mutableStateOf(false) }
 
@@ -78,6 +78,7 @@ fun EconomicCalendarScreen(
             val impactMatches = selectedImpact == "All" || event.impact.equals(selectedImpact, true)
             val currencyMatches = selectedCurrency == "All" || event.currency == selectedCurrency
             val dateMatches = when (selectedRange) {
+                "All dates" -> true
                 "Today" -> eventDate.get(Calendar.YEAR) == now.get(Calendar.YEAR) &&
                     eventDate.get(Calendar.DAY_OF_YEAR) == now.get(Calendar.DAY_OF_YEAR)
                 "Tomorrow" -> eventDate.get(Calendar.YEAR) == tomorrow.get(Calendar.YEAR) &&
@@ -167,7 +168,7 @@ fun EconomicCalendarScreen(
                     }
                 }
                 Spacer(Modifier.width(4.dp))
-                listOf("Today", "Tomorrow", "This week").forEach { range ->
+                listOf("All dates", "Today", "Tomorrow", "This week").forEach { range ->
                     FilterChip(
                         selected = selectedRange == range,
                         onClick = { selectedRange = range },
