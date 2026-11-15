@@ -1,8 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item
-        android:width="66dp"
-        android:height="66dp"
-        android:drawable="@drawable/trade_journal_launcher_icon"
-        android:gravity="center" />
-</layer-list>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#00E676"
+        android:pathData="M35,24 L35,67 L39,67 L39,24 Z M29,36 C29,34.3 30.3,33 32,33 L42,33 C43.7,33 45,34.3 45,36 L45,57 C45,58.7 43.7,60 42,60 L32,60 C30.3,60 29,58.7 29,57 Z" />
+    <path
+        android:fillColor="#FF3D4F"
+        android:pathData="M52,29 L52,73 L56,73 L56,29 Z M46,42 C46,40.3 47.3,39 49,39 L59,39 C60.7,39 62,40.3 62,42 L62,64 C62,65.7 60.7,67 59,67 L49,67 C47.3,67 46,65.7 46,64 Z" />
+    <path
+        android:fillColor="#00E676"
+        android:pathData="M69,15 L69,64 L73,64 L73,15 Z M63,26 C63,24.3 64.3,23 66,23 L76,23 C77.7,23 79,24.3 79,26 L79,55 C79,56.7 77.7,58 76,58 L66,58 C64.3,58 63,56.7 63,55 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,69 C25,65 39,68 50,78 C61,68 77,65 96,69 L96,91 C78,87 62,91 50,100 C38,91 22,87 12,91 Z" />
+    <path
+        android:fillColor="#AEB8C8"
+        android:pathData="M18,75 C29,72 40,74 49,82 L49,89 C39,82 28,80 16,83 Z M82,75 C70,72 60,75 51,82 L51,89 C61,82 72,80 94,83 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,94 C25,91 39,94 50,103 C61,94 77,91 96,94 L96,97 C78,94 62,98 50,106 C38,98 22,94 12,97 Z" />
+</vector>
