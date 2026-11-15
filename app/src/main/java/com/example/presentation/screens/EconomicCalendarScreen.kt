@@ -105,7 +105,7 @@ fun EconomicCalendarScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(Modifier.width(88.dp)) {
+                Column(Modifier.weight(1f)) {
                     Text("Economic Calendar", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Text("${filteredEvents.size} matching events · Forex Factory", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -259,7 +259,7 @@ private fun EconomicEventCard(event: EconomicCalendarEvent) {
 
 @Composable
 private fun EventValue(label: String, value: String?) {
-    Column(Modifier.weight(1f)) {
+    Column(Modifier.width(88.dp)) {
         Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(value?.ifBlank { "—" } ?: "—", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
     }
