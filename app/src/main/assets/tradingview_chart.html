@@ -76,6 +76,7 @@ let statusTimer = null;
 let frameTimeout = null;
 let activeObserver = null;
 let renderVersion = 0;
+let nativeErrorMessage = null;
 
 function clearChartTimers() {
   if (statusTimer !== null) {
@@ -95,6 +96,7 @@ function clearChartTimers() {
 function setStatus(message, hideAfter = 0, version = renderVersion) {
   const fallback = document.getElementById("fallback");
   if (version !== renderVersion) return;
+  if (nativeErrorMessage !== null && !message.startsWith("TradingView error:")) return;
   if (statusTimer !== null) {
     window.clearTimeout(statusTimer);
     statusTimer = null;
@@ -111,17 +113,23 @@ function setStatus(message, hideAfter = 0, version = renderVersion) {
   }
 }
 
+function showChartError(message, version = renderVersion) {
+  if (version !== renderVersion) return;
+  nativeErrorMessage = message;
+  setStatus("TradingView error: " + message, 0, version);
+}
+
 window.showNativeError = function(message) {
-  setStatus("TradingView error: " + message);
+  showChartError(message);
 };
 
 window.onerror = function(message, source, line, column) {
-  setStatus("Chart JavaScript error: " + message + " (" + source + ":" + line + ")");
+  showChartError("Chart JavaScript error: " + message + " (" + source + ":" + line + ")");
 };
 
 window.addEventListener("unhandledrejection", event => {
   const reason = event.reason && event.reason.message ? event.reason.message : String(event.reason);
-  setStatus("Chart script error: " + reason);
+  showChartError("Chart script error: " + reason);
 });
 
 function renderCategories() {
@@ -161,6 +169,7 @@ function renderSymbols() {
 function renderChart() {
   clearChartTimers();
   const version = ++renderVersion;
+  nativeErrorMessage = null;
   const root = document.getElementById("chart");
   const credit = document.getElementById("chartCredit");
   credit.href = "https://www.tradingview.com/symbols/" + activeSymbol.symbol.replace(":", "-") + "/";
@@ -200,7 +209,7 @@ function renderChart() {
   };
 
   script.onerror = () => {
-    setStatus("TradingView's chart script could not download. Check your connection or the TradingView service.", 0, version);
+    showChartError("The chart script could not download. Check your connection or the TradingView service.", version);
   };
 
   const observer = new MutationObserver(() => {
@@ -215,7 +224,7 @@ function renderChart() {
           window.clearTimeout(frameTimeout);
           frameTimeout = null;
         }
-        setStatus("Chart frame loaded.", 2500, version);
+        if (nativeErrorMessage === null) setStatus("Chart frame loaded; chart content is not yet verified.", 2500, version);
       }, { once: true });
     }
   });

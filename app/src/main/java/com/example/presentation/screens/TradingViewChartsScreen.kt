@@ -79,6 +79,20 @@ fun TradingViewChartsScreen(modifier: Modifier = Modifier) {
                     }
                 }
 
+                override fun onReceivedSslError(
+                    view: WebView,
+                    handler: android.webkit.SslErrorHandler,
+                    error: android.net.http.SslError
+                ) {
+                    handler.cancel()
+                    val detail = "SSL error ${error.primaryError} from ${error.url}"
+                    Log.e("TradingViewWebView", detail)
+                    view.evaluateJavascript(
+                        "window.showNativeError(${JSONObject.quote(detail)})",
+                        null
+                    )
+                }
+
                 override fun onPageFinished(view: WebView, url: String) {
                     Log.d("TradingViewWebView", "Page finished: $url")
                 }
