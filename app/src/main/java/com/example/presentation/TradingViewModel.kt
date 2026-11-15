@@ -50,6 +50,8 @@ enum class AppScreen {
     BACKTEST,
     RISK_CALC,
     CHARTS,
+    ECONOMIC_CALENDAR,
+    PSYCHOLOGY,
     SETTINGS
 }
 
