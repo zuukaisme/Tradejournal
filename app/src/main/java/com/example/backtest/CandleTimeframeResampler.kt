@@ -1,5 +1,12 @@
 package com.example.backtest
 
+import java.io.BufferedReader
+import java.io.BufferedWriter
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.io.InputStreamReader
+import java.io.OutputStreamWriter
 import java.math.BigDecimal
 import java.util.Calendar
 import java.util.GregorianCalendar
@@ -31,6 +38,13 @@ data class DetectedTimeframe(
 
 data class ResampledCsvResult(
     val csvText: String,
+    val sourceCandleCount: Int,
+    val outputCandleCount: Int,
+    val targetTimeframe: BacktestTimeframe
+)
+
+data class ResampledCsvFileResult(
+    val file: File,
     val sourceCandleCount: Int,
     val outputCandleCount: Int,
     val targetTimeframe: BacktestTimeframe
@@ -152,6 +166,122 @@ object CandleTimeframeResampler {
             minutes = detectedMinutes,
             label = formatTimeframeLabel(detectedMinutes)
         )
+    }
+
+
+    fun resampleCsvFile(sourceFile: File, target: BacktestTimeframe, outputFile: File): ResampledCsvFileResult {
+        require(target != BacktestTimeframe.NATIVE) { "Native timeframe does not need resampling." }
+        require(sourceFile.exists() && sourceFile.isFile) { "The cached CSV file is unavailable." }
+        outputFile.parentFile?.mkdirs()
+
+        var header: CsvHeaderInfo? = null
+        var firstNonBlank = true
+        var sourceCount = 0
+        var previousEpoch = Long.MIN_VALUE
+        var chronological = true
+
+        BufferedReader(InputStreamReader(FileInputStream(sourceFile), Charsets.UTF_8), 1 shl 16).use { reader ->
+            while (true) {
+                val line = reader.readLine() ?: break
+                if (line.isBlank()) continue
+                header = parseHeader(line.trim())
+                    ?: throw IllegalArgumentException("Unrecognized CSV header.")
+                break
+            }
+            val parsedHeader = header ?: throw IllegalArgumentException("CSV file is empty.")
+            require(parsedHeader.openIdx != null && parsedHeader.highIdx != null &&
+                parsedHeader.lowIdx != null && parsedHeader.closeIdx != null) {
+                "CSV must contain open, high, low, and close columns."
+            }
+            require(parsedHeader.singleTimeIdx != null ||
+                (parsedHeader.dateIdx != null && parsedHeader.timeIdx != null)) {
+                "CSV must contain date/time columns to resample timeframes."
+            }
+
+            while (true) {
+                val line = reader.readLine() ?: break
+                val candle = parseResampleLine(line, parsedHeader) ?: continue
+                if (candle.epochMillis < previousEpoch) chronological = false
+                previousEpoch = candle.epochMillis
+                sourceCount++
+            }
+        }
+
+        require(sourceCount > 0) { "Could not parse candle timestamps/prices for resampling." }
+        require(chronological) {
+            "This CSV is not in chronological order. Sort it from oldest to newest before resampling a large file."
+        }
+
+        var currentBucket = Long.MIN_VALUE
+        var bucketOpen = 0.0
+        var bucketHigh = 0.0
+        var bucketLow = 0.0
+        var bucketClose = 0.0
+        var bucketVolume = 0.0
+        var outputCount = 0
+
+        BufferedReader(InputStreamReader(FileInputStream(sourceFile), Charsets.UTF_8), 1 shl 16).use { reader ->
+            var headerSkipped = false
+            BufferedWriter(OutputStreamWriter(FileOutputStream(outputFile), Charsets.UTF_8), 1 shl 16).use { writer ->
+                writer.write("datetime,open,high,low,close,volume")
+                writer.newLine()
+
+                fun flushBucket() {
+                    val row = StringBuilder(80)
+                    formatUtcTimestampFast(currentBucket, row)
+                    row.append(',')
+                    appendFormattedNumber(bucketOpen, row).append(',')
+                    appendFormattedNumber(bucketHigh, row).append(',')
+                    appendFormattedNumber(bucketLow, row).append(',')
+                    appendFormattedNumber(bucketClose, row).append(',')
+                    appendFormattedNumber(bucketVolume, row)
+                    writer.write(row.toString())
+                    writer.newLine()
+                    outputCount++
+                }
+
+                while (true) {
+                    val line = reader.readLine() ?: break
+                    if (!headerSkipped) {
+                        if (line.isNotBlank()) headerSkipped = true
+                        continue
+                    }
+                    val candle = parseResampleLine(line, header!!) ?: continue
+                    val bucket = bucketStartMillisFast(candle.epochMillis, target)
+                    if (bucket != currentBucket) {
+                        if (currentBucket != Long.MIN_VALUE) flushBucket()
+                        currentBucket = bucket
+                        bucketOpen = candle.open
+                        bucketHigh = candle.high
+                        bucketLow = candle.low
+                        bucketClose = candle.close
+                        bucketVolume = candle.volume
+                    } else {
+                        if (candle.high > bucketHigh) bucketHigh = candle.high
+                        if (candle.low < bucketLow) bucketLow = candle.low
+                        bucketClose = candle.close
+                        bucketVolume += candle.volume
+                    }
+                }
+                if (currentBucket != Long.MIN_VALUE) flushBucket()
+            }
+        }
+
+        return ResampledCsvFileResult(outputFile, sourceCount, outputCount, target)
+    }
+
+    private fun parseResampleLine(line: String, header: CsvHeaderInfo): ParsedCandle? {
+        val clean = line.trim()
+        if (clean.isEmpty()) return null
+        val cols = clean.split(header.delimiter)
+        val rawTs = extractTimestampString(cols, header) ?: return null
+        val epoch = parseEpochMillisFast(rawTs) ?: return null
+        val open = cols.getOrNull(header.openIdx ?: -1)?.trim()?.toDoubleOrNull() ?: return null
+        val high = cols.getOrNull(header.highIdx ?: -1)?.trim()?.toDoubleOrNull() ?: return null
+        val low = cols.getOrNull(header.lowIdx ?: -1)?.trim()?.toDoubleOrNull() ?: return null
+        val close = cols.getOrNull(header.closeIdx ?: -1)?.trim()?.toDoubleOrNull() ?: return null
+        val volume = header.volIdx?.let { cols.getOrNull(it)?.trim()?.toDoubleOrNull() } ?: 0.0
+        return ParsedCandle(epoch, open, high, low, close, volume)
     }
 
     fun resampleCsv(csvText: String, target: BacktestTimeframe): ResampledCsvResult {
