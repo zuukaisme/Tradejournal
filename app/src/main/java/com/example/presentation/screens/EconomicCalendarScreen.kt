@@ -109,7 +109,7 @@ fun EconomicCalendarScreen(
                     Text("Economic Calendar", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Text("${filteredEvents.size} matching events · Forex Factory", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                IconButton(onClick = { viewModel.refreshEconomicCalendar(force = true) }, enabled = !isLoading) {
+                IconButton(onClick = { viewModel.refreshEconomicCalendar() }, enabled = !isLoading) {
                     if (isLoading) CircularProgressIndicator(Modifier.width(20.dp).height(20.dp), strokeWidth = 2.dp)
                     else Icon(Icons.Default.Refresh, contentDescription = "Refresh calendar", tint = MaterialTheme.colorScheme.primary)
                 }
