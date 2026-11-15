@@ -57,7 +57,7 @@ object AiStrategyGenerator {
         5. Guard zero division / flat windows: Verify ATR/range/denominator > 0 before dividing or computing stops.
         6. Next-open execution & price ordering: A signal returned on candle `i` fills at `candles[i + 1].open`. For `"buy"`, keep `sl < candles[i].close < tp`; for `"sell"`, keep `tp < candles[i].close < sl`. Ensure `abs(candles[i].close - sl) > 0`.
         7. If SL and TP are both touched inside one candle, the engine assumes SL hits first.
-        8. Avoid unnecessary instance mutation that breaks re-runs; reset any helper state cleanly in `__init__` or compute directly from `candles[i - N : i + 1]`.
+        8. Performance without changing trading logic: precompute indicators or maintain rolling state only when mathematically equivalent to the requested lookback. Never shorten or cap required historical lookbacks, indicator periods, entry/exit conditions, stops, targets, or cooldowns just to make a backtest faster. Preserve the same signal on every candle; optimize calculations, not strategy rules. Reset helper state cleanly for each run.
         9. Output ONLY valid, runnable raw Python code with docstrings and comments explaining every rule. Do not include prose outside Python comments/docstrings.
     """.trimIndent()
 
