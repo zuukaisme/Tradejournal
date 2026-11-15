@@ -184,9 +184,11 @@ interface PythonStrategyDao {
 
     @Query("SELECT * FROM python_strategies WHERE id = :id LIMIT 1")
     suspend fun getPythonStrategyById(id: Long): PythonStrategyEntity?
-\n    @Query("SELECT * FROM python_strategies WHERE name = :name COLLATE NOCASE LIMIT 1")
+
+    @Query("SELECT * FROM python_strategies WHERE name = :name COLLATE NOCASE LIMIT 1")
     suspend fun getPythonStrategyByName(name: String): PythonStrategyEntity?
-\n    @Query("SELECT * FROM python_strategies WHERE name = :name COLLATE NOCASE AND id != :excludeId LIMIT 1")
+
+    @Query("SELECT * FROM python_strategies WHERE name = :name COLLATE NOCASE AND id != :excludeId LIMIT 1")
     suspend fun getPythonStrategyByNameExcludingId(name: String, excludeId: Long): PythonStrategyEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
