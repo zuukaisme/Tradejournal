@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Backtester skeleton. Standard library only, so it runs in Termux.
+Backtester skeleton. Standard library only, so it runs in Termux & Chaquopy.
 
 Run:
     python backtest.py --demo            (fake data, to see it working)
@@ -18,9 +18,12 @@ import csv
 import hashlib
 import io
 import json
+import os
 import random
 import time
 import traceback
+from array import array
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -60,47 +63,91 @@ class Trade:
     initial_sl: Optional[float] = None
 
 
+class CandleSeries(Sequence):
+    """Memory-compact sequence of Candle objects backed by C double arrays.
+    Uses ~5x less RAM than millions of Python Candle instances (~250MB for 4M bars)
+    while presenting the exact List[Candle] indexing, negative indexing, slicing, and
+    iteration API expected by strategies."""
+
+    __slots__ = ("opens", "highs", "lows", "closes", "volumes", "_time_buf", "_time_offsets")
+
+    def __init__(self) -> None:
+        self.opens = array("d")
+        self.highs = array("d")
+        self.lows = array("d")
+        self.closes = array("d")
+        self.volumes = array("d")
+        self._time_buf = bytearray()
+        self._time_offsets = array("I", (0,))
+
+    def append_row(self, ts: str, o: float, h: float, l: float, c: float, v: float) -> None:
+        encoded = ts.encode("utf-8", "replace")
+        self._time_buf.extend(encoded)
+        self._time_offsets.append(len(self._time_buf))
+        self.opens.append(o)
+        self.highs.append(h)
+        self.lows.append(l)
+        self.closes.append(c)
+        self.volumes.append(v)
+
+    def time_at(self, idx: int) -> str:
+        offsets = self._time_offsets
+        return self._time_buf[offsets[idx]:offsets[idx + 1]].decode("utf-8")
+
+    def _candle_at(self, idx: int) -> Candle:
+        offsets = self._time_offsets
+        return Candle(
+            self._time_buf[offsets[idx]:offsets[idx + 1]].decode("utf-8"),
+            self.opens[idx],
+            self.highs[idx],
+            self.lows[idx],
+            self.closes[idx],
+            self.volumes[idx],
+        )
+
+    def __len__(self) -> int:
+        return len(self.closes)
+
+    def __getitem__(self, item):
+        n = len(self.closes)
+        if isinstance(item, slice):
+            start, stop, step = item.indices(n)
+            return [self._candle_at(k) for k in range(start, stop, step)]
+        if item < 0:
+            item += n
+        if item < 0 or item >= n:
+            raise IndexError("candle index out of range")
+        return self._candle_at(item)
+
+    def __iter__(self):
+        n = len(self.closes)
+        opens = self.opens
+        highs = self.highs
+        lows = self.lows
+        closes = self.closes
+        volumes = self.volumes
+        buf = self._time_buf
+        offsets = self._time_offsets
+        candle_cls = Candle
+        for k in range(n):
+            yield candle_cls(
+                buf[offsets[k]:offsets[k + 1]].decode("utf-8"),
+                opens[k],
+                highs[k],
+                lows[k],
+                closes[k],
+                volumes[k],
+            )
+
+
 # ---------- 1. data loader ----------
 
-def load_candles(path: str) -> List[Candle]:
-    """Reads MT5 history exports (tab separated, <DATE> <TIME> ...)
-    or any CSV with date/time/open/high/low/close columns."""
-    raw = open(path, "rb").read()
-    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
-        text = raw.decode("utf-16")
-    else:
-        text = raw.decode("utf-8-sig")
-    return parse_candles(text)
+_MAX_CACHE_CANDLES = 150_000
+_PARSED_CACHE: Optional[Tuple[Tuple[int, bytes], Sequence]] = None
+_FILE_CACHE: Optional[Tuple[Tuple[str, int, int], Sequence]] = None
 
 
-_PARSED_CACHE: Optional[Tuple[Tuple[int, bytes], List[Candle]]] = None
-
-
-def parse_candles(text: str) -> List[Candle]:
-    """Accepts MT5 exports (<DATE> <TIME> ...), daily exports with only <DATE>,
-    and generic CSVs with date, datetime, time or timestamp columns."""
-    global _PARSED_CACHE
-    if text.startswith("\ufeff"):
-        text = text.lstrip("\ufeff")
-
-    cache_key = None
-    if len(text) > 4096:
-        digest = hashlib.blake2b(text.encode("utf-8", "replace"), digest_size=16).digest()
-        cache_key = (len(text), digest)
-        cached = _PARSED_CACHE
-        if cached is not None and cached[0] == cache_key:
-            return cached[1]
-
-    stream = io.StringIO(text)
-    first = ""
-    for raw_line in stream:
-        stripped = raw_line.strip()
-        if stripped:
-            first = stripped
-            break
-    if not first:
-        raise ValueError("The CSV file is empty")
-
+def _resolve_header(first: str):
     delim = "\t" if "\t" in first else (";" if ";" in first else ",")
     if '"' in first:
         header_raw = next(csv.reader([first], delimiter=delim))
@@ -130,72 +177,187 @@ def parse_candles(text: str) -> List[Candle]:
     date_i = idx.get("date", -1)
     time_i = idx.get("time", -1)
     ts_i = idx[time_keys[0]]
+    return delim, o_i, h_i, l_i, c_i, vol_i, has_date_time, date_i, time_i, ts_i
 
-    candles: List[Candle] = []
-    append = candles.append
-    candle_cls = Candle
-    flt = float
-    split_fn = str.split
 
-    if '"' not in text:
+def _populate_from_stream(stream, use_compact_series: bool):
+    first = ""
+    for raw_line in stream:
+        stripped = raw_line.strip()
+        if stripped:
+            first = stripped
+            break
+    if not first:
+        raise ValueError("The CSV file is empty")
+
+    delim, o_i, h_i, l_i, c_i, vol_i, has_date_time, date_i, time_i, ts_i = _resolve_header(first)
+
+    if use_compact_series:
+        series = CandleSeries()
+        opens = series.opens
+        highs = series.highs
+        lows = series.lows
+        closes = series.closes
+        volumes = series.volumes
+        tbuf = series._time_buf
+        toff = series._time_offsets
+        tbuf_extend = tbuf.extend
+        toff_append = toff.append
+        o_app = opens.append
+        h_app = highs.append
+        l_app = lows.append
+        c_app = closes.append
+        v_app = volumes.append
+        flt = float
+        split_fn = str.split
+        reader = csv.reader
+
         if has_date_time:
             if vol_i is not None:
                 for raw_line in stream:
                     line = raw_line.strip()
                     if not line:
                         continue
-                    row = split_fn(line, delim)
-                    append(candle_cls(
-                        row[date_i] + " " + row[time_i],
-                        flt(row[o_i]), flt(row[h_i]), flt(row[l_i]), flt(row[c_i]), flt(row[vol_i]),
-                    ))
+                    row = next(reader([line], delimiter=delim)) if '"' in line else split_fn(line, delim)
+                    tbuf_extend((row[date_i] + " " + row[time_i]).encode("utf-8", "replace"))
+                    toff_append(len(tbuf))
+                    o_app(flt(row[o_i])); h_app(flt(row[h_i])); l_app(flt(row[l_i])); c_app(flt(row[c_i])); v_app(flt(row[vol_i]))
             else:
                 for raw_line in stream:
                     line = raw_line.strip()
                     if not line:
                         continue
-                    row = split_fn(line, delim)
-                    append(candle_cls(
-                        row[date_i] + " " + row[time_i],
-                        flt(row[o_i]), flt(row[h_i]), flt(row[l_i]), flt(row[c_i]), 0.0,
-                    ))
+                    row = next(reader([line], delimiter=delim)) if '"' in line else split_fn(line, delim)
+                    tbuf_extend((row[date_i] + " " + row[time_i]).encode("utf-8", "replace"))
+                    toff_append(len(tbuf))
+                    o_app(flt(row[o_i])); h_app(flt(row[h_i])); l_app(flt(row[l_i])); c_app(flt(row[c_i])); v_app(0.0)
         else:
             if vol_i is not None:
                 for raw_line in stream:
                     line = raw_line.strip()
                     if not line:
                         continue
-                    row = split_fn(line, delim)
-                    append(candle_cls(
-                        row[ts_i],
-                        flt(row[o_i]), flt(row[h_i]), flt(row[l_i]), flt(row[c_i]), flt(row[vol_i]),
-                    ))
+                    row = next(reader([line], delimiter=delim)) if '"' in line else split_fn(line, delim)
+                    tbuf_extend(row[ts_i].encode("utf-8", "replace"))
+                    toff_append(len(tbuf))
+                    o_app(flt(row[o_i])); h_app(flt(row[h_i])); l_app(flt(row[l_i])); c_app(flt(row[c_i])); v_app(flt(row[vol_i]))
             else:
                 for raw_line in stream:
                     line = raw_line.strip()
                     if not line:
                         continue
-                    row = split_fn(line, delim)
-                    append(candle_cls(
-                        row[ts_i],
-                        flt(row[o_i]), flt(row[h_i]), flt(row[l_i]), flt(row[c_i]), 0.0,
-                    ))
-    else:
-        for row in csv.reader(stream, delimiter=delim):
-            if not row:
-                continue
-            t = (row[date_i] + " " + row[time_i]) if has_date_time else row[ts_i]
-            append(candle_cls(
-                t,
-                flt(row[o_i]),
-                flt(row[h_i]),
-                flt(row[l_i]),
-                flt(row[c_i]),
-                flt(row[vol_i]) if vol_i is not None else 0.0,
-            ))
+                    row = next(reader([line], delimiter=delim)) if '"' in line else split_fn(line, delim)
+                    tbuf_extend(row[ts_i].encode("utf-8", "replace"))
+                    toff_append(len(tbuf))
+                    o_app(flt(row[o_i])); h_app(flt(row[h_i])); l_app(flt(row[l_i])); c_app(flt(row[c_i])); v_app(0.0)
+        return series
 
-    if cache_key is not None:
+    candles: List[Candle] = []
+    append = candles.append
+    candle_cls = Candle
+    flt = float
+    split_fn = str.split
+    reader = csv.reader
+
+    if has_date_time:
+        if vol_i is not None:
+            for raw_line in stream:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                row = next(reader([line], delimiter=delim)) if '"' in line else split_fn(line, delim)
+                append(candle_cls(
+                    row[date_i] + " " + row[time_i],
+                    flt(row[o_i]), flt(row[h_i]), flt(row[l_i]), flt(row[c_i]), flt(row[vol_i]),
+                ))
+        else:
+            for raw_line in stream:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                row = next(reader([line], delimiter=delim)) if '"' in line else split_fn(line, delim)
+                append(candle_cls(
+                    row[date_i] + " " + row[time_i],
+                    flt(row[o_i]), flt(row[h_i]), flt(row[l_i]), flt(row[c_i]), 0.0,
+                ))
+    else:
+        if vol_i is not None:
+            for raw_line in stream:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                row = next(reader([line], delimiter=delim)) if '"' in line else split_fn(line, delim)
+                append(candle_cls(
+                    row[ts_i],
+                    flt(row[o_i]), flt(row[h_i]), flt(row[l_i]), flt(row[c_i]), flt(row[vol_i]),
+                ))
+        else:
+            for raw_line in stream:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                row = next(reader([line], delimiter=delim)) if '"' in line else split_fn(line, delim)
+                append(candle_cls(
+                    row[ts_i],
+                    flt(row[o_i]), flt(row[h_i]), flt(row[l_i]), flt(row[c_i]), 0.0,
+                ))
+    return candles
+
+
+def load_candles(path: str) -> Sequence[Candle]:
+    """Streams MT5 history exports (tab separated, <DATE> <TIME> ...) or any CSV
+    from disk without loading the full file bytes into RAM. Uses CandleSeries
+    on large files to keep multi-million-row 1m datasets within Android memory."""
+    global _FILE_CACHE, _PARSED_CACHE
+
+    st = os.stat(path)
+    file_key = (path, st.st_size, getattr(st, "st_mtime_ns", int(st.st_mtime)))
+    cached = _FILE_CACHE
+    if cached is not None and cached[0] == file_key:
+        return cached[1]
+
+    # Release large prior caches before parsing a new large dataset
+    if st.st_size > 8 * 1024 * 1024:
+        _FILE_CACHE = None
+        _PARSED_CACHE = None
+
+    with open(path, "rb") as bf:
+        prefix = bf.read(4)
+    encoding = "utf-16" if prefix[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8-sig"
+    use_compact = st.st_size > 2 * 1024 * 1024
+
+    with open(path, "r", encoding=encoding, errors="replace", buffering=1024 * 1024) as f:
+        candles = _populate_from_stream(f, use_compact_series=use_compact)
+
+    if len(candles) <= _MAX_CACHE_CANDLES:
+        _FILE_CACHE = (file_key, candles)
+    else:
+        _FILE_CACHE = None
+    return candles
+
+
+def parse_candles(text: str) -> List[Candle]:
+    """Accepts MT5 exports (<DATE> <TIME> ...), daily exports with only <DATE>,
+    and generic CSVs with date, datetime, time or timestamp columns."""
+    global _PARSED_CACHE
+    if text.startswith("\ufeff"):
+        text = text.lstrip("\ufeff")
+
+    cache_key = None
+    if 4096 < len(text) <= 20 * 1024 * 1024:
+        digest = hashlib.blake2b(text.encode("utf-8", "replace"), digest_size=16).digest()
+        cache_key = (len(text), digest)
+        cached = _PARSED_CACHE
+        if cached is not None and cached[0] == cache_key:
+            return cached[1]
+
+    stream = io.StringIO(text)
+    candles = _populate_from_stream(stream, use_compact_series=False)
+
+    if cache_key is not None and len(candles) <= _MAX_CACHE_CANDLES:
         _PARSED_CACHE = (cache_key, candles)
+    elif len(candles) > _MAX_CACHE_CANDLES:
+        _PARSED_CACHE = None
     return candles
 
 
@@ -262,7 +424,7 @@ def _emit_progress(cb, payload: dict) -> None:
 
 
 def _run_backtest_detailed(
-    candles: List[Candle],
+    candles: Sequence[Candle],
     strategy: Strategy,
     warmup: int = 50,
     max_stop: Optional[float] = None,
@@ -289,6 +451,7 @@ def _run_backtest_detailed(
     inv_point_size = 1.0 / point_size if point_size else 1.0
     mono = time.monotonic
     last_emit_at = mono() if has_progress else 0.0
+    is_series = isinstance(candles, CandleSeries)
 
     def push_progress(processed: int, current_time: str) -> None:
         _emit_progress(progress_callback, {
@@ -307,83 +470,160 @@ def _run_backtest_detailed(
         })
 
     if has_progress:
-        push_progress(0, candles[0].time if total_candles > 0 else "")
+        first_time = candles.time_at(0) if (is_series and total_candles > 0) else (candles[0].time if total_candles > 0 else "")
+        push_progress(0, first_time)
 
-    for i, c in enumerate(candles):
-        # 1) manage the open trade on this candle
-        if pos is not None:
-            hit = None
-            if pos.side == "buy":
-                if c.low <= pos.sl:
-                    rzn = "be" if abs_fn(pos.sl - pos.entry) <= be_eps else "sl"
-                    hit = (pos.sl, rzn)
-                elif c.high >= pos.tp:
-                    hit = (pos.tp, "tp")
-            else:
-                if c.high >= pos.sl:
-                    rzn = "be" if abs_fn(pos.sl - pos.entry) <= be_eps else "sl"
-                    hit = (pos.sl, rzn)
-                elif c.low <= pos.tp:
-                    hit = (pos.tp, "tp")
+    if is_series:
+        opens = candles.opens
+        highs = candles.highs
+        lows = candles.lows
+        closes = candles.closes
+        time_at = candles.time_at
+        emit_mask = 1023 if total_candles > 50_000 else 255
 
-            if hit is None and manage_fn is not None:
-                action = manage_fn(i, candles, pos)
-                if isinstance(action, str):
-                    act = action.strip().lower()
-                    if act in ("be", "breakeven", "break_even", "exit", "close"):
-                        exit_px = pos.entry if act in ("be", "breakeven", "break_even") else c.close
-                        hit_move = (exit_px - pos.entry) if pos.side == "buy" else (pos.entry - exit_px)
-                        rzn = "be" if abs_fn(hit_move) <= be_eps else "exit"
-                        hit = (exit_px, rzn)
-
-            if hit is not None:
-                exit_px, reason = hit
-                pos.exit = exit_px
-                pos.reason = reason
-                pos.close_time = c.time
-                pos.close_i = i
-                risk_sl = pos.initial_sl if pos.initial_sl is not None else pos.sl
-                risk = abs_fn(pos.entry - risk_sl)
-                move = (exit_px - pos.entry) if pos.side == "buy" else (pos.entry - exit_px)
-                r_val = move / risk if risk > 0.0 else 0.0
-                pos.r = r_val
-                if abs_fn(r_val) <= be_eps:
-                    pos.reason = "be"
-                    be_count += 1
-                elif r_val > be_eps:
-                    wins_count += 1
+        for i in range(total_candles):
+            if pos is not None:
+                c_low = lows[i]
+                c_high = highs[i]
+                hit = None
+                if pos.side == "buy":
+                    if c_low <= pos.sl:
+                        rzn = "be" if abs_fn(pos.sl - pos.entry) <= be_eps else "sl"
+                        hit = (pos.sl, rzn)
+                    elif c_high >= pos.tp:
+                        hit = (pos.tp, "tp")
                 else:
-                    losses_count += 1
-                trades_append(pos)
-                running_pts += move * inv_point_size
-                running_r += r_val
-                pos = None
+                    if c_high >= pos.sl:
+                        rzn = "be" if abs_fn(pos.sl - pos.entry) <= be_eps else "sl"
+                        hit = (pos.sl, rzn)
+                    elif c_low <= pos.tp:
+                        hit = (pos.tp, "tp")
 
-        # 2) look for a new signal, enter next candle open
-        if pos is None and i >= warmup and i + 1 < total_candles:
-            sig = on_candle(i, candles)
-            if sig is not None:
-                nxt = candles[i + 1]
-                entry = nxt.open
-                valid = (sig.sl < entry < sig.tp) if sig.side == "buy" else (sig.tp < entry < sig.sl)
-                if valid and max_stop is not None and abs_fn(entry - sig.sl) > max_stop:
-                    skipped += 1
-                    valid = False
-                if valid:
-                    pos = trade_cls(sig.side, entry, sig.sl, sig.tp, nxt.time, open_i=i + 1, initial_sl=sig.sl)
-                    entered += 1
+                if hit is None and manage_fn is not None:
+                    action = manage_fn(i, candles, pos)
+                    if isinstance(action, str):
+                        act = action.strip().lower()
+                        if act in ("be", "breakeven", "break_even", "exit", "close"):
+                            exit_px = pos.entry if act in ("be", "breakeven", "break_even") else closes[i]
+                            hit_move = (exit_px - pos.entry) if pos.side == "buy" else (pos.entry - exit_px)
+                            rzn = "be" if abs_fn(hit_move) <= be_eps else "exit"
+                            hit = (exit_px, rzn)
 
-        if has_progress and (i & 255 == 255 or i + 1 == total_candles):
-            now = mono()
-            if i + 1 == total_candles or (now - last_emit_at) >= 0.12:
-                last_emit_at = now
-                push_progress(i + 1, c.time)
+                if hit is not None:
+                    exit_px, reason = hit
+                    pos.exit = exit_px
+                    pos.reason = reason
+                    pos.close_time = time_at(i)
+                    pos.close_i = i
+                    risk_sl = pos.initial_sl if pos.initial_sl is not None else pos.sl
+                    risk = abs_fn(pos.entry - risk_sl)
+                    move = (exit_px - pos.entry) if pos.side == "buy" else (pos.entry - exit_px)
+                    r_val = move / risk if risk > 0.0 else 0.0
+                    pos.r = r_val
+                    if abs_fn(r_val) <= be_eps:
+                        pos.reason = "be"
+                        be_count += 1
+                    elif r_val > be_eps:
+                        wins_count += 1
+                    else:
+                        losses_count += 1
+                    trades_append(pos)
+                    running_pts += move * inv_point_size
+                    running_r += r_val
+                    pos = None
+
+            if pos is None and i >= warmup and i + 1 < total_candles:
+                sig = on_candle(i, candles)
+                if sig is not None:
+                    nxt_i = i + 1
+                    entry = opens[nxt_i]
+                    valid = (sig.sl < entry < sig.tp) if sig.side == "buy" else (sig.tp < entry < sig.sl)
+                    if valid and max_stop is not None and abs_fn(entry - sig.sl) > max_stop:
+                        skipped += 1
+                        valid = False
+                    if valid:
+                        pos = trade_cls(sig.side, entry, sig.sl, sig.tp, time_at(nxt_i), open_i=nxt_i, initial_sl=sig.sl)
+                        entered += 1
+
+            if has_progress and ((i & emit_mask) == emit_mask or i + 1 == total_candles):
+                now = mono()
+                if i + 1 == total_candles or (now - last_emit_at) >= 0.15:
+                    last_emit_at = now
+                    push_progress(i + 1, time_at(i))
+    else:
+        for i, c in enumerate(candles):
+            if pos is not None:
+                hit = None
+                if pos.side == "buy":
+                    if c.low <= pos.sl:
+                        rzn = "be" if abs_fn(pos.sl - pos.entry) <= be_eps else "sl"
+                        hit = (pos.sl, rzn)
+                    elif c.high >= pos.tp:
+                        hit = (pos.tp, "tp")
+                else:
+                    if c.high >= pos.sl:
+                        rzn = "be" if abs_fn(pos.sl - pos.entry) <= be_eps else "sl"
+                        hit = (pos.sl, rzn)
+                    elif c.low <= pos.tp:
+                        hit = (pos.tp, "tp")
+
+                if hit is None and manage_fn is not None:
+                    action = manage_fn(i, candles, pos)
+                    if isinstance(action, str):
+                        act = action.strip().lower()
+                        if act in ("be", "breakeven", "break_even", "exit", "close"):
+                            exit_px = pos.entry if act in ("be", "breakeven", "break_even") else c.close
+                            hit_move = (exit_px - pos.entry) if pos.side == "buy" else (pos.entry - exit_px)
+                            rzn = "be" if abs_fn(hit_move) <= be_eps else "exit"
+                            hit = (exit_px, rzn)
+
+                if hit is not None:
+                    exit_px, reason = hit
+                    pos.exit = exit_px
+                    pos.reason = reason
+                    pos.close_time = c.time
+                    pos.close_i = i
+                    risk_sl = pos.initial_sl if pos.initial_sl is not None else pos.sl
+                    risk = abs_fn(pos.entry - risk_sl)
+                    move = (exit_px - pos.entry) if pos.side == "buy" else (pos.entry - exit_px)
+                    r_val = move / risk if risk > 0.0 else 0.0
+                    pos.r = r_val
+                    if abs_fn(r_val) <= be_eps:
+                        pos.reason = "be"
+                        be_count += 1
+                    elif r_val > be_eps:
+                        wins_count += 1
+                    else:
+                        losses_count += 1
+                    trades_append(pos)
+                    running_pts += move * inv_point_size
+                    running_r += r_val
+                    pos = None
+
+            if pos is None and i >= warmup and i + 1 < total_candles:
+                sig = on_candle(i, candles)
+                if sig is not None:
+                    nxt = candles[i + 1]
+                    entry = nxt.open
+                    valid = (sig.sl < entry < sig.tp) if sig.side == "buy" else (sig.tp < entry < sig.sl)
+                    if valid and max_stop is not None and abs_fn(entry - sig.sl) > max_stop:
+                        skipped += 1
+                        valid = False
+                    if valid:
+                        pos = trade_cls(sig.side, entry, sig.sl, sig.tp, nxt.time, open_i=i + 1, initial_sl=sig.sl)
+                        entered += 1
+
+            if has_progress and (i & 255 == 255 or i + 1 == total_candles):
+                now = mono()
+                if i + 1 == total_candles or (now - last_emit_at) >= 0.12:
+                    last_emit_at = now
+                    push_progress(i + 1, c.time)
 
     open_at_end = 1 if pos is not None else 0
     return trades, skipped, open_at_end, total_candles
 
 
-def run_backtest(candles: List[Candle], strategy: Strategy, warmup: int = 50,
+def run_backtest(candles: Sequence[Candle], strategy: Strategy, warmup: int = 50,
                  max_stop: Optional[float] = None) -> Tuple[List[Trade], int]:
     trades, skipped, _, _ = _run_backtest_detailed(
         candles=candles,
@@ -636,11 +876,38 @@ def compute_stats(
     }
 
 
+def _compile_and_find_strategy(strategy_code: str, class_name: str = "") -> Tuple[Optional[type], Optional[str]]:
+    ns = {
+        "__name__": "user_strategy",
+        "Strategy": Strategy,
+        "Signal": Signal,
+        "Candle": Candle,
+        "Trade": Trade,
+        "List": List,
+        "Optional": Optional,
+    }
+    exec(compile(strategy_code, "strategy.py", "exec"), ns)
+
+    found = [
+        v for v in ns.values()
+        if isinstance(v, type) and issubclass(v, Strategy) and v is not Strategy
+    ]
+    if class_name:
+        found = [c for c in found if c.__name__ == class_name]
+    if not found:
+        msg = (
+            f"Class '{class_name}' not found in the file"
+            if class_name
+            else "No class extending Strategy found in the file"
+        )
+        return None, msg
+    return found[0], None
+
+
 def run_from_csv_text(csv_text: str, max_stop_points: float = 0.0,
                       point_size: float = 1.0, strategy: str = "dummy",
                       progress_callback=None) -> str:
-    """Single entry point for the app. Takes CSV text, returns a JSON string.
-    max_stop_points = 0 means no stop cap."""
+    """Single entry point for small CSV text. Takes CSV text, returns JSON."""
     candles = parse_candles(csv_text)
     max_stop = max_stop_points * point_size if max_stop_points > 0 else None
     trades, skipped, open_trades, total_candles = _run_backtest_detailed(
@@ -664,29 +931,50 @@ def run_from_csv_text(csv_text: str, max_stop_points: float = 0.0,
 def run_with_strategy_code(csv_text: str, strategy_code: str, class_name: str = "",
                            max_stop_points: float = 0.0, point_size: float = 1.0,
                            progress_callback=None) -> str:
-    """Runs ANY user supplied strategy file. strategy_code is the full text of a
-    .py file containing a class that extends Strategy. If class_name is empty,
-    the first Strategy subclass found in the file is used.
-    Always returns JSON: either the stats object, or {"error": ..., "details": ...}."""
+    """Runs ANY user supplied strategy file against CSV text."""
     try:
-        ns = {"__name__": "user_strategy", "Strategy": Strategy, "Signal": Signal,
-              "Candle": Candle, "Trade": Trade, "List": List, "Optional": Optional}
-        exec(compile(strategy_code, "strategy.py", "exec"), ns)
-
-        found = [v for v in ns.values()
-                 if isinstance(v, type) and issubclass(v, Strategy) and v is not Strategy]
-        if class_name:
-            found = [c for c in found if c.__name__ == class_name]
-        if not found:
-            msg = (f"Class '{class_name}' not found in the file" if class_name
-                   else "No class extending Strategy found in the file")
-            return json.dumps({"error": msg, "details": ""})
+        strategy_cls, err_msg = _compile_and_find_strategy(strategy_code, class_name)
+        if err_msg or strategy_cls is None:
+            return json.dumps({"error": err_msg or "Missing Strategy class", "details": ""})
 
         candles = parse_candles(csv_text)
         max_stop = max_stop_points * point_size if max_stop_points > 0 else None
         trades, skipped, open_trades, total_candles = _run_backtest_detailed(
             candles,
-            found[0](),
+            strategy_cls(),
+            max_stop=max_stop,
+            point_size=point_size,
+            progress_callback=progress_callback,
+        )
+        return json.dumps(
+            compute_stats(
+                trades,
+                skipped,
+                point_size,
+                open_trades=open_trades,
+                total_candles=total_candles,
+            )
+        )
+    except Exception as e:
+        return json.dumps({"error": f"{type(e).__name__}: {e}",
+                           "details": traceback.format_exc(limit=3)})
+
+
+def run_with_strategy_file(csv_path: str, strategy_code: str, class_name: str = "",
+                           max_stop_points: float = 0.0, point_size: float = 1.0,
+                           progress_callback=None) -> str:
+    """Streams a cached CSV file directly from disk to avoid multi-hundred-MB
+    JVM/JNI string copies on large datasets (e.g. 222MB+ 1m exports)."""
+    try:
+        strategy_cls, err_msg = _compile_and_find_strategy(strategy_code, class_name)
+        if err_msg or strategy_cls is None:
+            return json.dumps({"error": err_msg or "Missing Strategy class", "details": ""})
+
+        candles = load_candles(csv_path)
+        max_stop = max_stop_points * point_size if max_stop_points > 0 else None
+        trades, skipped, open_trades, total_candles = _run_backtest_detailed(
+            candles,
+            strategy_cls(),
             max_stop=max_stop,
             point_size=point_size,
             progress_callback=progress_callback,

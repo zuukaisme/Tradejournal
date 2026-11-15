@@ -2,6 +2,17 @@ package com.example.backtest
 
 import com.squareup.moshi.JsonClass
 import com.squareup.moshi.Moshi
+import java.io.BufferedInputStream
+import java.io.BufferedReader
+import java.io.BufferedWriter
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.FileOutputStream
+import java.io.InputStream
+import java.io.InputStreamReader
+import java.io.OutputStreamWriter
+import java.io.PushbackInputStream
+import java.nio.charset.Charset
 import java.util.Locale
 
 data class DecodedCsv(
@@ -9,6 +20,15 @@ data class DecodedCsv(
     val detectedEncoding: String,
     val detectedDelimiter: String,
     val estimatedRows: Int
+)
+
+data class CsvStreamInspection(
+    val file: File,
+    val fileSizeBytes: Long,
+    val detectedEncoding: String,
+    val detectedDelimiter: String,
+    val estimatedRows: Int,
+    val sampleLines: List<String>
 )
 
 object BacktestCodec {
@@ -64,6 +84,126 @@ object BacktestCodec {
             detectedDelimiter = delimiter,
             estimatedRows = estimatedRows
         )
+    }
+
+    /**
+     * Streams arbitrarily large CSV/MT5 exports (222MB+ 1m history files) to an internal
+     * UTF-8 cache file using a 64KB buffer so JVM heap never allocates a 200MB+ ByteArray/String.
+     */
+    fun streamCsvToCacheFile(inputStream: InputStream, destFile: File): CsvStreamInspection {
+        destFile.parentFile?.mkdirs()
+        val (pushback, charset, encodingLabel) = detectBomStream(inputStream)
+
+        val sampleLines = ArrayList<String>(610)
+        var nonBlankCount = 0
+        var firstNonBlank = ""
+
+        BufferedReader(InputStreamReader(pushback, charset), 65_536).use { reader ->
+            BufferedWriter(OutputStreamWriter(FileOutputStream(destFile), Charsets.UTF_8), 65_536).use { writer ->
+                var firstLine = true
+                while (true) {
+                    val rawLine = reader.readLine() ?: break
+                    val line = if (firstLine) {
+                        firstLine = false
+                        rawLine.removePrefix("\uFEFF")
+                    } else {
+                        rawLine
+                    }
+                    if (line.isNotBlank()) {
+                        nonBlankCount++
+                        val trimmed = line.trim()
+                        if (firstNonBlank.isEmpty()) {
+                            firstNonBlank = trimmed
+                        }
+                        if (sampleLines.size < 605) {
+                            sampleLines.add(trimmed)
+                        }
+                        writer.write(trimmed)
+                        writer.newLine()
+                    }
+                }
+            }
+        }
+
+        val delimiter = when {
+            firstNonBlank.contains('\t') -> "Tab (MT5)"
+            firstNonBlank.contains(';') -> "Semicolon"
+            firstNonBlank.contains(',') -> "Comma"
+            else -> "Unknown"
+        }
+
+        return CsvStreamInspection(
+            file = destFile,
+            fileSizeBytes = destFile.length(),
+            detectedEncoding = encodingLabel,
+            detectedDelimiter = delimiter,
+            estimatedRows = (nonBlankCount - 1).coerceAtLeast(0),
+            sampleLines = sampleLines
+        )
+    }
+
+    /**
+     * Reads text source files (.mq5, .mq4, .mqh, .txt, .py) on Dispatchers.IO with UTF-16/UTF-8 BOM
+     * detection and a generous size cap so huge files fail gracefully instead of causing OOM.
+     */
+    fun readTextStreamWithBom(inputStream: InputStream, maxBytes: Long = 12L * 1024L * 1024L): String {
+        val buffered = BufferedInputStream(inputStream, 16_384)
+        val out = ByteArrayOutputStream()
+        val buf = ByteArray(16_384)
+        var total = 0L
+        while (true) {
+            val read = buffered.read(buf)
+            if (read <= 0) break
+            total += read
+            if (total > maxBytes) {
+                val mb = maxBytes / (1024L * 1024L)
+                throw IllegalArgumentException("The selected file exceeds the $mb MB limit.")
+            }
+            out.write(buf, 0, read)
+        }
+        val bytes = out.toByteArray()
+        val isUtf16Le = bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte()
+        val isUtf16Be = bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte()
+        val isUtf8Bom = bytes.size >= 3 &&
+            bytes[0] == 0xEF.toByte() &&
+            bytes[1] == 0xBB.toByte() &&
+            bytes[2] == 0xBF.toByte()
+
+        return when {
+            isUtf16Le -> String(bytes, Charsets.UTF_16).removePrefix("\uFEFF")
+            isUtf16Be -> String(bytes, Charsets.UTF_16).removePrefix("\uFEFF")
+            isUtf8Bom -> String(bytes, 3, bytes.size - 3, Charsets.UTF_8).removePrefix("\uFEFF")
+            else -> String(bytes, Charsets.UTF_8).removePrefix("\uFEFF")
+        }
+    }
+
+    private fun detectBomStream(inputStream: InputStream): Triple<PushbackInputStream, Charset, String> {
+        val pb = PushbackInputStream(BufferedInputStream(inputStream, 65_536), 4)
+        val bom = ByteArray(4)
+        var readCount = 0
+        while (readCount < 4) {
+            val n = pb.read(bom, readCount, 4 - readCount)
+            if (n <= 0) break
+            readCount += n
+        }
+        return when {
+            readCount >= 2 && bom[0] == 0xFF.toByte() && bom[1] == 0xFE.toByte() -> {
+                if (readCount > 2) pb.unread(bom, 2, readCount - 2)
+                Triple(pb, Charsets.UTF_16LE, "UTF-16LE (BOM)")
+            }
+            readCount >= 2 && bom[0] == 0xFE.toByte() && bom[1] == 0xFF.toByte() -> {
+                if (readCount > 2) pb.unread(bom, 2, readCount - 2)
+                Triple(pb, Charsets.UTF_16BE, "UTF-16BE (BOM)")
+            }
+            readCount >= 3 && bom[0] == 0xEF.toByte() && bom[1] == 0xBB.toByte() && bom[2] == 0xBF.toByte() -> {
+                if (readCount > 3) pb.unread(bom, 3, readCount - 3)
+                Triple(pb, Charsets.UTF_8, "UTF-8 (BOM)")
+            }
+            else -> {
+                if (readCount > 0) pb.unread(bom, 0, readCount)
+                Triple(pb, Charsets.UTF_8, "UTF-8")
+            }
+        }
     }
 
     fun parseBacktestJson(json: String): BacktestParseOutcome {
