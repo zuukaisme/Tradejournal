@@ -50,9 +50,21 @@ jobs:
 
       - name: Accept Android SDK licenses
         run: |
-          if [ -n "${ANDROID_HOME:-}" ] && [ -x "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" ]; then
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER=""
+          for candidate in \
+            "${SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager" \
+            "${SDK_ROOT}"/cmdline-tools/*/bin/sdkmanager \
+            "${SDK_ROOT}/tools/bin/sdkmanager" \
+            "$(command -v sdkmanager 2>/dev/null || true)"; do
+            if [ -n "${candidate}" ] && [ -x "${candidate}" ]; then
+              SDKMANAGER="${candidate}"
+              break
+            fi
+          done
+          if [ -n "${SDKMANAGER}" ]; then
             set +o pipefail
-            yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+            yes | "${SDKMANAGER}" --sdk_root="${SDK_ROOT}" --licenses > /dev/null || true
           fi
 
       - name: Restore debug keystore

@@ -6,7 +6,6 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
-import java.time.OffsetDateTime
 
 class EconomicCalendarRepository {
     private val client = OkHttpClient()
@@ -33,9 +32,7 @@ class EconomicCalendarRepository {
                     val title = item.optString("title").trim()
                     val currency = item.optString("country").trim().uppercase()
                     val date = item.optString("date").trim()
-                    val timestamp = runCatching {
-                        OffsetDateTime.parse(date).toInstant().toEpochMilli()
-                    }.getOrNull() ?: continue
+                    val timestamp = parseIso8601EpochMillis(date) ?: continue
                     if (title.isBlank() || currency.isBlank()) continue
 
                     add(

@@ -486,15 +486,8 @@ class TradingRepository(private val database: TradingDatabase) {
                         else -> null
                     } ?: continue
                     val scheduledAt = item.optString("scheduledAt", "")
-                    val timestamp = try {
-                        java.time.Instant.parse(scheduledAt).toEpochMilli()
-                    } catch (_: Exception) {
-                        continue
-                    }
-                    val datePart = java.time.Instant.ofEpochMilli(timestamp)
-                        .atZone(java.time.ZoneOffset.UTC)
-                        .toLocalDate()
-                        .toString()
+                    val timestamp = parseIso8601EpochMillis(scheduledAt) ?: continue
+                    val datePart = formatUtcIsoDate(timestamp)
                     val previous = item.optString("previous", "")
                         .replace(",", "")
                         .toDoubleOrNull() ?: 0.0

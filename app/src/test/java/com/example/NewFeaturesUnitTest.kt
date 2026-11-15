@@ -1,5 +1,7 @@
 package com.example
 
+import com.example.data.repository.formatUtcIsoDate
+import com.example.data.repository.parseIso8601EpochMillis
 import com.example.domain.model.AppThemePreset
 import com.example.domain.model.Trade
 import com.example.domain.model.TradeDirection
@@ -92,5 +94,19 @@ class NewFeaturesUnitTest {
         val presets = AppThemePreset.values()
         assertEquals(6, presets.size)
         assertTrue(presets.single { it.forcesLight } == AppThemePreset.HIGH_CONTRAST_LIGHT)
+    }
+
+    @Test
+    fun isoDateCompat_parsesOffsetsAndFormatsUtcDate() {
+        val nyEpoch = parseIso8601EpochMillis("2025-02-10T08:30:00-05:00")!!
+        val utcEpoch = parseIso8601EpochMillis("2025-02-10T13:30:00Z")!!
+        val fracEpoch = parseIso8601EpochMillis("2025-02-10T13:30:00.250+00:00")!!
+
+        assertEquals(utcEpoch, nyEpoch)
+        assertEquals(utcEpoch + 250L, fracEpoch)
+        assertEquals("2025-02-10", formatUtcIsoDate(utcEpoch))
+
+        val crossedDay = parseIso8601EpochMillis("2025-02-10T21:00:00-05:00")!!
+        assertEquals("2025-02-11", formatUtcIsoDate(crossedDay))
     }
 }
