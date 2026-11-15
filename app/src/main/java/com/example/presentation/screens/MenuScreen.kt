@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
 import androidx.compose.material.icons.filled.Analytics
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.Code
@@ -158,6 +159,18 @@ fun MenuScreen(
 
         item {
             MenuNavigationCard(
+                icon = Icons.Default.CalendarMonth,
+                iconTint = Color(0xFF42A5F5),
+                title = "Economic Calendar",
+                subtitle = "Filter global news by impact, currency and date",
+                badgeText = "NEWS",
+                testTag = "menu_item_economic_calendar",
+                onClick = { viewModel.navigateTo(AppScreen.ECONOMIC_CALENDAR) }
+            )
+        }
+
+        item {
+            MenuNavigationCard(
                 icon = Icons.Default.ShowChart,
                 iconTint = Color(0xFF00D4AA),
                 title = "TradingView Charts",
@@ -236,6 +249,18 @@ fun MenuScreen(
                 fontWeight = FontWeight.Bold,
                 color = accentColor,
                 modifier = Modifier.padding(start = 4.dp, top = 6.dp)
+            )
+        }
+
+        item {
+            MenuNavigationCard(
+                icon = Icons.Default.Psychology,
+                iconTint = Color(0xFF7C4DFF),
+                title = "Trading Psychology",
+                subtitle = "Emotional patterns, rule adherence and daily reflections",
+                badgeText = "INSIGHTS",
+                testTag = "menu_item_psychology",
+                onClick = { viewModel.navigateTo(AppScreen.PSYCHOLOGY) }
             )
         }
 

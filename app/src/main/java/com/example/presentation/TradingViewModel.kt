@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.TradingDatabase
 import com.example.data.repository.TradingRepository
+import com.example.data.repository.EconomicCalendarRepository
 import com.example.domain.model.Bot
 import android.net.Uri
 import com.example.domain.model.AppThemePreset
@@ -12,6 +13,7 @@ import com.example.domain.model.BotVersion
 import com.example.domain.model.BottomNavStyle
 import com.example.domain.model.CurrencyCode
 import com.example.domain.model.DailyReview
+import com.example.domain.model.EconomicCalendarEvent
 import com.example.domain.model.PerformanceSummary
 import com.example.domain.model.PythonStrategy
 import com.example.domain.model.Strategy
@@ -48,12 +50,15 @@ enum class AppScreen {
     BACKTEST,
     RISK_CALC,
     CHARTS,
+    ECONOMIC_CALENDAR,
+    PSYCHOLOGY,
     SETTINGS
 }
 
 class TradingViewModel(application: Application) : AndroidViewModel(application) {
     private val database = TradingDatabase.getDatabase(application, viewModelScope)
     val repository = TradingRepository(database)
+    private val economicCalendarRepository = EconomicCalendarRepository()
 
     // Current screen navigation
     private val _currentScreen = MutableStateFlow(AppScreen.CALENDAR)
@@ -116,6 +121,11 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
 
     val dailyReviews: StateFlow<List<DailyReview>> = repository.getAllReviews()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val economicCalendarEvents = MutableStateFlow<List<EconomicCalendarEvent>>(emptyList())
+    val isEconomicCalendarLoading = MutableStateFlow(false)
+    val economicCalendarStatus = MutableStateFlow<String?>(null)
+    private var lastEconomicCalendarFetchAt = 0L
 
     val settings: StateFlow<UserSettings> = repository.getSettings()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UserSettings())
@@ -404,6 +414,26 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
             )
             repository.updateBot(updatedBot)
             _selectedBotForView.value = updatedBot
+        }
+    }
+
+    fun refreshEconomicCalendar() {
+        if (isEconomicCalendarLoading.value) return
+        val now = System.currentTimeMillis()
+        if (now - lastEconomicCalendarFetchAt < 5 * 60 * 1000L) return
+        lastEconomicCalendarFetchAt = now
+        viewModelScope.launch {
+            isEconomicCalendarLoading.value = true
+            economicCalendarStatus.value = null
+            economicCalendarRepository.fetchEvents()
+                .onSuccess { events ->
+                    economicCalendarEvents.value = events
+                    if (events.isEmpty()) economicCalendarStatus.value = "No events were returned for this week."
+                }
+                .onFailure { error ->
+                    economicCalendarStatus.value = "Calendar refresh failed: ${error.message ?: "Unknown error"}"
+                }
+            isEconomicCalendarLoading.value = false
         }
     }
 
