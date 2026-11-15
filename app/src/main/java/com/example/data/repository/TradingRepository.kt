@@ -141,11 +141,21 @@ class TradingRepository(private val database: TradingDatabase) {
     }
 
     suspend fun insertPythonStrategy(strategy: PythonStrategy): Long = withContext(Dispatchers.IO) {
-        pythonStrategyDao.insertPythonStrategy(strategy.toEntity())
+        val normalizedName = strategy.name.trim()
+        require(normalizedName.isNotEmpty()) { "Strategy name cannot be empty." }
+        require(pythonStrategyDao.getPythonStrategyByName(normalizedName) == null) {
+            "A strategy named \"$normalizedName\" already exists. Choose a different name."
+        }
+        pythonStrategyDao.insertPythonStrategy(strategy.copy(name = normalizedName).toEntity())
     }
 
     suspend fun updatePythonStrategy(strategy: PythonStrategy) = withContext(Dispatchers.IO) {
-        pythonStrategyDao.updatePythonStrategy(strategy.toEntity())
+        val normalizedName = strategy.name.trim()
+        require(normalizedName.isNotEmpty()) { "Strategy name cannot be empty." }
+        require(pythonStrategyDao.getPythonStrategyByNameExcludingId(normalizedName, strategy.id) == null) {
+            "A strategy named \"$normalizedName\" already exists. Choose a different name."
+        }
+        pythonStrategyDao.updatePythonStrategy(strategy.copy(name = normalizedName).toEntity())
     }
 
     suspend fun deletePythonStrategy(id: Long) = withContext(Dispatchers.IO) {

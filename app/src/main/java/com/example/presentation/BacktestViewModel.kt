@@ -652,20 +652,28 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
         val className = snapshot.generatedClassName.trim()
 
         viewModelScope.launch {
-            val strategy = PythonStrategy(
-                name = name,
-                className = className,
-                code = code,
-                updatedAt = System.currentTimeMillis()
-            )
-            val newId = repository.insertPythonStrategy(strategy)
-            val persisted = strategy.copy(id = newId)
-            _uiState.update {
-                it.copy(
-                    selectedStrategy = persisted,
-                    selectedTab = if (switchToRunner) 0 else it.selectedTab,
-                    aiStatusMessage = "Saved \"$name\" to Python strategies."
+            runCatching {
+                val strategy = PythonStrategy(
+                    name = name,
+                    className = className,
+                    code = code,
+                    updatedAt = System.currentTimeMillis()
                 )
+                val newId = repository.insertPythonStrategy(strategy)
+                strategy.copy(id = newId)
+            }.onSuccess { persisted ->
+                _uiState.update {
+                    it.copy(
+                        selectedStrategy = persisted,
+                        selectedTab = if (switchToRunner) 0 else it.selectedTab,
+                        aiError = null,
+                        aiStatusMessage = "Saved \"${persisted.name}\" to Python strategies."
+                    )
+                }
+            }.onFailure { error ->
+                _uiState.update {
+                    it.copy(aiError = error.message ?: "Could not save strategy.")
+                }
             }
         }
     }
