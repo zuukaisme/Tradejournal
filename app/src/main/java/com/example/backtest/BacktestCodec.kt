@@ -105,7 +105,8 @@ object BacktestCodec {
                 var firstLine = true
                 while (true) {
                     val rawLine = reader.readLine() ?: break
-                    estimatedBytesRead += rawLine.toByteArray(charset).size + if (charset == Charsets.UTF_8) 1 else 2
+                    estimatedBytesRead += rawLine.length.toLong() * if (charset == Charsets.UTF_8) 1 else 2
+                    estimatedBytesRead += if (charset == Charsets.UTF_8) 1 else 2
                     if (estimatedBytesRead - lastProgressBytes >= 1024L * 1024L) {
                         lastProgressBytes = estimatedBytesRead
                         onProgress(estimatedBytesRead)
