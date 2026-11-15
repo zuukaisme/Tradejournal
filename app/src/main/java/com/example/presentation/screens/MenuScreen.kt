@@ -146,6 +146,10 @@ fun MenuScreen(
             }
         }
 
+        // Section 1: Execution & Tools
+        item {
+            Text(
+                text = "TRADING TOOLS",
         item {
             MenuNavigationCard(
                 icon = Icons.Default.CalendarMonth,
@@ -158,10 +162,6 @@ fun MenuScreen(
             )
         }
 
-        // Section 1: Execution & Tools
-        item {
-            Text(
-                text = "TRADING TOOLS",
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold,
                 color = accentColor,
