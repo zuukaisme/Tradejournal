@@ -225,11 +225,11 @@ object CandleTimeframeResampler {
         var bucketVolume = 0.0
         var outputCount = 0
 
-        BufferedReader(FileReader(sourceFile), 65_536).use { reader ->
-            reader.readLine()
+        BufferedReader(InputStreamReader(FileInputStream(sourceFile), Charsets.UTF_8), 65_536).use { reader ->
             BufferedWriter(OutputStreamWriter(FileOutputStream(outputFile), Charsets.UTF_8), 65_536).use { writer ->
                 writer.write("datetime,open,high,low,close,volume")
                 writer.newLine()
+                var headerSkipped = false
 
                 fun flushBucket() {
                     val row = StringBuilder(80)
