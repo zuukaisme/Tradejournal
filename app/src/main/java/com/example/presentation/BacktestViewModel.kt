@@ -19,7 +19,7 @@ import com.example.backtest.BacktestResult
 import com.example.backtest.BacktestTimeframe
 import com.example.backtest.CandleTimeframeResampler
 import com.example.backtest.PythonBacktestRunner
-import com.example.backtest.ResampledCsvResult
+import com.example.backtest.ResampledCsvFileResult
 import com.example.backtest.SavedBacktestRun
 import com.example.data.local.TradingDatabase
 import com.example.data.repository.TradingRepository
@@ -31,6 +31,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.io.File
 import kotlinx.coroutines.withContext
 
 data class BacktestUiState(
@@ -81,9 +82,8 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
     private val database = TradingDatabase.getDatabase(application, viewModelScope)
     private val repository = TradingRepository(database)
 
-    private var csvRawBytes: ByteArray? = null
-    private var decodedCsvText: String? = null
-    private val resampledCache = mutableMapOf<BacktestTimeframe, ResampledCsvResult>()
+    private var csvCacheFile: File? = null
+    private val resampledCache = mutableMapOf<BacktestTimeframe, ResampledCsvFileResult>()
     private var latestSettings: UserSettings = UserSettings()
     private var hasHydratedAiPrefs = false
     private val liveModelsByProvider = mutableMapOf<AiProvider, List<AiModelOption>>()
@@ -185,40 +185,44 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
             try {
                 val loaded = withContext(Dispatchers.IO) {
                     val displayName = resolveDisplayName(context, uri)
-                    val bytes = context.contentResolver.openInputStream(uri)?.use { stream ->
-                        stream.readBytes()
+                    val cacheFile = File(context.cacheDir, "tradepulse_backtest_${System.currentTimeMillis()}.csv")
+                    val inspection = context.contentResolver.openInputStream(uri)?.use { stream ->
+                        BacktestCodec.streamCsvToCacheFile(stream, cacheFile)
                     } ?: throw IllegalStateException("Unable to open selected CSV document.")
-                    val preview = BacktestCodec.decodeCsvBytes(bytes)
-                    val detectedTf = CandleTimeframeResampler.detectTimeframe(preview.text)
+                    require(inspection.estimatedRows > 0) { "Selected CSV file contains no candle rows." }
+                    val sampleText = inspection.sampleLines.joinToString("\n")
+                    val detectedTf = CandleTimeframeResampler.detectTimeframe(sampleText)
                     val targets = CandleTimeframeResampler.availableTargets(detectedTf.minutes)
-                    LoadedCsvBundle(displayName, bytes, preview, detectedTf, targets)
+                    LoadedCsvBundle(displayName, cacheFile, inspection, detectedTf, targets)
                 }
-                csvRawBytes = loaded.bytes
-                decodedCsvText = loaded.preview.text
+                csvCacheFile?.takeIf { it != loaded.cacheFile }?.delete()
+                csvCacheFile = loaded.cacheFile
+                resampledCache.values.forEach { it.file.delete() }
                 resampledCache.clear()
                 _uiState.update {
                     it.copy(
                         fileName = loaded.displayName,
-                        estimatedRows = loaded.preview.estimatedRows,
-                        detectedEncoding = loaded.preview.detectedEncoding,
-                        detectedDelimiter = loaded.preview.detectedDelimiter,
+                        estimatedRows = loaded.inspection.estimatedRows,
+                        detectedEncoding = loaded.inspection.detectedEncoding,
+                        detectedDelimiter = loaded.inspection.detectedDelimiter,
                         detectedTimeframeLabel = loaded.detectedTimeframe.label,
                         detectedTimeframeMinutes = loaded.detectedTimeframe.minutes,
                         availableTimeframes = loaded.targets,
                         selectedTimeframe = BacktestTimeframe.NATIVE,
                         lastRunTimeframeLabel = null,
                         lastRunCandleCount = null,
-                        hasCsvBytes = loaded.bytes.isNotEmpty(),
+                        hasCsvBytes = loaded.cacheFile.length() > 0L,
                         isLoading = false,
-                        backtestError = if (loaded.bytes.isEmpty()) {
+                        backtestError = if (loaded.cacheFile.length() == 0L) {
                             BacktestError("Selected CSV file is empty.")
                         } else null,
                         result = null
                     )
                 }
             } catch (t: Throwable) {
-                csvRawBytes = null
-                decodedCsvText = null
+                csvCacheFile?.delete()
+                csvCacheFile = null
+                resampledCache.values.forEach { it.file.delete() }
                 resampledCache.clear()
                 _uiState.update {
                     it.copy(
@@ -240,8 +244,8 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
 
     fun run() {
         val snapshot = _uiState.value
-        val rawBytes = csvRawBytes
-        if (rawBytes == null || rawBytes.isEmpty()) {
+        val sourceFile = csvCacheFile
+        if (sourceFile == null || !sourceFile.exists() || sourceFile.length() == 0L) {
             _uiState.update {
                 it.copy(backtestError = BacktestError("Please select a CSV / MT5 export file first."))
             }
@@ -303,25 +307,39 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                     }
                 }
                 val runTuple = withContext(Dispatchers.Default) {
-                    val baseText = decodedCsvText ?: BacktestCodec.decodeCsvBytes(rawBytes).text.also {
-                        decodedCsvText = it
-                    }
                     val targetTf = snapshot.selectedTimeframe
-                    val resampled = resampledCache[targetTf] ?: CandleTimeframeResampler.resampleCsv(
-                        csvText = baseText,
-                        target = targetTf
-                    ).also { resampledCache[targetTf] = it }
-                    val jsonString = PythonBacktestRunner.runWithStrategyCode(
-                        context = appContext,
-                        csvText = resampled.csvText,
-                        strategyCode = strategy.code,
-                        className = strategy.className,
-                        maxStopPoints = maxStopPoints,
-                        pointSize = pointSize,
-                        progressListener = listener
-                    )
+                    val jsonString: String
+                    val candleCount: Int
+                    if (targetTf == BacktestTimeframe.NATIVE) {
+                        jsonString = PythonBacktestRunner.runWithStrategyFile(
+                            context = appContext,
+                            csvPath = sourceFile.absolutePath,
+                            strategyCode = strategy.code,
+                            className = strategy.className,
+                            maxStopPoints = maxStopPoints,
+                            pointSize = pointSize,
+                            progressListener = listener
+                        )
+                        candleCount = snapshot.estimatedRows
+                    } else {
+                        val resampledFile = resampledCache[targetTf] ?: CandleTimeframeResampler.resampleCsvFile(
+                            sourceFile = sourceFile,
+                            target = targetTf,
+                            outputFile = File(appContext.cacheDir, "tradepulse_resampled_${sourceFile.name}_${targetTf.shortLabel}.csv")
+                        ).also { resampledCache[targetTf] = it }
+                        jsonString = PythonBacktestRunner.runWithStrategyFile(
+                            context = appContext,
+                            csvPath = resampledFile.file.absolutePath,
+                            strategyCode = strategy.code,
+                            className = strategy.className,
+                            maxStopPoints = maxStopPoints,
+                            pointSize = pointSize,
+                            progressListener = listener
+                        )
+                        candleCount = resampledFile.outputCandleCount
+                    }
                     val parsed = BacktestCodec.parseBacktestJson(jsonString)
-                    Triple(parsed, resampled.outputCandleCount, targetTf)
+                    Triple(parsed, candleCount, targetTf)
                 }
 
                 val (outcome, candleCount, usedTimeframe) = runTuple
@@ -744,8 +762,8 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
 
 private data class LoadedCsvBundle(
     val displayName: String,
-    val bytes: ByteArray,
-    val preview: com.example.backtest.DecodedCsv,
+    val cacheFile: File,
+    val inspection: com.example.backtest.CsvStreamInspection,
     val detectedTimeframe: com.example.backtest.DetectedTimeframe,
     val targets: List<BacktestTimeframe>
 )
