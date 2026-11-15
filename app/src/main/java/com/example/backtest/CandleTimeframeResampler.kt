@@ -3,8 +3,10 @@ package com.example.backtest
 import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.File
-import java.io.FileReader
-import java.io.FileWriter
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.io.InputStreamReader
+import java.io.OutputStreamWriter
 import java.math.BigDecimal
 import java.util.Calendar
 import java.util.GregorianCalendar
@@ -178,9 +180,10 @@ object CandleTimeframeResampler {
         var lastEpoch = Long.MIN_VALUE
         var chronological = true
 
-        BufferedReader(FileReader(sourceFile), 65_536).use { reader ->
+        BufferedReader(InputStreamReader(FileInputStream(sourceFile), Charsets.UTF_8), 65_536).use { reader ->
             while (true) {
-                val line = reader.readLine()?.trim().orEmpty()
+                val rawLine = reader.readLine() ?: break
+                val line = rawLine.trim()
                 if (line.isEmpty()) continue
                 firstLine = line
                 break
@@ -224,7 +227,7 @@ object CandleTimeframeResampler {
 
         BufferedReader(FileReader(sourceFile), 65_536).use { reader ->
             reader.readLine()
-            BufferedWriter(FileWriter(outputFile, Charsets.UTF_8), 65_536).use { writer ->
+            BufferedWriter(OutputStreamWriter(FileOutputStream(outputFile), Charsets.UTF_8), 65_536).use { writer ->
                 writer.write("datetime,open,high,low,close,volume")
                 writer.newLine()
 
@@ -244,6 +247,10 @@ object CandleTimeframeResampler {
 
                 while (true) {
                     val line = reader.readLine() ?: break
+                    if (!headerSkipped) {
+                        if (line.isNotBlank()) headerSkipped = true
+                        continue
+                    }
                     val candle = parseResampleLine(line, header!!) ?: continue
                     val bucket = bucketStartMillisFast(candle.epochMillis, target)
                     if (bucket != currentBucket) {
