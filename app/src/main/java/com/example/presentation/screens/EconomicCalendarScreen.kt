@@ -143,32 +143,30 @@ fun EconomicCalendarScreen(
         }
 
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box {
-                    TextButton(onClick = { currencyMenuExpanded = true }) {
-                        Text("Currency: $selectedCurrency")
-                    }
-                    DropdownMenu(
-                        expanded = currencyMenuExpanded,
-                        onDismissRequest = { currencyMenuExpanded = false }
-                    ) {
-                        currencies.forEach { currency ->
-                            DropdownMenuItem(
-                                text = { Text(currency) },
-                                onClick = {
-                                    selectedCurrency = currency
-                                    currencyMenuExpanded = false
-                                }
-                            )
-                        }
+            Box {
+                TextButton(onClick = { currencyMenuExpanded = true }) {
+                    Text("Currency: $selectedCurrency")
+                }
+                DropdownMenu(
+                    expanded = currencyMenuExpanded,
+                    onDismissRequest = { currencyMenuExpanded = false }
+                ) {
+                    currencies.forEach { currency ->
+                        DropdownMenuItem(
+                            text = { Text(currency) },
+                            onClick = {
+                                selectedCurrency = currency
+                                currencyMenuExpanded = false
+                            }
+                        )
                     }
                 }
-                Spacer(Modifier.width(4.dp))
-                listOf("All dates", "Today", "Tomorrow", "This week").forEach { range ->
+            }
+        }
+
+        item {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                items(listOf("All dates", "Today", "Tomorrow", "This week")) { range ->
                     FilterChip(
                         selected = selectedRange == range,
                         onClick = { selectedRange = range },
