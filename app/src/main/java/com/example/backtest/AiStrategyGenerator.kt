@@ -34,7 +34,7 @@ object AiStrategyGenerator {
         - FORBIDDEN packages: Do NOT import `pandas`, `numpy`, `scipy`, `talib`, `yfinance`, or any third-party pip library — they are NOT installed in the APK and will crash with ModuleNotFoundError.
 
         REQUIRED IMPORTS & ENGINE OBJECTS (`backtest` module):
-        - `from backtest import Strategy, Signal` (also pre-injected: `Strategy`, `Signal`, `Candle`, `List`, `Optional`).
+        - `from backtest import Strategy, Signal` (also pre-injected: `Strategy`, `Signal`, `Candle`, `Trade`, `List`, `Optional`).
         - Input object `Candle` fields:
           - `c.time: str`
           - `c.open: float`
@@ -47,10 +47,11 @@ object AiStrategyGenerator {
           - `sl: float` — Stop-loss price level.
           - `tp: float` — Take-profit price level.
         - `on_candle(self, i: int, candles: List[Candle]) -> Optional[Signal]` MUST return either a `Signal(side=..., sl=..., tp=...)` object or `None`.
+        - Optional `manage_trade(self, i: int, candles: List[Candle], trade: Trade) -> Optional[str]` hook (called after each completed bar while a trade is open): may adjust `trade.sl` (e.g., move `trade.sl = trade.entry` for break-even or trail stop) or return `"be"` / `"exit"` to close at bar close.
 
         EXECUTION CONTRACT (9 RULES):
         1. Subclass `Strategy` (e.g. `class CustomStrategy(Strategy):`).
-        2. Implement `def on_candle(self, i: int, candles: List[Candle]) -> Optional[Signal]:`.
+        2. Implement `def on_candle(self, i: int, candles: List[Candle]) -> Optional[Signal]:` (and optionally `def manage_trade(self, i: int, candles: List[Candle], trade: Trade) -> Optional[str]:`).
         3. Strict no-lookahead: ONLY inspect `candles[0:i + 1]` (`candles[0..i]`). NEVER access `candles[i + 1:]` or future values.
         4. Warmup & bounds: Engine starts evaluating signals at `i >= 50` (one open trade at a time). Still explicitly guard index bounds for every lookback window (e.g., `if i < 50: return None`).
         5. Guard zero division / flat windows: Verify ATR/range/denominator > 0 before dividing or computing stops.

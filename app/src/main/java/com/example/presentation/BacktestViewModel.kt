@@ -13,6 +13,8 @@ import com.example.backtest.AiStrategyGenerator
 import com.example.backtest.BacktestCodec
 import com.example.backtest.BacktestError
 import com.example.backtest.BacktestParseOutcome
+import com.example.backtest.BacktestProgressListener
+import com.example.backtest.BacktestProgressSnapshot
 import com.example.backtest.BacktestResult
 import com.example.backtest.BacktestTimeframe
 import com.example.backtest.CandleTimeframeResampler
@@ -48,6 +50,7 @@ data class BacktestUiState(
     val maxStopPointsInput: String = "",
     val pointSizeInput: String = "1.0",
     val isLoading: Boolean = false,
+    val liveProgress: BacktestProgressSnapshot? = null,
     val backtestError: BacktestError? = null,
     val result: BacktestResult? = null,
     // AI Strategy Builder state (Backtester only)
@@ -275,9 +278,23 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
         }
 
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, backtestError = null) }
+            _uiState.update {
+                it.copy(
+                    isLoading = true,
+                    liveProgress = BacktestProgressSnapshot(totalCandles = snapshot.estimatedRows),
+                    backtestError = null
+                )
+            }
             try {
                 val appContext = getApplication<Application>()
+                val listener = BacktestProgressListener { json ->
+                    val parsed = BacktestCodec.parseProgressJson(json)
+                    if (parsed != null) {
+                        _uiState.update { current ->
+                            if (current.isLoading) current.copy(liveProgress = parsed) else current
+                        }
+                    }
+                }
                 val runTuple = withContext(Dispatchers.Default) {
                     val decoded = BacktestCodec.decodeCsvBytes(rawBytes)
                     val resampled = CandleTimeframeResampler.resampleCsv(
@@ -290,7 +307,8 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                         strategyCode = strategy.code,
                         className = strategy.className,
                         maxStopPoints = maxStopPoints,
-                        pointSize = pointSize
+                        pointSize = pointSize,
+                        progressListener = listener
                     )
                     val parsed = BacktestCodec.parseBacktestJson(jsonString)
                     Triple(parsed, resampled.outputCandleCount, snapshot.selectedTimeframe)
@@ -313,6 +331,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                         _uiState.update {
                             it.copy(
                                 isLoading = false,
+                                liveProgress = null,
                                 result = outcome.result,
                                 backtestError = null,
                                 runSavedFeedback = null,
@@ -325,6 +344,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                         _uiState.update {
                             it.copy(
                                 isLoading = false,
+                                liveProgress = null,
                                 result = null,
                                 backtestError = outcome.error
                             )
@@ -335,6 +355,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                 _uiState.update {
                     it.copy(
                         isLoading = false,
+                        liveProgress = null,
                         result = null,
                         backtestError = BacktestError(
                             error = t.message ?: "Python backtest execution failed.",

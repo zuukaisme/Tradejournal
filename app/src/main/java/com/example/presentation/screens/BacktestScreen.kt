@@ -43,6 +43,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -52,6 +53,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -74,15 +76,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.backtest.BacktestError
+import com.example.backtest.BacktestProgressSnapshot
 import com.example.backtest.BacktestResult
 import com.example.backtest.BacktestTimeframe
+import com.example.backtest.ExitReason
 import com.example.backtest.Side
 import com.example.backtest.Trade
 import com.example.presentation.BacktestViewModel
 import com.example.presentation.components.LiquidGlassCard
 import com.example.presentation.components.LiquidGlassTabRow
 import com.example.ui.theme.AmberGold
+import com.example.ui.theme.SlateBreakEven
 import java.util.Locale
+import kotlin.math.abs
 
 @Composable
 fun BacktestScreen(
@@ -413,6 +419,15 @@ fun BacktestScreen(
             }
         }
 
+        // Live Running Progress Card
+        if (state.isLoading) {
+            item {
+                BacktestLiveProgressCard(
+                    progress = state.liveProgress ?: BacktestProgressSnapshot(totalCandles = state.estimatedRows)
+                )
+            }
+        }
+
         // Expandable Python / CSV Error Card
         state.backtestError?.let { err ->
             item {
@@ -575,7 +590,10 @@ fun BacktestScreen(
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(modifier = Modifier.height(8.dp))
-                    MetricRow("Total / Wins / Losses", "${result.summary.totalTrades} / ${result.summary.wins} / ${result.summary.losses}")
+                    MetricRow(
+                        "Entered / Won / Lost / BE",
+                        "${result.summary.enteredTrades} / ${result.summary.wins} / ${result.summary.losses} / ${result.summary.breakEvens}"
+                    )
                     MetricRow("Avg Win", formatSignedPoints(result.points.avgWinPoints), positiveColor)
                     MetricRow("Avg Loss", formatSignedPoints(result.points.avgLossPoints), negativeColor)
                     MetricRow("Largest Win", formatSignedPoints(result.points.largestWinPoints), positiveColor)
@@ -638,29 +656,85 @@ fun BacktestScreen(
                 }
             }
 
-            // Trades Header
+            // Trades Header & Outcome Filter Chips
             item {
-                Text(
-                    text = "Trades (${result.trades.size})",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(top = 4.dp)
-                )
-            }
-
-            if (result.trades.isEmpty()) {
-                item {
-                    LiquidGlassCard {
-                        Text(
-                            text = "No closed trades in this backtest run.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                var tradeFilter by remember(result) { mutableIntStateOf(0) }
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Trades (${result.trades.size})",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                    if (result.trades.isNotEmpty()) {
+                        val filterOptions = listOf(
+                            "All (${result.trades.size})",
+                            "Won (${result.summary.wins})",
+                            "Lost (${result.summary.losses})",
+                            "BE (${result.summary.breakEvens})"
                         )
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            itemsIndexed(filterOptions) { idx, label ->
+                                val selected = tradeFilter == idx
+                                FilterChip(
+                                    selected = selected,
+                                    onClick = { tradeFilter = idx },
+                                    label = {
+                                        Text(
+                                            text = label,
+                                            fontSize = 11.sp,
+                                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+                                        )
+                                    },
+                                    modifier = Modifier.testTag("backtest_trade_filter_$idx")
+                                )
+                            }
+                        }
                     }
-                }
-            } else {
-                itemsIndexed(result.trades) { idx, trade ->
-                    BacktestTradeCard(index = idx + 1, trade = trade)
+
+                    val filteredTrades = remember(result.trades, tradeFilter) {
+                        result.trades.withIndex().filter { (_, t) ->
+                            when (tradeFilter) {
+                                1 -> t.r > 1e-6 || (abs(t.r) <= 1e-6 && t.points > 1e-6)
+                                2 -> t.r < -1e-6 || (abs(t.r) <= 1e-6 && t.points < -1e-6)
+                                3 -> abs(t.points) <= 1e-6 && abs(t.r) <= 1e-6
+                                else -> true
+                            }
+                        }
+                    }
+
+                    if (result.trades.isEmpty()) {
+                        LiquidGlassCard {
+                            Text(
+                                text = "No closed trades in this backtest run.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    } else if (filteredTrades.isEmpty()) {
+                        LiquidGlassCard {
+                            Text(
+                                text = "No trades match this outcome filter.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            filteredTrades.forEach { indexedTrade ->
+                                BacktestTradeCard(
+                                    index = indexedTrade.index + 1,
+                                    trade = indexedTrade.value
+                                )
+                            }
+                        }
+                    }
                 }
             }
         } else if (!state.isLoading && state.backtestError == null) {
@@ -763,37 +837,210 @@ private fun BacktestErrorCard(error: BacktestError) {
 }
 
 @Composable
-private fun BacktestTradeProgressCard(result: BacktestResult) {
-    val summary = result.summary
-    val total = summary.totalTrades
-    val winProgress = if (total > 0) summary.wins.toFloat() / total else 0f
-    val lossProgress = if (total > 0) summary.losses.toFloat() / total else 0f
+private fun BacktestLiveProgressCard(progress: BacktestProgressSnapshot) {
     val positiveColor = MaterialTheme.colorScheme.primary
     val negativeColor = MaterialTheme.colorScheme.error
+    val neutralColor = SlateBreakEven
+    val pctComplete = (progress.candleProgressFraction * 100f).toInt().coerceIn(0, 100)
 
-    LiquidGlassCard {
+    LiquidGlassCard(testTag = "backtest_live_progress_card") {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Live Backtest Progress",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                val barLabel = if (progress.totalCandles > 0) {
+                    "${progress.candlesProcessed} / ${progress.totalCandles} candles"
+                } else {
+                    "Preparing market candles..."
+                }
+                Text(
+                    text = if (progress.currentTime.isNotBlank()) "$barLabel • ${progress.currentTime}" else barLabel,
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = "$pctComplete%",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = positiveColor,
+                fontFamily = FontFamily.Monospace
+            )
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        if (progress.totalCandles > 0) {
+            LinearProgressIndicator(
+                progress = { progress.candleProgressFraction },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(8.dp),
+                color = positiveColor,
+                trackColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+        } else {
+            LinearProgressIndicator(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(8.dp),
+                color = positiveColor,
+                trackColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        OutcomeStackedBar(
+            wins = progress.wins,
+            breakEvens = progress.breakEvens,
+            losses = progress.losses
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            ProgressTile(
+                label = "Entered",
+                value = progress.enteredTrades.toString(),
+                subValue = "${progress.closedTrades} closed",
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f)
+            )
+            ProgressTile(
+                label = "Won",
+                value = progress.wins.toString(),
+                subValue = "${formatOneDec(progress.winRatePct)}%",
+                color = positiveColor,
+                modifier = Modifier.weight(1f)
+            )
+            ProgressTile(
+                label = "Lost",
+                value = progress.losses.toString(),
+                subValue = "${formatOneDec(progress.lossRatePct)}%",
+                color = negativeColor,
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            ProgressTile(
+                label = "Broke Even",
+                value = progress.breakEvens.toString(),
+                subValue = "${formatOneDec(progress.breakEvenRatePct)}%",
+                color = neutralColor,
+                modifier = Modifier.weight(1f)
+            )
+            ProgressTile(
+                label = "Open Now",
+                value = progress.openTrades.toString(),
+                subValue = if (progress.openTrades > 0) "Active" else "Flat",
+                color = if (progress.openTrades > 0) AmberGold else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f)
+            )
+            ProgressTile(
+                label = "Running Net",
+                value = "${formatSignedPoints(progress.netPoints)}p",
+                subValue = formatSignedR(progress.netR),
+                color = if (progress.netPoints >= 0.0) positiveColor else negativeColor,
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun BacktestTradeProgressCard(result: BacktestResult) {
+    val summary = result.summary
+    val totalClosed = summary.totalTrades
+    val positiveColor = MaterialTheme.colorScheme.primary
+    val negativeColor = MaterialTheme.colorScheme.error
+    val neutralColor = SlateBreakEven
+
+    LiquidGlassCard(testTag = "backtest_trade_progress_card") {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = "Trade Progress",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold
                 )
+                val openSuffix = if (summary.openTrades > 0) " • ${summary.openTrades} open" else ""
+                val candlePrefix = if (summary.totalCandles > 0) "${summary.totalCandles} bars • " else ""
                 Text(
-                    text = "$total trades taken",
-                    style = MaterialTheme.typography.bodySmall,
+                    text = "$candlePrefix${summary.enteredTrades} entered • $totalClosed closed$openSuffix",
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    text = "${formatOneDec(summary.winRatePct)}%",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = if (summary.winRatePct >= 50.0) positiveColor else negativeColor
+                )
+                Text(
+                    text = "${formatSignedPoints(summary.expectancyPoints)} pts/trade",
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        OutcomeStackedBar(
+            wins = summary.wins,
+            breakEvens = summary.breakEvens,
+            losses = summary.losses
+        )
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
             Text(
-                text = "${formatOneDec(summary.winRatePct)}%",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                color = if (summary.winRatePct >= 50.0) positiveColor else negativeColor
+                text = "Won ${formatOneDec(summary.winRatePct)}%",
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                color = positiveColor,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = "Broke Even ${formatOneDec(summary.breakEvenRatePct)}%",
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                color = neutralColor,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = "Lost ${formatOneDec(summary.lossRatePct)}%",
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                color = negativeColor,
+                fontWeight = FontWeight.SemiBold
             )
         }
 
@@ -801,64 +1048,236 @@ private fun BacktestTradeProgressCard(result: BacktestResult) {
 
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            if (winProgress > 0f) {
-                Box(
-                    modifier = Modifier
-                        .weight(winProgress)
-                        .height(9.dp)
-                        .background(positiveColor, RoundedCornerShape(8.dp))
-                )
-            }
-            if (lossProgress > 0f) {
-                Box(
-                    modifier = Modifier
-                        .weight(lossProgress)
-                        .height(9.dp)
-                        .background(negativeColor, RoundedCornerShape(8.dp))
-                )
-            }
-            if (total == 0) {
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(9.dp)
-                        .background(
-                            MaterialTheme.colorScheme.surfaceVariant,
-                            RoundedCornerShape(8.dp)
-                        )
-                )
-            }
+            ProgressTile(
+                label = "Entered",
+                value = summary.enteredTrades.toString(),
+                subValue = "$totalClosed closed",
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("progress_entered_tile")
+            )
+            ProgressTile(
+                label = "Won",
+                value = summary.wins.toString(),
+                subValue = "${formatOneDec(summary.winRatePct)}%",
+                color = positiveColor,
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("progress_won_tile")
+            )
+            ProgressTile(
+                label = "Lost",
+                value = summary.losses.toString(),
+                subValue = "${formatOneDec(summary.lossRatePct)}%",
+                color = negativeColor,
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("progress_lost_tile")
+            )
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            ProgressMetric("Wins", summary.wins.toString(), positiveColor)
-            ProgressMetric("Losses", summary.losses.toString(), negativeColor)
-            ProgressMetric("Skipped", summary.skippedByStopCap.toString(), MaterialTheme.colorScheme.onSurfaceVariant)
+            ProgressTile(
+                label = "Broke Even",
+                value = summary.breakEvens.toString(),
+                subValue = "${formatOneDec(summary.breakEvenRatePct)}%",
+                color = neutralColor,
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("progress_be_tile")
+            )
+            ProgressTile(
+                label = "Open at End",
+                value = summary.openTrades.toString(),
+                subValue = if (summary.openTrades > 0) "Unclosed" else "All settled",
+                color = if (summary.openTrades > 0) AmberGold else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("progress_open_tile")
+            )
+            ProgressTile(
+                label = "Skipped",
+                value = summary.skippedByStopCap.toString(),
+                subValue = "Max stop cap",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("progress_skipped_tile")
+            )
+        }
+
+        if (totalClosed > 0) {
+            Spacer(modifier = Modifier.height(10.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
+            Spacer(modifier = Modifier.height(8.dp))
+
+            val currentStreakLabel = when {
+                summary.currentStreak > 0 -> "${summary.currentStreak}W"
+                summary.currentStreak < 0 -> "${abs(summary.currentStreak)}L"
+                else -> "0"
+            }
+            val currentStreakColor = when {
+                summary.currentStreak > 0 -> positiveColor
+                summary.currentStreak < 0 -> negativeColor
+                else -> neutralColor
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Exits: ${summary.tpExits} TP • ${summary.slExits} SL • ${summary.breakEvens} BE",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = "Streak: $currentStreakLabel (Best ${result.risk.maxConsecutiveWins}W / ${result.risk.maxConsecutiveLosses}L)",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = currentStreakColor
+                )
+            }
+
+            if (result.trades.isNotEmpty()) {
+                val recentTrades = remember(result.trades) { result.trades.takeLast(32) }
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = if (result.trades.size > recentTrades.size) {
+                        "Recent Outcome Sequence (Last ${recentTrades.size} of ${result.trades.size})"
+                    } else {
+                        "Trade Outcome Sequence (${recentTrades.size})"
+                    },
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    recentTrades.forEach { t ->
+                        val isBe = abs(t.points) <= 1e-6 && abs(t.r) <= 1e-6
+                        val isWin = !isBe && (t.r > 1e-6 || t.points > 1e-6)
+                        val pillColor = when {
+                            isWin -> positiveColor
+                            isBe -> neutralColor
+                            else -> negativeColor
+                        }
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(8.dp)
+                                .background(pillColor, RoundedCornerShape(3.dp))
+                        )
+                    }
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun ProgressMetric(label: String, value: String, color: Color) {
-    Column {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Text(
-            text = value,
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.Bold,
-            color = color
-        )
+private fun OutcomeStackedBar(
+    wins: Int,
+    breakEvens: Int,
+    losses: Int
+) {
+    val total = wins + breakEvens + losses
+    val positiveColor = MaterialTheme.colorScheme.primary
+    val negativeColor = MaterialTheme.colorScheme.error
+    val neutralColor = SlateBreakEven
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        if (total <= 0) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(10.dp)
+                    .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+            )
+        } else {
+            if (wins > 0) {
+                Box(
+                    modifier = Modifier
+                        .weight(wins.toFloat() / total)
+                        .height(10.dp)
+                        .background(positiveColor, RoundedCornerShape(8.dp))
+                )
+            }
+            if (breakEvens > 0) {
+                Box(
+                    modifier = Modifier
+                        .weight(breakEvens.toFloat() / total)
+                        .height(10.dp)
+                        .background(neutralColor, RoundedCornerShape(8.dp))
+                )
+            }
+            if (losses > 0) {
+                Box(
+                    modifier = Modifier
+                        .weight(losses.toFloat() / total)
+                        .height(10.dp)
+                        .background(negativeColor, RoundedCornerShape(8.dp))
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProgressTile(
+    label: String,
+    value: String,
+    subValue: String,
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        shape = RoundedCornerShape(12.dp),
+        modifier = modifier
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+            horizontalAlignment = Alignment.Start
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = value,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = color,
+                fontFamily = FontFamily.Monospace,
+                maxLines = 1
+            )
+            Text(
+                text = subValue,
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }
 
@@ -1128,10 +1547,15 @@ private fun BacktestEquityCurveCanvas(
 
 @Composable
 private fun BacktestTradeCard(index: Int, trade: Trade) {
-    val isWin = trade.points > 0.0
+    val isBreakEven = trade.reason == ExitReason.BE || (abs(trade.points) <= 1e-6 && abs(trade.r) <= 1e-6)
+    val isWin = !isBreakEven && (trade.points > 1e-6 || trade.r > 1e-6)
     val positiveColor = MaterialTheme.colorScheme.primary
     val negativeColor = MaterialTheme.colorScheme.error
-    val pnlColor = if (isWin) positiveColor else negativeColor
+    val pnlColor = when {
+        isWin -> positiveColor
+        isBreakEven -> SlateBreakEven
+        else -> negativeColor
+    }
     val sideColor = if (trade.side == Side.BUY) positiveColor else negativeColor
 
     LiquidGlassCard {

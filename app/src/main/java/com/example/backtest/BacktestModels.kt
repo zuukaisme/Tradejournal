@@ -7,7 +7,36 @@ enum class Side {
 
 enum class ExitReason {
     TP,
-    SL
+    SL,
+    BE,
+    EXIT
+}
+
+data class BacktestProgressSnapshot(
+    val candlesProcessed: Int = 0,
+    val totalCandles: Int = 0,
+    val enteredTrades: Int = 0,
+    val closedTrades: Int = 0,
+    val openTrades: Int = 0,
+    val wins: Int = 0,
+    val losses: Int = 0,
+    val breakEvens: Int = 0,
+    val skippedByStopCap: Int = 0,
+    val netPoints: Double = 0.0,
+    val netR: Double = 0.0,
+    val currentTime: String = ""
+) {
+    val candleProgressFraction: Float
+        get() = if (totalCandles > 0) (candlesProcessed.toFloat() / totalCandles).coerceIn(0f, 1f) else 0f
+
+    val winRatePct: Double
+        get() = if (closedTrades > 0) (wins * 100.0) / closedTrades else 0.0
+
+    val lossRatePct: Double
+        get() = if (closedTrades > 0) (losses * 100.0) / closedTrades else 0.0
+
+    val breakEvenRatePct: Double
+        get() = if (closedTrades > 0) (breakEvens * 100.0) / closedTrades else 0.0
 }
 
 data class BacktestSummary(
@@ -19,7 +48,17 @@ data class BacktestSummary(
     val netR: Double,
     val avgR: Double,
     val profitFactor: Double?,
-    val skippedByStopCap: Int
+    val skippedByStopCap: Int,
+    val breakEvens: Int = 0,
+    val enteredTrades: Int = totalTrades,
+    val openTrades: Int = 0,
+    val breakEvenRatePct: Double = 0.0,
+    val lossRatePct: Double = if (totalTrades > 0) (losses * 100.0) / totalTrades else 0.0,
+    val tpExits: Int = 0,
+    val slExits: Int = 0,
+    val expectancyPoints: Double = if (totalTrades > 0) netPoints / totalTrades else 0.0,
+    val totalCandles: Int = 0,
+    val currentStreak: Int = 0
 )
 
 data class BacktestPoints(

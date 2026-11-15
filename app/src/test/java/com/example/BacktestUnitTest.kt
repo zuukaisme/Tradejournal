@@ -274,4 +274,113 @@ class BacktestUnitTest {
         val lines = daily.csvText.trim().lines()
         assertEquals("2025-01-15 00:00:00,100,110,99,108,0", lines[1])
     }
+
+    @Test
+    fun parseProgressJson_andBreakEvenSummary_parseAllProgressMetrics() {
+        val progressJson = """
+            {
+              "candlesProcessed": 1500,
+              "totalCandles": 3000,
+              "enteredTrades": 21,
+              "closedTrades": 20,
+              "openTrades": 1,
+              "wins": 11,
+              "losses": 6,
+              "breakEvens": 3,
+              "skippedByStopCap": 2,
+              "netPoints": 42.5,
+              "netR": 3.25,
+              "currentTime": "2025.02.10 14:30:00"
+            }
+        """.trimIndent()
+
+        val progress = BacktestCodec.parseProgressJson(progressJson)!!
+        assertEquals(1500, progress.candlesProcessed)
+        assertEquals(3000, progress.totalCandles)
+        assertEquals(0.5f, progress.candleProgressFraction, 1e-5f)
+        assertEquals(21, progress.enteredTrades)
+        assertEquals(20, progress.closedTrades)
+        assertEquals(1, progress.openTrades)
+        assertEquals(11, progress.wins)
+        assertEquals(6, progress.losses)
+        assertEquals(3, progress.breakEvens)
+        assertEquals(55.0, progress.winRatePct, 1e-6)
+        assertEquals(30.0, progress.lossRatePct, 1e-6)
+        assertEquals(15.0, progress.breakEvenRatePct, 1e-6)
+        assertEquals("2025.02.10 14:30:00", progress.currentTime)
+
+        val resultJson = """
+            {
+              "summary": {
+                "totalTrades": 4,
+                "enteredTrades": 5,
+                "openTrades": 1,
+                "wins": 2,
+                "losses": 1,
+                "breakEvens": 1,
+                "winRatePct": 50.0,
+                "lossRatePct": 25.0,
+                "breakEvenRatePct": 25.0,
+                "netPoints": 18.0,
+                "netR": 2.0,
+                "avgR": 0.5,
+                "expectancyPoints": 4.5,
+                "profitFactor": 2.5,
+                "skippedByStopCap": 2,
+                "tpExits": 2,
+                "slExits": 1,
+                "totalCandles": 500,
+                "currentStreak": 2
+              },
+              "points": {
+                "avgWinPoints": 14.0,
+                "avgLossPoints": -10.0,
+                "largestWinPoints": 16.0,
+                "largestLossPoints": -10.0,
+                "avgStopDistancePoints": 10.0,
+                "maxStopDistancePoints": 10.0,
+                "avgTargetDistancePoints": 15.0
+              },
+              "risk": {
+                "maxDrawdownPoints": 10.0,
+                "maxDrawdownR": 1.0,
+                "maxConsecutiveWins": 2,
+                "maxConsecutiveLosses": 1
+              },
+              "bySide": {
+                "buy": {"trades": 3, "winRatePct": 66.7, "netPoints": 28.0},
+                "sell": {"trades": 1, "winRatePct": 0.0, "netPoints": -10.0}
+              },
+              "timing": {"avgTradeDurationCandles": 5.0},
+              "equityCurve": [-10.0, -10.0, 2.0, 18.0],
+              "trades": [
+                {
+                  "side": "buy",
+                  "entry": 2600.0,
+                  "sl": 2600.0,
+                  "tp": 2620.0,
+                  "exit": 2600.0,
+                  "openTime": "2025.02.10 10:00:00",
+                  "closeTime": "2025.02.10 10:30:00",
+                  "reason": "be",
+                  "points": 0.0,
+                  "r": 0.0,
+                  "durationCandles": 6
+                }
+              ],
+              "warnings": []
+            }
+        """.trimIndent()
+
+        val parsed = (BacktestCodec.parseBacktestJson(resultJson) as BacktestParseOutcome.Success).result
+        assertEquals(5, parsed.summary.enteredTrades)
+        assertEquals(1, parsed.summary.openTrades)
+        assertEquals(1, parsed.summary.breakEvens)
+        assertEquals(25.0, parsed.summary.breakEvenRatePct, 1e-6)
+        assertEquals(25.0, parsed.summary.lossRatePct, 1e-6)
+        assertEquals(500, parsed.summary.totalCandles)
+        assertEquals(2, parsed.summary.currentStreak)
+        assertEquals(ExitReason.BE, parsed.trades.first().reason)
+        assertTrue(com.example.backtest.AiStrategyGenerator.SYSTEM_PROMPT.contains("manage_trade"))
+    }
 }

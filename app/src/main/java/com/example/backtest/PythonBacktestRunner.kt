@@ -4,6 +4,10 @@ import android.content.Context
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 
+fun interface BacktestProgressListener {
+    fun onProgress(progressJson: String)
+}
+
 object PythonBacktestRunner {
     private val lock = Any()
 
@@ -23,7 +27,8 @@ object PythonBacktestRunner {
         strategyCode: String,
         className: String = "",
         maxStopPoints: Double = 0.0,
-        pointSize: Double = 1.0
+        pointSize: Double = 1.0,
+        progressListener: BacktestProgressListener? = null
     ): String {
         ensureStarted(context)
         return Python.getInstance()
@@ -34,7 +39,8 @@ object PythonBacktestRunner {
                 strategyCode,
                 className,
                 maxStopPoints,
-                pointSize
+                pointSize,
+                progressListener
             )
             .toString()
     }
