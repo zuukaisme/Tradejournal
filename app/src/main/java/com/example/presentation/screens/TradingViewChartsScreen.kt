@@ -17,6 +17,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
+import org.json.JSONObject
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -31,11 +32,18 @@ fun TradingViewChartsScreen(modifier: Modifier = Modifier) {
             settings.javaScriptCanOpenWindowsAutomatically = true
             settings.setSupportMultipleWindows(false)
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+            val chartWebView = this
             webChromeClient = object : WebChromeClient() {
                 override fun onConsoleMessage(message: ConsoleMessage): Boolean {
                     val detail = "${message.message()} -- ${message.sourceId()}:${message.lineNumber()}"
                     when (message.messageLevel()) {
-                        ConsoleMessage.MessageLevel.ERROR -> Log.e("TradingViewWebView", detail)
+                        ConsoleMessage.MessageLevel.ERROR -> {
+                            Log.e("TradingViewWebView", detail)
+                            chartWebView.evaluateJavascript(
+                                "window.showNativeError(${JSONObject.quote(detail)})",
+                                null
+                            )
+                        }
                         ConsoleMessage.MessageLevel.WARNING -> Log.w("TradingViewWebView", detail)
                         else -> Log.d("TradingViewWebView", detail)
                     }
@@ -48,16 +56,12 @@ fun TradingViewChartsScreen(modifier: Modifier = Modifier) {
                     request: WebResourceRequest,
                     error: WebResourceError
                 ) {
-                    Log.e(
-                        "TradingViewWebView",
-                        "Load error: ${error.errorCode} ${error.description}; url=${request.url}"
+                    val detail = "WebView error ${error.errorCode}: ${error.description} (${request.url.host ?: request.url})"
+                    Log.e("TradingViewWebView", detail)
+                    view.evaluateJavascript(
+                        "window.showNativeError(${JSONObject.quote(detail)})",
+                        null
                     )
-                    if (request.isForMainFrame) {
-                        view.evaluateJavascript(
-                            "document.getElementById('fallback').textContent='Unable to load the chart page. Check your connection and review WebView logs.';",
-                            null
-                        )
-                    }
                 }
 
                 override fun onReceivedHttpError(
@@ -65,10 +69,14 @@ fun TradingViewChartsScreen(modifier: Modifier = Modifier) {
                     request: WebResourceRequest,
                     errorResponse: android.webkit.WebResourceResponse
                 ) {
-                    Log.e(
-                        "TradingViewWebView",
-                        "HTTP ${errorResponse.statusCode} ${errorResponse.reasonPhrase}; url=${request.url}"
-                    )
+                    if (errorResponse.statusCode >= 400) {
+                        val detail = "HTTP ${errorResponse.statusCode} ${errorResponse.reasonPhrase} from ${request.url.host ?: request.url}"
+                        Log.e("TradingViewWebView", detail)
+                        view.evaluateJavascript(
+                            "window.showNativeError(${JSONObject.quote(detail)})",
+                            null
+                        )
+                    }
                 }
 
                 override fun onPageFinished(view: WebView, url: String) {
