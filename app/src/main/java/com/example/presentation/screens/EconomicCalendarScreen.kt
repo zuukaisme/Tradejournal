@@ -105,7 +105,7 @@ fun EconomicCalendarScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(Modifier.weight(1f)) {
+                Column(Modifier.width(88.dp)) {
                     Text("Economic Calendar", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Text("${filteredEvents.size} matching events · Forex Factory", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
