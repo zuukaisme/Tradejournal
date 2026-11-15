@@ -1,5 +1,6 @@
 package com.example.presentation.screens
 
+import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -40,6 +41,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.domain.model.EconomicCalendarEvent
@@ -57,14 +59,35 @@ fun EconomicCalendarScreen(
     val events by viewModel.economicCalendarEvents.collectAsState()
     val isLoading by viewModel.isEconomicCalendarLoading.collectAsState()
     val status by viewModel.economicCalendarStatus.collectAsState()
-    var selectedImpact by remember { mutableStateOf("All") }
-    var selectedCurrency by remember { mutableStateOf("All") }
-    var selectedRange by remember { mutableStateOf("All dates") }
-    var searchQuery by remember { mutableStateOf("") }
+    val context = LocalContext.current
+    val savedFilters = remember(context) {
+        context.getSharedPreferences("economic_calendar_filters", Context.MODE_PRIVATE)
+    }
+    var selectedImpact by remember(savedFilters) {
+        mutableStateOf(savedFilters.getString("impact", "All") ?: "All")
+    }
+    var selectedCurrency by remember(savedFilters) {
+        mutableStateOf(savedFilters.getString("currency", "All") ?: "All")
+    }
+    var selectedRange by remember(savedFilters) {
+        mutableStateOf(savedFilters.getString("range", "All dates") ?: "All dates")
+    }
+    var searchQuery by remember(savedFilters) {
+        mutableStateOf(savedFilters.getString("search", "") ?: "")
+    }
     var currencyMenuExpanded by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         viewModel.refreshEconomicCalendar()
+    }
+
+    LaunchedEffect(selectedImpact, selectedCurrency, selectedRange, searchQuery) {
+        savedFilters.edit()
+            .putString("impact", selectedImpact)
+            .putString("currency", selectedCurrency)
+            .putString("range", selectedRange)
+            .putString("search", searchQuery)
+            .apply()
     }
 
     val currencies = remember(events) {
@@ -108,7 +131,7 @@ fun EconomicCalendarScreen(
             ) {
                 Column(Modifier.weight(1f)) {
                     Text("Economic Calendar", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("${filteredEvents.size} matching events · Forex Factory", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("${filteredEvents.size} matching events · Filters saved automatically", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 IconButton(onClick = { viewModel.refreshEconomicCalendar() }, enabled = !isLoading) {
                     if (isLoading) CircularProgressIndicator(Modifier.width(20.dp).height(20.dp), strokeWidth = 2.dp)
