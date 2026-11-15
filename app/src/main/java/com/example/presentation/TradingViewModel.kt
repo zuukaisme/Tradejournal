@@ -417,10 +417,10 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun refreshEconomicCalendar(force: Boolean = false) {
+    fun refreshEconomicCalendar() {
         if (isEconomicCalendarLoading.value) return
         val now = System.currentTimeMillis()
-        if (!force && now - lastEconomicCalendarFetchAt < 5 * 60 * 1000L) return
+        if (now - lastEconomicCalendarFetchAt < 5 * 60 * 1000L) return
         lastEconomicCalendarFetchAt = now
         viewModelScope.launch {
             isEconomicCalendarLoading.value = true
