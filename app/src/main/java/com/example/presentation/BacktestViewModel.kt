@@ -19,7 +19,7 @@ import com.example.backtest.BacktestResult
 import com.example.backtest.BacktestTimeframe
 import com.example.backtest.CandleTimeframeResampler
 import com.example.backtest.PythonBacktestRunner
-import com.example.backtest.ResampledCsvResult
+import com.example.backtest.ResampledCsvFileResult
 import com.example.backtest.SavedBacktestRun
 import com.example.data.local.TradingDatabase
 import com.example.data.repository.TradingRepository
@@ -83,8 +83,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
     private val repository = TradingRepository(database)
 
     private var csvCacheFile: File? = null
-    private var decodedCsvText: String? = null
-    private val resampledCache = mutableMapOf<BacktestTimeframe, ResampledCsvResult>()
+    private val resampledCache = mutableMapOf<BacktestTimeframe, ResampledCsvFileResult>()
     private var latestSettings: UserSettings = UserSettings()
     private var hasHydratedAiPrefs = false
     private val liveModelsByProvider = mutableMapOf<AiProvider, List<AiModelOption>>()
@@ -198,7 +197,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                 }
                 csvCacheFile?.takeIf { it != loaded.cacheFile }?.delete()
                 csvCacheFile = loaded.cacheFile
-                decodedCsvText = null
+                resampledCache.values.forEach { it.file.delete() }
                 resampledCache.clear()
                 _uiState.update {
                     it.copy(
@@ -223,7 +222,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
             } catch (t: Throwable) {
                 csvCacheFile?.delete()
                 csvCacheFile = null
-                decodedCsvText = null
+                resampledCache.values.forEach { it.file.delete() }
                 resampledCache.clear()
                 _uiState.update {
                     it.copy(
@@ -323,23 +322,21 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                         )
                         candleCount = snapshot.estimatedRows
                     } else {
-                        val baseText = decodedCsvText ?: sourceFile.readText(Charsets.UTF_8).also {
-                            decodedCsvText = it
-                        }
-                        val resampled = resampledCache[targetTf] ?: CandleTimeframeResampler.resampleCsv(
-                            csvText = baseText,
-                            target = targetTf
+                        val resampledFile = resampledCache[targetTf] ?: CandleTimeframeResampler.resampleCsvFile(
+                            sourceFile = sourceFile,
+                            target = targetTf,
+                            outputFile = File(appContext.cacheDir, "tradepulse_resampled_${sourceFile.name}_${targetTf.shortLabel}.csv")
                         ).also { resampledCache[targetTf] = it }
-                        jsonString = PythonBacktestRunner.runWithStrategyCode(
+                        jsonString = PythonBacktestRunner.runWithStrategyFile(
                             context = appContext,
-                            csvText = resampled.csvText,
+                            csvPath = resampledFile.file.absolutePath,
                             strategyCode = strategy.code,
                             className = strategy.className,
                             maxStopPoints = maxStopPoints,
                             pointSize = pointSize,
                             progressListener = listener
                         )
-                        candleCount = resampled.outputCandleCount
+                        candleCount = resampledFile.outputCandleCount
                     }
                     val parsed = BacktestCodec.parseBacktestJson(jsonString)
                     Triple(parsed, candleCount, targetTf)
