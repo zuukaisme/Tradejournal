@@ -38,7 +38,7 @@ body{display:flex;flex-direction:column}
   <div id="chart"></div>
   <div class="fallback" id="fallback">Loading TradingView chart…</div>
 </main>
-<footer class="footer"><a id="chartCredit" href="https://www.tradingview.com/symbols/DERIV-VOLATILITY_100_1S_INDEX/" target="_blank" rel="noopener">VOLATILITY_100_1S_INDEX chart</a>&nbsp;by TradingView&nbsp;· Analysis only</footer>
+<footer class="footer"><a id="chartCredit" href="https://www.tradingview.com/symbols/FX-EURUSD/" target="_blank" rel="noopener">EURUSD chart</a>&nbsp;by TradingView&nbsp;· Analysis only</footer>
 <script>
 const markets = {
   "Deriv Synthetics": [
@@ -70,13 +70,45 @@ const markets = {
   ]
 };
 
-let activeCategory = "Deriv Synthetics";
-let activeSymbol = markets[activeCategory][3];
+let activeCategory = "Forex";
+let activeSymbol = markets[activeCategory][0];
+let statusTimer = null;
+let frameTimeout = null;
+let activeObserver = null;
+let renderVersion = 0;
 
-function setStatus(message) {
+function clearChartTimers() {
+  if (statusTimer !== null) {
+    window.clearTimeout(statusTimer);
+    statusTimer = null;
+  }
+  if (frameTimeout !== null) {
+    window.clearTimeout(frameTimeout);
+    frameTimeout = null;
+  }
+  if (activeObserver !== null) {
+    activeObserver.disconnect();
+    activeObserver = null;
+  }
+}
+
+function setStatus(message, hideAfter = 0, version = renderVersion) {
   const fallback = document.getElementById("fallback");
+  if (version !== renderVersion) return;
+  if (statusTimer !== null) {
+    window.clearTimeout(statusTimer);
+    statusTimer = null;
+  }
   fallback.textContent = message;
   fallback.style.display = "block";
+  if (hideAfter > 0) {
+    statusTimer = window.setTimeout(() => {
+      if (version === renderVersion) {
+        fallback.style.display = "none";
+        statusTimer = null;
+      }
+    }, hideAfter);
+  }
 }
 
 window.showNativeError = function(message) {
@@ -127,12 +159,14 @@ function renderSymbols() {
 }
 
 function renderChart() {
+  clearChartTimers();
+  const version = ++renderVersion;
   const root = document.getElementById("chart");
   const credit = document.getElementById("chartCredit");
   credit.href = "https://www.tradingview.com/symbols/" + activeSymbol.symbol.replace(":", "-") + "/";
   credit.textContent = activeSymbol.symbol.split(":")[1] + " chart";
   root.innerHTML = "";
-  setStatus("Loading " + activeSymbol.name + "…");
+  setStatus("Loading " + activeSymbol.name + "…", 0, version);
 
   const container = document.createElement("div");
   container.className = "chart-widget-container";
@@ -162,31 +196,40 @@ function renderChart() {
   });
 
   script.onload = () => {
-    setStatus("TradingView's chart script loaded. Waiting for the chart frame…");
+    setStatus("TradingView's chart script loaded. Waiting for the chart frame…", 0, version);
   };
 
   script.onerror = () => {
-    setStatus("TradingView's chart script could not download. Check your connection or the TradingView service.");
+    setStatus("TradingView's chart script could not download. Check your connection or the TradingView service.", 0, version);
   };
 
   const observer = new MutationObserver(() => {
     const frame = container.querySelector("iframe");
-    if (frame) {
+    if (frame && version === renderVersion) {
       observer.disconnect();
-      setStatus("TradingView frame created. Waiting for chart content; frame loading alone does not confirm a working chart.");
+      if (activeObserver === observer) activeObserver = null;
+      setStatus("TradingView frame created. Waiting for it to load…", 0, version);
       frame.addEventListener("load", () => {
-        setStatus("TradingView frame loaded, but chart rendering is not confirmed. If this remains blank, the embed may be blocked or the symbol may not be supported.");
+        if (version !== renderVersion) return;
+        if (frameTimeout !== null) {
+          window.clearTimeout(frameTimeout);
+          frameTimeout = null;
+        }
+        setStatus("Chart frame loaded.", 2500, version);
       }, { once: true });
     }
   });
+  activeObserver = observer;
   observer.observe(container, { childList: true, subtree: true });
 
-  window.setTimeout(() => {
+  frameTimeout = window.setTimeout(() => {
+    if (version !== renderVersion) return;
     if (!container.querySelector("iframe")) {
-      setStatus("No TradingView chart frame appeared after 20 seconds. The embed script may be blocked or unavailable.");
+      setStatus("No TradingView chart frame appeared after 20 seconds. The embed script may be blocked or unavailable.", 0, version);
     } else {
-      setStatus("TradingView frame exists, but its chart content has not been confirmed. Check for a visible error above.");
+      setStatus("TradingView frame exists but did not finish loading. Check the connection or whether this symbol is supported.", 0, version);
     }
+    frameTimeout = null;
   }, 20000);
 
   root.appendChild(container);
