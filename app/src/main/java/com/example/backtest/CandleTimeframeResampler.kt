@@ -156,13 +156,26 @@ object CandleTimeframeResampler {
 
     fun resampleCsv(csvText: String, target: BacktestTimeframe): ResampledCsvResult {
         val cleanText = csvText.removePrefix("\uFEFF")
-        val lines = cleanText.lineSequence()
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-            .toList()
 
         if (target == BacktestTimeframe.NATIVE) {
-            val count = (lines.size - 1).coerceAtLeast(0)
+            var nonBlank = 0
+            var pos = 0
+            val len = cleanText.length
+            while (pos < len) {
+                var nextNl = cleanText.indexOf('\n', pos)
+                if (nextNl < 0) nextNl = len
+                var hasContent = false
+                for (k in pos until nextNl) {
+                    val ch = cleanText[k]
+                    if (ch != ' ' && ch != '\t' && ch != '\r') {
+                        hasContent = true
+                        break
+                    }
+                }
+                if (hasContent) nonBlank++
+                pos = nextNl + 1
+            }
+            val count = (nonBlank - 1).coerceAtLeast(0)
             return ResampledCsvResult(
                 csvText = cleanText,
                 sourceCandleCount = count,
@@ -171,9 +184,22 @@ object CandleTimeframeResampler {
             )
         }
 
-        require(lines.size >= 2) { "The CSV file does not contain enough candle rows to resample." }
+        val totalLen = cleanText.length
+        var scanPos = 0
+        var firstLine = ""
+        while (scanPos < totalLen) {
+            var nl = cleanText.indexOf('\n', scanPos)
+            if (nl < 0) nl = totalLen
+            val candidate = cleanText.substring(scanPos, nl).trim()
+            scanPos = nl + 1
+            if (candidate.isNotEmpty()) {
+                firstLine = candidate
+                break
+            }
+        }
+        require(firstLine.isNotEmpty()) { "The CSV file does not contain enough candle rows to resample." }
 
-        val header = parseHeader(lines[0])
+        val header = parseHeader(firstLine)
             ?: throw IllegalArgumentException("Unrecognized CSV header.")
 
         val openIdx = header.openIdx
@@ -187,20 +213,38 @@ object CandleTimeframeResampler {
             throw IllegalArgumentException("CSV must contain date/time columns to resample timeframes.")
         }
 
-        val cal = newUtcCalendar()
-        val candles = ArrayList<ParsedCandle>(lines.size - 1)
+        val candles = ArrayList<ParsedCandle>((totalLen / 48).coerceAtLeast(16))
         var isChronological = true
         var lastEpoch = Long.MIN_VALUE
+        val delim = header.delimiter
+        val hasDateTimePair = header.dateIdx != null && header.timeIdx != null
+        val dateIdxVal = header.dateIdx ?: -1
+        val timeIdxVal = header.timeIdx ?: -1
+        val singleIdxVal = header.singleTimeIdx ?: -1
+        val volIdxVal = header.volIdx
 
-        for (i in 1 until lines.size) {
-            val cols = lines[i].split(header.delimiter)
-            val rawTs = extractTimestampString(cols, header) ?: continue
-            val epoch = parseEpochMillis(rawTs, cal) ?: continue
+        while (scanPos < totalLen) {
+            var nl = cleanText.indexOf('\n', scanPos)
+            if (nl < 0) nl = totalLen
+            val line = cleanText.substring(scanPos, nl).trim()
+            scanPos = nl + 1
+            if (line.isEmpty()) continue
+
+            val cols = line.split(delim)
+            val rawTs = if (hasDateTimePair) {
+                val d = cols.getOrNull(dateIdxVal)?.trim().orEmpty()
+                val t = cols.getOrNull(timeIdxVal)?.trim().orEmpty()
+                if (d.isEmpty() || t.isEmpty()) continue else "$d $t"
+            } else {
+                cols.getOrNull(singleIdxVal)?.trim()?.takeIf { it.isNotEmpty() } ?: continue
+            }
+
+            val epoch = parseEpochMillisFast(rawTs) ?: continue
             val o = cols.getOrNull(openIdx)?.trim()?.toDoubleOrNull() ?: continue
             val h = cols.getOrNull(highIdx)?.trim()?.toDoubleOrNull() ?: continue
             val l = cols.getOrNull(lowIdx)?.trim()?.toDoubleOrNull() ?: continue
             val c = cols.getOrNull(closeIdx)?.trim()?.toDoubleOrNull() ?: continue
-            val v = header.volIdx?.let { cols.getOrNull(it)?.trim()?.toDoubleOrNull() } ?: 0.0
+            val v = volIdxVal?.let { cols.getOrNull(it)?.trim()?.toDoubleOrNull() } ?: 0.0
 
             if (epoch < lastEpoch) {
                 isChronological = false
@@ -215,7 +259,8 @@ object CandleTimeframeResampler {
             candles.sortBy { it.epochMillis }
         }
 
-        val out = StringBuilder(candles.size * 42)
+        val estOutRows = if (target.minutes > 0) (candles.size / 3).coerceAtLeast(64) else candles.size
+        val out = StringBuilder(estOutRows * 44)
         out.append("datetime,open,high,low,close,volume\n")
 
         var currentBucket = Long.MIN_VALUE
@@ -227,18 +272,18 @@ object CandleTimeframeResampler {
         var outputCount = 0
 
         fun flushBucket(bucketStartMs: Long) {
-            formatUtcTimestamp(bucketStartMs, cal, out)
+            formatUtcTimestampFast(bucketStartMs, out)
             out.append(',')
-            out.append(formatNumber(bOpen)).append(',')
-            out.append(formatNumber(bHigh)).append(',')
-            out.append(formatNumber(bLow)).append(',')
-            out.append(formatNumber(bClose)).append(',')
-            out.append(formatNumber(bVol)).append('\n')
+            appendFormattedNumber(bOpen, out).append(',')
+            appendFormattedNumber(bHigh, out).append(',')
+            appendFormattedNumber(bLow, out).append(',')
+            appendFormattedNumber(bClose, out).append(',')
+            appendFormattedNumber(bVol, out).append('\n')
             outputCount++
         }
 
         for (candle in candles) {
-            val bucketMs = bucketStartMillis(candle.epochMillis, target, cal)
+            val bucketMs = bucketStartMillisFast(candle.epochMillis, target)
             if (bucketMs != currentBucket) {
                 if (currentBucket != Long.MIN_VALUE) {
                     flushBucket(currentBucket)
@@ -309,45 +354,63 @@ object CandleTimeframeResampler {
         }
     }
 
-    private fun bucketStartMillis(
+    private fun bucketStartMillisFast(
         epochMillis: Long,
-        target: BacktestTimeframe,
-        cal: Calendar
+        target: BacktestTimeframe
     ): Long {
         return when (target) {
             BacktestTimeframe.NATIVE -> epochMillis
             BacktestTimeframe.D1 -> {
-                cal.timeInMillis = epochMillis
-                cal.set(Calendar.HOUR_OF_DAY, 0)
-                cal.set(Calendar.MINUTE, 0)
-                cal.set(Calendar.SECOND, 0)
-                cal.set(Calendar.MILLISECOND, 0)
-                cal.timeInMillis
+                val dayMs = 86_400_000L
+                Math.floorDiv(epochMillis, dayMs) * dayMs
             }
             BacktestTimeframe.W1 -> {
-                cal.timeInMillis = epochMillis
-                cal.set(Calendar.HOUR_OF_DAY, 0)
-                cal.set(Calendar.MINUTE, 0)
-                cal.set(Calendar.SECOND, 0)
-                cal.set(Calendar.MILLISECOND, 0)
-                val dow = cal.get(Calendar.DAY_OF_WEEK)
-                val daysSinceMonday = (dow - Calendar.MONDAY + 7) % 7
-                if (daysSinceMonday != 0) {
-                    cal.add(Calendar.DAY_OF_MONTH, -daysSinceMonday)
-                }
-                cal.timeInMillis
+                val dayMs = 86_400_000L
+                val epochDay = Math.floorDiv(epochMillis, dayMs)
+                // 1970-01-01 was Thursday (offset 3 from Monday)
+                val daysSinceMonday = Math.floorMod(epochDay + 3L, 7L)
+                (epochDay - daysSinceMonday) * dayMs
             }
             else -> {
                 val intervalMs = target.minutes * 60_000L
-                val floored = Math.floorDiv(epochMillis, intervalMs)
-                floored * intervalMs
+                Math.floorDiv(epochMillis, intervalMs) * intervalMs
             }
         }
     }
 
-    private fun parseEpochMillis(raw: String, cal: Calendar): Long? {
+    private fun parseEpochMillis(raw: String, @Suppress("UNUSED_PARAMETER") cal: Calendar): Long? =
+        parseEpochMillisFast(raw)
+
+    private fun parseEpochMillisFast(raw: String): Long? {
         val s = raw.trim().trim('"', '\'')
-        if (s.isEmpty()) return null
+        val len = s.length
+        if (len == 0) return null
+
+        // Fast ASCII check for common YYYY.MM.DD HH:MM[:SS] or YYYY-MM-DD HH:MM[:SS]
+        if (len >= 16 &&
+            s[0] in '0'..'9' && s[1] in '0'..'9' && s[2] in '0'..'9' && s[3] in '0'..'9' &&
+            (s[4] == '.' || s[4] == '-') &&
+            s[5] in '0'..'9' && s[6] in '0'..'9' &&
+            (s[7] == '.' || s[7] == '-') &&
+            s[8] in '0'..'9' && s[9] in '0'..'9' &&
+            (s[10] == ' ' || s[10] == 'T') &&
+            s[11] in '0'..'9' && s[12] in '0'..'9' &&
+            s[13] == ':' &&
+            s[14] in '0'..'9' && s[15] in '0'..'9'
+        ) {
+            val year = parse4Digits(s, 0)
+            val month = parse2Digits(s, 5)
+            val day = parse2Digits(s, 8)
+            val hour = parse2Digits(s, 11)
+            val min = parse2Digits(s, 14)
+            if (len == 16) {
+                return toUtcMillisFast(year, month, day, hour, min, 0)
+            }
+            if (len == 19 && s[16] == ':' && s[17] in '0'..'9' && s[18] in '0'..'9') {
+                val sec = parse2Digits(s, 17)
+                return toUtcMillisFast(year, month, day, hour, min, sec)
+            }
+        }
 
         if (NUMERIC_EPOCH_REGEX.matches(s)) {
             val whole = s.substringBefore('.').toLongOrNull() ?: return null
@@ -361,7 +424,7 @@ object CandleTimeframeResampler {
             val hour = m.groupValues[4].toIntOrNull() ?: 0
             val min = m.groupValues[5].toIntOrNull() ?: 0
             val sec = m.groupValues[6].toIntOrNull() ?: 0
-            val baseMillis = toUtcMillis(year, month, day, hour, min, sec, cal) ?: return null
+            val baseMillis = toUtcMillisFast(year, month, day, hour, min, sec) ?: return null
             val signStr = m.groupValues[8]
             if (signStr.isNotEmpty()) {
                 val offH = m.groupValues[9].toIntOrNull() ?: 0
@@ -379,7 +442,7 @@ object CandleTimeframeResampler {
             val hour = m.groupValues[4].toIntOrNull() ?: 0
             val min = m.groupValues[5].toIntOrNull() ?: 0
             val sec = m.groupValues[6].toIntOrNull() ?: 0
-            return toUtcMillis(year, month, day, hour, min, sec, cal)
+            return toUtcMillisFast(year, month, day, hour, min, sec)
         }
 
         SLASH_DMY_MDY_REGEX.matchEntire(s)?.let { m ->
@@ -390,38 +453,60 @@ object CandleTimeframeResampler {
             val hour = m.groupValues[4].toIntOrNull() ?: 0
             val min = m.groupValues[5].toIntOrNull() ?: 0
             val sec = m.groupValues[6].toIntOrNull() ?: 0
-            return toUtcMillis(year, month, day, hour, min, sec, cal)
+            return toUtcMillisFast(year, month, day, hour, min, sec)
         }
 
         return null
     }
 
-    private fun toUtcMillis(
+    private fun parse2Digits(s: String, idx: Int): Int =
+        (s[idx] - '0') * 10 + (s[idx + 1] - '0')
+
+    private fun parse4Digits(s: String, idx: Int): Int =
+        (s[idx] - '0') * 1000 + (s[idx + 1] - '0') * 100 + (s[idx + 2] - '0') * 10 + (s[idx + 3] - '0')
+
+    private fun toUtcMillisFast(
         year: Int,
         month: Int,
         day: Int,
         hour: Int,
         minute: Int,
-        second: Int,
-        cal: Calendar
+        second: Int
     ): Long? {
         if (month !in 1..12 || day !in 1..31 || hour !in 0..23 || minute !in 0..59 || second !in 0..59) {
             return null
         }
-        cal.clear()
-        cal.set(year, month - 1, day, hour, minute, second)
-        cal.set(Calendar.MILLISECOND, 0)
-        return cal.timeInMillis
+        var yr = year.toLong()
+        if (month <= 2) yr -= 1L
+        val era = if (yr >= 0L) yr / 400L else (yr - 399L) / 400L
+        val yoe = yr - era * 400L
+        val mAdj = month + if (month > 2) -3 else 9
+        val doy = (153L * mAdj + 2L) / 5L + day - 1L
+        val doe = yoe * 365L + yoe / 4L - yoe / 100L + doy
+        val epochDays = era * 146097L + doe - 719468L
+        val seconds = epochDays * 86_400L + hour * 3600L + minute * 60L + second
+        return seconds * 1000L
     }
 
-    private fun formatUtcTimestamp(epochMillis: Long, cal: Calendar, out: StringBuilder) {
-        cal.timeInMillis = epochMillis
-        val year = cal.get(Calendar.YEAR)
-        val month = cal.get(Calendar.MONTH) + 1
-        val day = cal.get(Calendar.DAY_OF_MONTH)
-        val hour = cal.get(Calendar.HOUR_OF_DAY)
-        val minute = cal.get(Calendar.MINUTE)
-        val second = cal.get(Calendar.SECOND)
+    private fun formatUtcTimestampFast(epochMillis: Long, out: StringBuilder) {
+        val dayMs = 86_400_000L
+        val epochDays = Math.floorDiv(epochMillis, dayMs)
+        val remSecs = Math.floorMod(epochMillis, dayMs) / 1000L
+
+        val z = epochDays + 719468L
+        val era = if (z >= 0L) z / 146097L else (z - 146096L) / 146097L
+        val doe = z - era * 146097L
+        val yoe = (doe - doe / 1460L + doe / 36524L - doe / 146096L) / 365L
+        var year = (yoe + era * 400L).toInt()
+        val doy = doe - (365L * yoe + yoe / 4L - yoe / 100L)
+        val mp = (5L * doy + 2L) / 153L
+        val day = (doy - (153L * mp + 2L) / 5L + 1L).toInt()
+        val month = (mp + if (mp < 10L) 3L else -9L).toInt()
+        if (month <= 2) year += 1
+
+        val hour = (remSecs / 3600L).toInt()
+        val minute = ((remSecs % 3600L) / 60L).toInt()
+        val second = (remSecs % 60L).toInt()
 
         out.append(year).append('-')
         appendTwoDigits(month, out).append('-')
@@ -437,10 +522,18 @@ object CandleTimeframeResampler {
         return out
     }
 
-    private fun formatNumber(value: Double): String {
-        if (!value.isFinite()) return "0"
-        if (value == 0.0) return "0"
-        return BigDecimal.valueOf(value).stripTrailingZeros().toPlainString()
+    private fun appendFormattedNumber(value: Double, out: StringBuilder): StringBuilder {
+        if (!value.isFinite() || value == 0.0) {
+            out.append('0')
+            return out
+        }
+        val asLong = value.toLong()
+        if (value == asLong.toDouble() && abs(value) < 1e14) {
+            out.append(asLong)
+            return out
+        }
+        out.append(BigDecimal.valueOf(value).stripTrailingZeros().toPlainString())
+        return out
     }
 
     private fun newUtcCalendar(): Calendar = GregorianCalendar(UTC_TZ, Locale.US).apply {

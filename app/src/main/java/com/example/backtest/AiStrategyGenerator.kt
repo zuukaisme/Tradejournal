@@ -57,8 +57,9 @@ object AiStrategyGenerator {
         5. Guard zero division / flat windows: Verify ATR/range/denominator > 0 before dividing or computing stops.
         6. Next-open execution & price ordering: A signal returned on candle `i` fills at `candles[i + 1].open`. For `"buy"`, keep `sl < candles[i].close < tp`; for `"sell"`, keep `tp < candles[i].close < sl`. Ensure `abs(candles[i].close - sl) > 0`.
         7. If SL and TP are both touched inside one candle, the engine assumes SL hits first.
-        8. Avoid unnecessary instance mutation that breaks re-runs; reset any helper state cleanly in `__init__` or compute directly from `candles[i - N : i + 1]`.
-        9. Output ONLY valid, runnable raw Python code with docstrings and comments explaining every rule. Do not include prose outside Python comments/docstrings.
+        8. PERFORMANCE CRITICAL — O(1) / bounded lookback: NEVER slice `candles[:i + 1]` or iterate from `0..i` inside `on_candle` (which causes O(N^2) multi-minute slowdowns on large CSVs). Always slice only a fixed bounded window (e.g., `candles[i - 20 : i + 1]`) or maintain O(1) rolling state updated sequentially.
+        9. Avoid unnecessary instance mutation that breaks re-runs; reset any helper state cleanly in `__init__` or reinitialize when `i <= 50`.
+        10. Output ONLY valid, runnable raw Python code with docstrings and comments explaining every rule. Do not include prose outside Python comments/docstrings.
     """.trimIndent()
 
     internal fun buildDetailedUserPrompt(userDescription: String): String = """

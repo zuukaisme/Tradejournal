@@ -19,6 +19,7 @@ import com.example.backtest.BacktestResult
 import com.example.backtest.BacktestTimeframe
 import com.example.backtest.CandleTimeframeResampler
 import com.example.backtest.PythonBacktestRunner
+import com.example.backtest.ResampledCsvResult
 import com.example.backtest.SavedBacktestRun
 import com.example.data.local.TradingDatabase
 import com.example.data.repository.TradingRepository
@@ -81,6 +82,8 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
     private val repository = TradingRepository(database)
 
     private var csvRawBytes: ByteArray? = null
+    private var decodedCsvText: String? = null
+    private val resampledCache = mutableMapOf<BacktestTimeframe, ResampledCsvResult>()
     private var latestSettings: UserSettings = UserSettings()
     private var hasHydratedAiPrefs = false
     private val liveModelsByProvider = mutableMapOf<AiProvider, List<AiModelOption>>()
@@ -191,6 +194,8 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                     LoadedCsvBundle(displayName, bytes, preview, detectedTf, targets)
                 }
                 csvRawBytes = loaded.bytes
+                decodedCsvText = loaded.preview.text
+                resampledCache.clear()
                 _uiState.update {
                     it.copy(
                         fileName = loaded.displayName,
@@ -213,6 +218,8 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                 }
             } catch (t: Throwable) {
                 csvRawBytes = null
+                decodedCsvText = null
+                resampledCache.clear()
                 _uiState.update {
                     it.copy(
                         hasCsvBytes = false,
@@ -296,11 +303,14 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                     }
                 }
                 val runTuple = withContext(Dispatchers.Default) {
-                    val decoded = BacktestCodec.decodeCsvBytes(rawBytes)
-                    val resampled = CandleTimeframeResampler.resampleCsv(
-                        csvText = decoded.text,
-                        target = snapshot.selectedTimeframe
-                    )
+                    val baseText = decodedCsvText ?: BacktestCodec.decodeCsvBytes(rawBytes).text.also {
+                        decodedCsvText = it
+                    }
+                    val targetTf = snapshot.selectedTimeframe
+                    val resampled = resampledCache[targetTf] ?: CandleTimeframeResampler.resampleCsv(
+                        csvText = baseText,
+                        target = targetTf
+                    ).also { resampledCache[targetTf] = it }
                     val jsonString = PythonBacktestRunner.runWithStrategyCode(
                         context = appContext,
                         csvText = resampled.csvText,
@@ -311,7 +321,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                         progressListener = listener
                     )
                     val parsed = BacktestCodec.parseBacktestJson(jsonString)
-                    Triple(parsed, resampled.outputCandleCount, snapshot.selectedTimeframe)
+                    Triple(parsed, resampled.outputCandleCount, targetTf)
                 }
 
                 val (outcome, candleCount, usedTimeframe) = runTuple

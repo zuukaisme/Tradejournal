@@ -15,17 +15,19 @@ Rules of the engine:
 """
 import argparse
 import csv
+import hashlib
 import io
 import json
 import random
+import time
 import traceback
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 
 # ---------- data types ----------
 
-@dataclass
+@dataclass(slots=True)
 class Candle:
     time: str
     open: float
@@ -35,14 +37,14 @@ class Candle:
     volume: float = 0.0
 
 
-@dataclass
+@dataclass(slots=True)
 class Signal:
     side: str   # "buy" or "sell"
     sl: float   # stop loss price
     tp: float   # take profit price
 
 
-@dataclass
+@dataclass(slots=True)
 class Trade:
     side: str
     entry: float
@@ -71,19 +73,45 @@ def load_candles(path: str) -> List[Candle]:
     return parse_candles(text)
 
 
+_PARSED_CACHE: Optional[Tuple[Tuple[int, bytes], List[Candle]]] = None
+
+
 def parse_candles(text: str) -> List[Candle]:
     """Accepts MT5 exports (<DATE> <TIME> ...), daily exports with only <DATE>,
     and generic CSVs with date, datetime, time or timestamp columns."""
-    text = text.lstrip("\ufeff")
-    lines = [l for l in text.splitlines() if l.strip()]
-    if not lines:
-        raise ValueError("The CSV file is empty")
-    first = lines[0]
-    delim = "\t" if "\t" in first else (";" if ";" in first else ",")
-    reader = csv.reader(io.StringIO("\n".join(lines)), delimiter=delim)
+    global _PARSED_CACHE
+    if text.startswith("\ufeff"):
+        text = text.lstrip("\ufeff")
 
-    header = [h.strip().strip("<>").lower() for h in next(reader)]
-    idx = {name: i for i, name in enumerate(header)}
+    cache_key = None
+    if len(text) > 4096:
+        digest = hashlib.blake2b(text.encode("utf-8", "replace"), digest_size=16).digest()
+        cache_key = (len(text), digest)
+        cached = _PARSED_CACHE
+        if cached is not None and cached[0] == cache_key:
+            return cached[1]
+
+    stream = io.StringIO(text)
+    first = ""
+    for raw_line in stream:
+        stripped = raw_line.strip()
+        if stripped:
+            first = stripped
+            break
+    if not first:
+        raise ValueError("The CSV file is empty")
+
+    delim = "\t" if "\t" in first else (";" if ";" in first else ",")
+    if '"' in first:
+        header_raw = next(csv.reader([first], delimiter=delim))
+    else:
+        header_raw = first.split(delim)
+
+    header = [h.strip().strip("<>").lower() for h in header_raw]
+    idx: Dict[str, int] = {}
+    for col_i, name in enumerate(header):
+        if name and name not in idx:
+            idx[name] = col_i
 
     missing = [k for k in ("open", "high", "low", "close") if k not in idx]
     time_keys = [k for k in ("datetime", "timestamp", "date", "time") if k in idx]
@@ -92,24 +120,82 @@ def parse_candles(text: str) -> List[Candle]:
             "This does not look like a candle CSV. It needs date or time plus open, "
             "high, low, close columns. First header found: " + first[:80]
         )
-    vol_i = idx.get("tickvol", idx.get("volume"))
 
-    candles = []
-    for row in reader:
-        if not row:
-            continue
-        if "date" in idx and "time" in idx:
-            t = row[idx["date"]] + " " + row[idx["time"]]
+    o_i = idx["open"]
+    h_i = idx["high"]
+    l_i = idx["low"]
+    c_i = idx["close"]
+    vol_i = idx.get("tickvol", idx.get("volume"))
+    has_date_time = ("date" in idx and "time" in idx)
+    date_i = idx.get("date", -1)
+    time_i = idx.get("time", -1)
+    ts_i = idx[time_keys[0]]
+
+    candles: List[Candle] = []
+    append = candles.append
+    candle_cls = Candle
+    flt = float
+    split_fn = str.split
+
+    if '"' not in text:
+        if has_date_time:
+            if vol_i is not None:
+                for raw_line in stream:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    row = split_fn(line, delim)
+                    append(candle_cls(
+                        row[date_i] + " " + row[time_i],
+                        flt(row[o_i]), flt(row[h_i]), flt(row[l_i]), flt(row[c_i]), flt(row[vol_i]),
+                    ))
+            else:
+                for raw_line in stream:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    row = split_fn(line, delim)
+                    append(candle_cls(
+                        row[date_i] + " " + row[time_i],
+                        flt(row[o_i]), flt(row[h_i]), flt(row[l_i]), flt(row[c_i]), 0.0,
+                    ))
         else:
-            t = row[idx[time_keys[0]]]
-        candles.append(Candle(
-            time=t,
-            open=float(row[idx["open"]]),
-            high=float(row[idx["high"]]),
-            low=float(row[idx["low"]]),
-            close=float(row[idx["close"]]),
-            volume=float(row[vol_i]) if vol_i is not None else 0.0,
-        ))
+            if vol_i is not None:
+                for raw_line in stream:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    row = split_fn(line, delim)
+                    append(candle_cls(
+                        row[ts_i],
+                        flt(row[o_i]), flt(row[h_i]), flt(row[l_i]), flt(row[c_i]), flt(row[vol_i]),
+                    ))
+            else:
+                for raw_line in stream:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    row = split_fn(line, delim)
+                    append(candle_cls(
+                        row[ts_i],
+                        flt(row[o_i]), flt(row[h_i]), flt(row[l_i]), flt(row[c_i]), 0.0,
+                    ))
+    else:
+        for row in csv.reader(stream, delimiter=delim):
+            if not row:
+                continue
+            t = (row[date_i] + " " + row[time_i]) if has_date_time else row[ts_i]
+            append(candle_cls(
+                t,
+                flt(row[o_i]),
+                flt(row[h_i]),
+                flt(row[l_i]),
+                flt(row[c_i]),
+                flt(row[vol_i]) if vol_i is not None else 0.0,
+            ))
+
+    if cache_key is not None:
+        _PARSED_CACHE = (cache_key, candles)
     return candles
 
 
@@ -184,6 +270,7 @@ def _run_backtest_detailed(
     progress_callback=None,
 ) -> Tuple[List[Trade], int, int, int]:
     trades: List[Trade] = []
+    trades_append = trades.append
     pos: Optional[Trade] = None
     skipped = 0
     entered = 0
@@ -193,7 +280,15 @@ def _run_backtest_detailed(
     running_pts = 0.0
     running_r = 0.0
     total_candles = len(candles)
-    step = max(1, total_candles // 45) if total_candles > 0 else 1
+    be_eps = BE_EPS
+    abs_fn = abs
+    trade_cls = Trade
+    on_candle = strategy.on_candle
+    manage_fn = strategy.manage_trade if type(strategy).manage_trade is not Strategy.manage_trade else None
+    has_progress = progress_callback is not None
+    inv_point_size = 1.0 / point_size if point_size else 1.0
+    mono = time.monotonic
+    last_emit_at = mono() if has_progress else 0.0
 
     def push_progress(processed: int, current_time: str) -> None:
         _emit_progress(progress_callback, {
@@ -211,78 +306,77 @@ def _run_backtest_detailed(
             "currentTime": current_time,
         })
 
-    if progress_callback is not None:
+    if has_progress:
         push_progress(0, candles[0].time if total_candles > 0 else "")
 
     for i, c in enumerate(candles):
-        trade_changed = False
-
         # 1) manage the open trade on this candle
-        if pos:
+        if pos is not None:
             hit = None
             if pos.side == "buy":
                 if c.low <= pos.sl:
-                    rzn = "be" if abs(pos.sl - pos.entry) <= BE_EPS else "sl"
+                    rzn = "be" if abs_fn(pos.sl - pos.entry) <= be_eps else "sl"
                     hit = (pos.sl, rzn)
                 elif c.high >= pos.tp:
                     hit = (pos.tp, "tp")
             else:
                 if c.high >= pos.sl:
-                    rzn = "be" if abs(pos.sl - pos.entry) <= BE_EPS else "sl"
+                    rzn = "be" if abs_fn(pos.sl - pos.entry) <= be_eps else "sl"
                     hit = (pos.sl, rzn)
                 elif c.low <= pos.tp:
                     hit = (pos.tp, "tp")
 
-            if hit is None and hasattr(strategy, "manage_trade"):
-                action = strategy.manage_trade(i, candles, pos)
-                if isinstance(action, str) and action.strip().lower() in ("be", "breakeven", "break_even", "exit", "close"):
+            if hit is None and manage_fn is not None:
+                action = manage_fn(i, candles, pos)
+                if isinstance(action, str):
                     act = action.strip().lower()
-                    exit_px = pos.entry if act in ("be", "breakeven", "break_even") else c.close
-                    hit_move = (exit_px - pos.entry) if pos.side == "buy" else (pos.entry - exit_px)
-                    rzn = "be" if abs(hit_move) <= BE_EPS else "exit"
-                    hit = (exit_px, rzn)
+                    if act in ("be", "breakeven", "break_even", "exit", "close"):
+                        exit_px = pos.entry if act in ("be", "breakeven", "break_even") else c.close
+                        hit_move = (exit_px - pos.entry) if pos.side == "buy" else (pos.entry - exit_px)
+                        rzn = "be" if abs_fn(hit_move) <= be_eps else "exit"
+                        hit = (exit_px, rzn)
 
-            if hit:
-                pos.exit, pos.reason = hit
+            if hit is not None:
+                exit_px, reason = hit
+                pos.exit = exit_px
+                pos.reason = reason
                 pos.close_time = c.time
                 pos.close_i = i
                 risk_sl = pos.initial_sl if pos.initial_sl is not None else pos.sl
-                risk = abs(pos.entry - risk_sl)
-                move = pos.exit - pos.entry if pos.side == "buy" else pos.entry - pos.exit
-                pos.r = move / risk if risk > 0 else 0.0
-                if abs(pos.r) <= BE_EPS:
+                risk = abs_fn(pos.entry - risk_sl)
+                move = (exit_px - pos.entry) if pos.side == "buy" else (pos.entry - exit_px)
+                r_val = move / risk if risk > 0.0 else 0.0
+                pos.r = r_val
+                if abs_fn(r_val) <= be_eps:
                     pos.reason = "be"
-                trades.append(pos)
-                if pos.r > BE_EPS:
-                    wins_count += 1
-                elif pos.r < -BE_EPS:
-                    losses_count += 1
-                else:
                     be_count += 1
-                running_pts += _pts(pos, point_size)
-                running_r += pos.r
+                elif r_val > be_eps:
+                    wins_count += 1
+                else:
+                    losses_count += 1
+                trades_append(pos)
+                running_pts += move * inv_point_size
+                running_r += r_val
                 pos = None
-                trade_changed = True
 
         # 2) look for a new signal, enter next candle open
         if pos is None and i >= warmup and i + 1 < total_candles:
-            sig = strategy.on_candle(i, candles)
-            if sig:
+            sig = on_candle(i, candles)
+            if sig is not None:
                 nxt = candles[i + 1]
                 entry = nxt.open
                 valid = (sig.sl < entry < sig.tp) if sig.side == "buy" else (sig.tp < entry < sig.sl)
-                if valid and max_stop is not None and abs(entry - sig.sl) > max_stop:
+                if valid and max_stop is not None and abs_fn(entry - sig.sl) > max_stop:
                     skipped += 1
                     valid = False
-                    trade_changed = True
                 if valid:
-                    pos = Trade(sig.side, entry, sig.sl, sig.tp, nxt.time, open_i=i + 1, initial_sl=sig.sl)
+                    pos = trade_cls(sig.side, entry, sig.sl, sig.tp, nxt.time, open_i=i + 1, initial_sl=sig.sl)
                     entered += 1
-                    trade_changed = True
 
-        if progress_callback is not None:
-            is_last = (i + 1 == total_candles)
-            if is_last or (i + 1) % step == 0 or (trade_changed and total_candles <= 1500):
+        if has_progress and (i & 255 == 255 or i + 1 == total_candles):
+            now = mono()
+            if i + 1 == total_candles or (now - last_emit_at) >= 0.12:
+                last_emit_at = now
                 push_progress(i + 1, c.time)
 
     open_at_end = 1 if pos is not None else 0
@@ -352,53 +446,131 @@ def compute_stats(
 ) -> dict:
     n = len(trades)
     entered_trades = n + max(0, open_trades)
-    pts = [_pts(t, point_size) for t in trades]
-    wins = [t for t in trades if t.r > BE_EPS]
-    losses = [t for t in trades if t.r < -BE_EPS]
-    break_evens = [t for t in trades if abs(t.r) <= BE_EPS]
-    win_pts = [p for t, p in zip(trades, pts) if t.r > BE_EPS]
-    loss_pts = [p for t, p in zip(trades, pts) if t.r < -BE_EPS]
-    stops = [abs(t.entry - (t.initial_sl if t.initial_sl is not None else t.sl)) / point_size for t in trades]
-    targets = [abs(t.tp - t.entry) / point_size for t in trades]
+    inv_ps = 1.0 / point_size if point_size else 1.0
+    be_eps = BE_EPS
 
-    tp_exits = sum(1 for t in trades if t.reason == "tp")
-    sl_exits = sum(1 for t in trades if t.reason == "sl")
-
-    gross_win = sum(t.r for t in wins)
-    gross_loss = abs(sum(t.r for t in losses))
+    win_count = 0
+    loss_count = 0
+    be_count = 0
+    sum_win_pts = 0.0
+    sum_loss_pts = 0.0
+    largest_win = 0.0
+    largest_loss = 0.0
+    has_win = False
+    has_loss = False
+    sum_stops = 0.0
+    max_stop_dist = 0.0
+    sum_targets = 0.0
+    tp_exits = 0
+    sl_exits = 0
+    gross_win = 0.0
+    gross_loss = 0.0
+    sum_pts = 0.0
+    sum_r = 0.0
+    sum_dur = 0
 
     peak = eq = dd = 0.0
     peak_r = eq_r = dd_r = 0.0
-    curve = []
-    for t, p in zip(trades, pts):
-        eq += p
-        eq_r += t.r
-        curve.append(round(eq, 2))
-        peak, peak_r = max(peak, eq), max(peak_r, eq_r)
-        dd, dd_r = max(dd, peak - eq), max(dd_r, peak_r - eq_r)
+    curve: List[float] = []
+    curve_append = curve.append
+    trade_dicts: List[dict] = []
+    trade_dicts_append = trade_dicts.append
 
     cw = cl = mw = ml = current_streak = 0
+    buy_trades = buy_wins = 0
+    buy_net_pts = 0.0
+    sell_trades = sell_wins = 0
+    sell_net_pts = 0.0
+
     for t in trades:
-        if t.r > BE_EPS:
-            cw, cl = cw + 1, 0
+        move = (t.exit - t.entry) if t.side == "buy" else (t.entry - t.exit)
+        p = move * inv_ps
+        r_val = t.r
+        sum_pts += p
+        sum_r += r_val
+
+        risk_sl = t.initial_sl if t.initial_sl is not None else t.sl
+        stop_d = abs(t.entry - risk_sl) * inv_ps
+        target_d = abs(t.tp - t.entry) * inv_ps
+        sum_stops += stop_d
+        if stop_d > max_stop_dist:
+            max_stop_dist = stop_d
+        sum_targets += target_d
+
+        dur = t.close_i - t.open_i + 1
+        sum_dur += dur
+
+        if t.reason == "tp":
+            tp_exits += 1
+        elif t.reason == "sl":
+            sl_exits += 1
+
+        if r_val > be_eps:
+            win_count += 1
+            sum_win_pts += p
+            gross_win += r_val
+            if not has_win or p > largest_win:
+                largest_win = p
+                has_win = True
+            cw += 1
+            cl = 0
             current_streak = cw
-        elif t.r < -BE_EPS:
-            cl, cw = cl + 1, 0
+            if cw > mw:
+                mw = cw
+        elif r_val < -be_eps:
+            loss_count += 1
+            sum_loss_pts += p
+            gross_loss += -r_val
+            if not has_loss or p < largest_loss:
+                largest_loss = p
+                has_loss = True
+            cl += 1
+            cw = 0
             current_streak = -cl
+            if cl > ml:
+                ml = cl
         else:
+            be_count += 1
             cw = 0
             cl = 0
             current_streak = 0
-        mw, ml = max(mw, cw), max(ml, cl)
 
-    def side(s):
-        ts = [t for t in trades if t.side == s]
-        w = [t for t in ts if t.r > BE_EPS]
-        return {
-            "trades": len(ts),
-            "winRatePct": round(len(w) / len(ts) * 100, 1) if ts else 0.0,
-            "netPoints": round(sum(_pts(t, point_size) for t in ts), 2),
-        }
+        if t.side == "buy":
+            buy_trades += 1
+            buy_net_pts += p
+            if r_val > be_eps:
+                buy_wins += 1
+        else:
+            sell_trades += 1
+            sell_net_pts += p
+            if r_val > be_eps:
+                sell_wins += 1
+
+        eq += p
+        eq_r += r_val
+        curve_append(round(eq, 2))
+        if eq > peak:
+            peak = eq
+        if peak - eq > dd:
+            dd = peak - eq
+        if eq_r > peak_r:
+            peak_r = eq_r
+        if peak_r - eq_r > dd_r:
+            dd_r = peak_r - eq_r
+
+        trade_dicts_append({
+            "side": t.side,
+            "entry": t.entry,
+            "sl": t.sl,
+            "tp": t.tp,
+            "exit": t.exit,
+            "openTime": t.open_time,
+            "closeTime": t.close_time,
+            "reason": t.reason,
+            "points": round(p, 2),
+            "r": round(r_val, 2),
+            "durationCandles": dur,
+        })
 
     warnings = []
     if n < 50:
@@ -406,23 +578,21 @@ def compute_stats(
     if n == 0:
         warnings.append("No trades taken")
 
-    net_points = round(sum(pts), 2)
-
     return {
         "summary": {
             "totalTrades": n,
             "enteredTrades": entered_trades,
             "openTrades": max(0, open_trades),
-            "wins": len(wins),
-            "losses": len(losses),
-            "breakEvens": len(break_evens),
-            "winRatePct": round(len(wins) / n * 100, 1) if n else 0.0,
-            "lossRatePct": round(len(losses) / n * 100, 1) if n else 0.0,
-            "breakEvenRatePct": round(len(break_evens) / n * 100, 1) if n else 0.0,
-            "netPoints": net_points,
-            "netR": round(sum(t.r for t in trades), 2),
-            "avgR": round(sum(t.r for t in trades) / n, 3) if n else 0.0,
-            "expectancyPoints": round(sum(pts) / n, 2) if n else 0.0,
+            "wins": win_count,
+            "losses": loss_count,
+            "breakEvens": be_count,
+            "winRatePct": round(win_count / n * 100, 1) if n else 0.0,
+            "lossRatePct": round(loss_count / n * 100, 1) if n else 0.0,
+            "breakEvenRatePct": round(be_count / n * 100, 1) if n else 0.0,
+            "netPoints": round(sum_pts, 2),
+            "netR": round(sum_r, 2),
+            "avgR": round(sum_r / n, 3) if n else 0.0,
+            "expectancyPoints": round(sum_pts / n, 2) if n else 0.0,
             "profitFactor": round(gross_win / gross_loss, 2) if gross_loss else None,
             "skippedByStopCap": skipped,
             "tpExits": tp_exits,
@@ -431,13 +601,13 @@ def compute_stats(
             "currentStreak": current_streak,
         },
         "points": {
-            "avgWinPoints": round(_avg(win_pts), 2),
-            "avgLossPoints": round(_avg(loss_pts), 2),
-            "largestWinPoints": round(max(win_pts), 2) if win_pts else 0.0,
-            "largestLossPoints": round(min(loss_pts), 2) if loss_pts else 0.0,
-            "avgStopDistancePoints": round(_avg(stops), 2),
-            "maxStopDistancePoints": round(max(stops), 2) if stops else 0.0,
-            "avgTargetDistancePoints": round(_avg(targets), 2),
+            "avgWinPoints": round(sum_win_pts / win_count, 2) if win_count else 0.0,
+            "avgLossPoints": round(sum_loss_pts / loss_count, 2) if loss_count else 0.0,
+            "largestWinPoints": round(largest_win, 2) if has_win else 0.0,
+            "largestLossPoints": round(largest_loss, 2) if has_loss else 0.0,
+            "avgStopDistancePoints": round(sum_stops / n, 2) if n else 0.0,
+            "maxStopDistancePoints": round(max_stop_dist, 2) if n else 0.0,
+            "avgTargetDistancePoints": round(sum_targets / n, 2) if n else 0.0,
         },
         "risk": {
             "maxDrawdownPoints": round(dd, 2),
@@ -445,20 +615,23 @@ def compute_stats(
             "maxConsecutiveWins": mw,
             "maxConsecutiveLosses": ml,
         },
-        "bySide": {"buy": side("buy"), "sell": side("sell")},
+        "bySide": {
+            "buy": {
+                "trades": buy_trades,
+                "winRatePct": round(buy_wins / buy_trades * 100, 1) if buy_trades else 0.0,
+                "netPoints": round(buy_net_pts, 2),
+            },
+            "sell": {
+                "trades": sell_trades,
+                "winRatePct": round(sell_wins / sell_trades * 100, 1) if sell_trades else 0.0,
+                "netPoints": round(sell_net_pts, 2),
+            },
+        },
         "timing": {
-            "avgTradeDurationCandles": round(_avg([t.close_i - t.open_i + 1 for t in trades]), 1)
+            "avgTradeDurationCandles": round(sum_dur / n, 1) if n else 0.0
         },
         "equityCurve": curve,
-        "trades": [
-            {
-                "side": t.side, "entry": t.entry, "sl": t.sl, "tp": t.tp, "exit": t.exit,
-                "openTime": t.open_time, "closeTime": t.close_time, "reason": t.reason,
-                "points": round(_pts(t, point_size), 2), "r": round(t.r, 2),
-                "durationCandles": t.close_i - t.open_i + 1,
-            }
-            for t in trades
-        ],
+        "trades": trade_dicts,
         "warnings": warnings,
     }
 
