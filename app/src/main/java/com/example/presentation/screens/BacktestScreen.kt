@@ -771,6 +771,95 @@ fun BacktestScreen(
                                 Text(runButtonText, fontWeight = FontWeight.Bold)
                             }
                         }
+
+                        Spacer(modifier = Modifier.height(18.dp))
+                        Text("Strategy Optimizer", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text(
+                            "Optimize one public strategy parameter. Enter its exact attribute name from the Python strategy.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = state.optimizerParameterInput,
+                            onValueChange = backtestViewModel::updateOptimizerParameter,
+                            label = { Text("Parameter name") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                value = state.optimizerMinInput,
+                                onValueChange = backtestViewModel::updateOptimizerMin,
+                                label = { Text("Minimum") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                            OutlinedTextField(
+                                value = state.optimizerMaxInput,
+                                onValueChange = backtestViewModel::updateOptimizerMax,
+                                label = { Text("Maximum") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                            OutlinedTextField(
+                                value = state.optimizerStepInput,
+                                onValueChange = backtestViewModel::updateOptimizerStep,
+                                label = { Text("Step") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                        }
+                        Button(
+                            onClick = backtestViewModel::runOptimizer,
+                            enabled = state.hasCsvBytes && state.selectedStrategy != null && !state.isOptimizing && !state.isLoading,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            if (state.isOptimizing) {
+                                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Optimizing parameter grid...")
+                            } else {
+                                Text("Run Optimizer")
+                            }
+                        }
+                        state.optimizerError?.let {
+                            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                        }
+                        if (state.optimizerCombinations > 0) {
+                            Text(
+                                "${state.optimizerCombinations} combinations tested • ranked by Net R, profit factor and drawdown",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            state.optimizerResults.take(10).forEach { result ->
+                                val params = result.optJSONObject("parameters")
+                                Surface(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(10.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text("#${result.optInt("rank")} • ${params?.toString() ?: ""}", fontWeight = FontWeight.SemiBold)
+                                            Text("${result.optInt("totalTrades")} trades • PF ${result.optString("profitFactor")} • DD ${result.optString("maxDrawdownR")}R", style = MaterialTheme.typography.bodySmall)
+                                        }
+                                        Text("${result.optString("netR")}R", fontWeight = FontWeight.Bold, color = positiveColor)
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
