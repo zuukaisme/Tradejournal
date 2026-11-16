@@ -98,6 +98,17 @@ fun BacktestScreen(
 ) {
     val state by backtestViewModel.uiState.collectAsState()
     var strategyMenuExpanded by remember { mutableStateOf(false) }
+    var tradeFilter by remember(state.result) { mutableIntStateOf(0) }
+    val filteredTrades = remember(state.result?.trades, tradeFilter) {
+        state.result?.trades.orEmpty().withIndex().filter { (_, trade) ->
+            when (tradeFilter) {
+                1 -> trade.r > 1e-6 || (abs(trade.r) <= 1e-6 && trade.points > 1e-6)
+                2 -> trade.r < -1e-6 || (abs(trade.r) <= 1e-6 && trade.points < -1e-6)
+                3 -> abs(trade.points) <= 1e-6 && abs(trade.r) <= 1e-6
+                else -> true
+            }
+        }
+    }
 
     val csvPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -695,7 +706,6 @@ fun BacktestScreen(
 
             // Trades Header & Outcome Filter Chips
             item {
-                var tradeFilter by remember(result) { mutableIntStateOf(0) }
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -735,17 +745,6 @@ fun BacktestScreen(
                         }
                     }
 
-                    val filteredTrades = remember(result.trades, tradeFilter) {
-                        result.trades.withIndex().filter { (_, t) ->
-                            when (tradeFilter) {
-                                1 -> t.r > 1e-6 || (abs(t.r) <= 1e-6 && t.points > 1e-6)
-                                2 -> t.r < -1e-6 || (abs(t.r) <= 1e-6 && t.points < -1e-6)
-                                3 -> abs(t.points) <= 1e-6 && abs(t.r) <= 1e-6
-                                else -> true
-                            }
-                        }
-                    }
-
                     if (result.trades.isEmpty()) {
                         LiquidGlassCard {
                             Text(
@@ -762,16 +761,16 @@ fun BacktestScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                    } else {
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            filteredTrades.forEach { indexedTrade ->
-                                BacktestTradeCard(
-                                    index = indexedTrade.index + 1,
-                                    trade = indexedTrade.value
-                                )
-                            }
-                        }
                     }
+                }
+            }
+
+            items(items = filteredTrades, key = { it.index }) { indexedTrade ->
+                Column(modifier = Modifier.padding(bottom = 10.dp)) {
+                    BacktestTradeCard(
+                        index = indexedTrade.index + 1,
+                        trade = indexedTrade.value
+                    )
                 }
             }
         } else if (!state.isLoading && state.backtestError == null) {
