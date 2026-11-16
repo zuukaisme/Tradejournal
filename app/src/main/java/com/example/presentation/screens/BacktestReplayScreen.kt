@@ -951,14 +951,16 @@ fun BacktestReplayScreen(
 
     LaunchedEffect(isPlaying, safeIndex, totalCandles, isLoading) {
         if (!isPlaying || isLoading || totalCandles <= 0) return@LaunchedEffect
-        if (revealedCount >= totalCandles) {
-            revealedCount = (window?.entryCandlePos ?: 0).coerceIn(1, totalCandles)
+        val playbackEnd = ((window?.exitCandlePos ?: (totalCandles - 1)) + 1).coerceIn(1, totalCandles)
+        val playbackStart = (window?.entryCandlePos ?: 0).coerceIn(1, playbackEnd)
+        if (revealedCount >= totalCandles || revealedCount > playbackEnd) {
+            revealedCount = playbackStart
         }
-        while (isPlaying && revealedCount < totalCandles) {
+        while (isPlaying && revealedCount < playbackEnd) {
             delay(140L)
-            revealedCount = (revealedCount + 1).coerceAtMost(totalCandles)
+            revealedCount = (revealedCount + 1).coerceAtMost(playbackEnd)
         }
-        if (isPlaying && revealedCount >= totalCandles) {
+        if (isPlaying && revealedCount >= playbackEnd) {
             if (nextMatchingIdx != null) {
                 delay(450L)
                 onSelectTradeIndex(nextMatchingIdx)
