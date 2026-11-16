@@ -683,7 +683,7 @@ fun BacktestScreen(
                             Column(modifier = Modifier.weight(2f)) {
                                 Text(
                                     text = if (state.isMultiStrategyMode && state.selectedStrategyIds.size > 1) {
-                                        "${state.selectedStrategyIds.size} strategies × ${state.workerCountInput.ifBlank { "4" }} = ${runCatching { (state.selectedStrategyIds.size * state.workerCountInput.toInt()).coerceAtMost(WorkerPoolBacktestCoordinator.MAX_WORKER_PROCESSES) }.getOrDefault(0)} worker processes"
+                                        "${state.selectedStrategyIds.size} strategies × ${state.workerCountInput.ifBlank { "4" }} = ${runCatching { (state.selectedStrategyIds.size * (state.workerCountInput.toIntOrNull() ?: 4)).coerceAtMost(WorkerPoolBacktestCoordinator.MAX_WORKER_PROCESSES) }.getOrDefault(0)} worker processes"
                                     } else {
                                         "Large CSVs: each strategy gets this many workers; smaller runs use one per strategy"
                                     },
