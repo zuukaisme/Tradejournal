@@ -68,6 +68,7 @@ data class BacktestUiState(
     val selectedStrategy: PythonStrategy? = null,
     val isMultiStrategyMode: Boolean = false,
     val timeSplitLargeCsv: Boolean = true,
+    val workerCountInput: String = "4",
     val selectedStrategyIds: Set<Long> = emptySet(),
     val batchResults: List<BatchStrategyRunResult> = emptyList(),
     val activeBatchStrategyId: Long? = null,
@@ -128,7 +129,10 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
     private var hasHydratedAiPrefs = false
     private val liveModelsByProvider = mutableMapOf<AiProvider, List<AiModelOption>>()
 
-    private val _uiState = MutableStateFlow(BacktestUiState())
+    private val workerPreferences = application.getSharedPreferences("backtest_worker_settings", Context.MODE_PRIVATE)
+    private val _uiState = MutableStateFlow(
+        BacktestUiState(workerCountInput = workerPreferences.getInt("workers_per_strategy", 4).toString())
+    )
     val uiState: StateFlow<BacktestUiState> = _uiState.asStateFlow()
 
     init {
@@ -414,6 +418,14 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
         _uiState.update { it.copy(timeSplitLargeCsv = enabled, backtestError = null) }
     }
 
+    fun updateWorkerCount(value: String) {
+        val sanitized = value.filter(Char::isDigit).take(2)
+        _uiState.update { it.copy(workerCountInput = sanitized, backtestError = null) }
+        sanitized.toIntOrNull()?.takeIf { it in 1..WorkerPoolBacktestCoordinator.MAX_WORKER_PROCESSES }?.let {
+            workerPreferences.edit().putInt("workers_per_strategy", it).apply()
+        }
+    }
+
     fun toggleStrategySelection(strategyId: Long) {
         _uiState.update { current ->
             val updated = if (strategyId in current.selectedStrategyIds) {
@@ -668,7 +680,18 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
         }
 
         val isBatchRun = snapshot.isMultiStrategyMode && selectedList.size > 1
-        val workerCount = WorkerPoolBacktestCoordinator.optimalWorkerCount(selectedList.size)
+        val workersPerStrategy = snapshot.workerCountInput.toIntOrNull()
+            ?.takeIf { it in 1..WorkerPoolBacktestCoordinator.MAX_WORKER_PROCESSES }
+        if (workersPerStrategy == null) {
+            _uiState.update {
+                it.copy(backtestError = BacktestError("Worker count must be between 1 and ${WorkerPoolBacktestCoordinator.MAX_WORKER_PROCESSES}."))
+            }
+            return
+        }
+        val workerCount = WorkerPoolBacktestCoordinator.optimalWorkerCount(
+            workersPerStrategy,
+            if (isBatchRun) selectedList.size else 1
+        )
         viewModelScope.launch {
             _uiState.update {
                 it.copy(
@@ -787,6 +810,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                         estimatedRows = candleCount,
                         maxStopPoints = maxStopPoints,
                         pointSize = pointSize,
+                        workersPerStrategy = workersPerStrategy,
                         onProgress = { progressSnapshot ->
                             _uiState.update { current ->
                                 if (current.isLoading) current.copy(liveProgress = progressSnapshot) else current
@@ -802,6 +826,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                         maxStopPoints = maxStopPoints,
                         pointSize = pointSize,
                         enableTimeSplit = snapshot.timeSplitLargeCsv,
+                        workerCount = workersPerStrategy,
                         onProgress = { progressSnapshot ->
                             _uiState.update { current ->
                                 if (current.isLoading) current.copy(liveProgress = progressSnapshot) else current
