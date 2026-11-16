@@ -708,15 +708,54 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                     } else {
                         val cacheKey = activeDatasetKey to targetTf
                         val resampledDir = File(appContext.cacheDir, "resampled_csvs").apply { mkdirs() }
-                        val existing = resampledCache[cacheKey]?.takeIf { it.file.exists() }
-                        val resampled = existing ?: CandleTimeframeResampler.resampleCsvFile(
+                        val outputFile = File(
+                            resampledDir,
+                            "resampled_${activeDatasetKey}_${targetTf.shortLabel}.csv"
+                        )
+                        val metadataFile = File(outputFile.parentFile, "${outputFile.name}.meta")
+                        val sourceSignature = listOf(
+                            sourceFile.canonicalPath,
+                            sourceFile.length().toString(),
+                            sourceFile.lastModified().toString(),
+                            targetTf.minutes.toString(),
+                            "resampler-v2"
+                        ).joinToString("\n")
+                        val diskCached = if (outputFile.exists() && metadataFile.exists()) {
+                            runCatching {
+                                val metadata = metadataFile.readLines()
+                                if (metadata.size == 2 && metadata[0] == sourceSignature) {
+                                    metadata[1].toIntOrNull()?.takeIf { it > 0 }?.let { count ->
+                                        ResampledCsvFileResult(
+                                            file = outputFile,
+                                            sourceCandleCount = snapshot.estimatedRows,
+                                            outputCandleCount = count,
+                                            targetTimeframe = targetTf
+                                        )
+                                    }
+                                } else null
+                            }.getOrNull()
+                        } else null
+                        val inMemory = resampledCache[cacheKey]?.takeIf {
+                            diskCached != null && it.file.absolutePath == diskCached.file.absolutePath &&
+                                it.outputCandleCount == diskCached.outputCandleCount
+                        }
+                        val resampled = inMemory ?: diskCached ?: CandleTimeframeResampler.resampleCsvFile(
                             sourceFile = sourceFile,
                             target = targetTf,
-                            outputFile = File(
-                                resampledDir,
-                                "resampled_${activeDatasetKey}_${targetTf.shortLabel}.csv"
+                            outputFile = outputFile
+                        ).also { generated ->
+                            val metadataTemp = File(metadataFile.parentFile, "${metadataFile.name}.tmp")
+                            metadataTemp.writeText(
+                                sourceSignature + "\n" + generated.outputCandleCount,
+                                Charsets.UTF_8
                             )
-                        ).also { resampledCache[cacheKey] = it }
+                            if (metadataFile.exists()) metadataFile.delete()
+                            if (!metadataTemp.renameTo(metadataFile)) {
+                                metadataTemp.copyTo(metadataFile, overwrite = true)
+                                metadataTemp.delete()
+                            }
+                        }.also { resampledCache[cacheKey] = it }
+                        if (inMemory == null && diskCached != null) resampledCache[cacheKey] = diskCached
                         backtestFile = resampled.file
                         candleCount = resampled.outputCandleCount
                     }
