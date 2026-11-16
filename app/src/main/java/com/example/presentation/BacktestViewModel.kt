@@ -120,7 +120,7 @@ data class BacktestUiState(
     val compareRunAId: Long? = null,
     val compareRunBId: Long? = null,
     val runSavedFeedback: String? = null,
-    val optimizerParameterInput: String = "offset",
+    val optimizerParameterInput: String = "",
     val optimizerMinInput: String = "1",
     val optimizerMaxInput: String = "5",
     val optimizerStepInput: String = "1",
