@@ -685,7 +685,7 @@ fun BacktestScreen(
                                     text = if (state.isMultiStrategyMode && state.selectedStrategyIds.size > 1) {
                                         "${state.selectedStrategyIds.size} strategies × ${state.workerCountInput.ifBlank { "4" }} = ${runCatching { (state.selectedStrategyIds.size * state.workerCountInput.toInt()).coerceAtMost(WorkerPoolBacktestCoordinator.MAX_WORKER_PROCESSES) }.getOrDefault(0)} worker processes"
                                     } else {
-                                        "Choose how many isolated Python workers to use for large CSV time-split runs"
+                                        "Large CSVs: each strategy gets this many workers; smaller runs use one per strategy"
                                     },
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
