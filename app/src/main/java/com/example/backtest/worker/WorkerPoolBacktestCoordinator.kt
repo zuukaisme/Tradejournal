@@ -376,7 +376,17 @@ object WorkerPoolBacktestCoordinator {
             val prev = lastUiPushMs.get()
             if (force || (nowMs - prev) >= 110) {
                 lastUiPushMs.set(nowMs)
-                onProgress(aggregator.snapshot(timeHint))
+                val snapshot = aggregator.snapshot(timeHint)
+                onProgress(
+                    snapshot.copy(
+                        strategyIndex = 1,
+                        totalStrategies = 1,
+                        currentStrategyName = spec.name,
+                        strategyStatuses = snapshot.strategyStatuses
+                            .filter { it.status == "error" }
+                            .map { it.copy(name = spec.name) }
+                    )
+                )
             }
         }
 
@@ -437,10 +447,13 @@ object WorkerPoolBacktestCoordinator {
                         }
                     )
 
-                    val outcome = if (rawJson != null) {
-                        BacktestCodec.parseBacktestJson(rawJson)
+                    val workerOutcome = rawJson?.let(BacktestCodec::parseBacktestJson)
+                    val shouldRetryInProcess = workerOutcome == null ||
+                        (workerOutcome is BacktestParseOutcome.Failure &&
+                            isWorkerStartupFailure(workerOutcome.error))
+                    val outcome = if (!shouldRetryInProcess) {
+                        workerOutcome!!
                     } else {
-                        // Worker process died mid-shard -> complete this single shard in-process
                         val fallbackJson = PythonBacktestRunner.runWithStrategyFileSlice(
                             context = appContext,
                             csvPath = csvFile.absolutePath,
@@ -915,6 +928,14 @@ object WorkerPoolBacktestCoordinator {
             replyThread.quitSafely()
             ipcDir.deleteRecursively()
         }
+    }
+
+    private fun isWorkerStartupFailure(error: BacktestError): Boolean {
+        val message = error.error.lowercase()
+        val details = error.details.lowercase()
+        return (message.contains("java.io.ioexception") && message.contains("failed to create")) ||
+            (details.contains("chaquopy") && details.contains("python.start")) ||
+            (details.contains("androidplatform") && details.contains("python.start"))
     }
 
     private suspend fun bindWorkers(context: Context, count: Int): List<BoundWorker> = coroutineScope {
