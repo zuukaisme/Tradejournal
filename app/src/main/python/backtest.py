@@ -460,11 +460,11 @@ def _save_btbin(csv_path: str, st, series: CandleSeries) -> None:
     if n <= 0 or len(series._time_offsets) != n + 1:
         return
     bin_path = _btbin_path_for_csv(csv_path, for_write=True)
-    parent_dir = os.path.dirname(bin_path)
-    if parent_dir:
-        os.makedirs(parent_dir, exist_ok=True)
     tmp_path = bin_path + f".pytmp.{os.getpid()}"
     try:
+        parent_dir = os.path.dirname(bin_path)
+        if parent_dir:
+            os.makedirs(parent_dir, exist_ok=True)
         mtime_ms = int(getattr(st, "st_mtime", 0.0) * 1000)
         hdr = struct.pack(_BTBIN_HEADER_FMT, _BTBIN_MAGIC, 1, n, st.st_size, mtime_ms)
         with open(tmp_path, "wb") as f:
