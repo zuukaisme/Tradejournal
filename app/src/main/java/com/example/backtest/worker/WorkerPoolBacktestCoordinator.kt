@@ -179,11 +179,41 @@ object WorkerPoolBacktestCoordinator {
     const val LARGE_DATASET_TIME_SPLIT_BYTES = 50L * 1024L * 1024L
     const val MIN_CANDLES_FOR_TIME_SPLIT = 200_000
 
+    const val MAX_WORKER_PROCESSES = 32
+
     private val WORKER_CLASSES: List<Pair<String, Class<out BacktestWorkerService>>> = listOf(
         "W1" to BacktestWorkerService1::class.java,
         "W2" to BacktestWorkerService2::class.java,
         "W3" to BacktestWorkerService3::class.java,
-        "W4" to BacktestWorkerService4::class.java
+        "W4" to BacktestWorkerService4::class.java,
+        "W5" to BacktestWorkerService5::class.java,
+        "W6" to BacktestWorkerService6::class.java,
+        "W7" to BacktestWorkerService7::class.java,
+        "W8" to BacktestWorkerService8::class.java,
+        "W9" to BacktestWorkerService9::class.java,
+        "W10" to BacktestWorkerService10::class.java,
+        "W11" to BacktestWorkerService11::class.java,
+        "W12" to BacktestWorkerService12::class.java,
+        "W13" to BacktestWorkerService13::class.java,
+        "W14" to BacktestWorkerService14::class.java,
+        "W15" to BacktestWorkerService15::class.java,
+        "W16" to BacktestWorkerService16::class.java,
+        "W17" to BacktestWorkerService17::class.java,
+        "W18" to BacktestWorkerService18::class.java,
+        "W19" to BacktestWorkerService19::class.java,
+        "W20" to BacktestWorkerService20::class.java,
+        "W21" to BacktestWorkerService21::class.java,
+        "W22" to BacktestWorkerService22::class.java,
+        "W23" to BacktestWorkerService23::class.java,
+        "W24" to BacktestWorkerService24::class.java,
+        "W25" to BacktestWorkerService25::class.java,
+        "W26" to BacktestWorkerService26::class.java,
+        "W27" to BacktestWorkerService27::class.java,
+        "W28" to BacktestWorkerService28::class.java,
+        "W29" to BacktestWorkerService29::class.java,
+        "W30" to BacktestWorkerService30::class.java,
+        "W31" to BacktestWorkerService31::class.java,
+        "W32" to BacktestWorkerService32::class.java
     )
 
     private class BoundWorker(
@@ -200,9 +230,9 @@ object WorkerPoolBacktestCoordinator {
         val onProgressJson: (String) -> Unit
     )
 
-    fun optimalWorkerCount(strategyCount: Int): Int {
-        val cores = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
-        return strategyCount.coerceAtLeast(1).coerceAtMost(cores)
+    fun optimalWorkerCount(requestedWorkers: Int, strategyCount: Int = 1): Int {
+        return (requestedWorkers.coerceAtLeast(1) * strategyCount.coerceAtLeast(1))
+            .coerceAtMost(MAX_WORKER_PROCESSES)
     }
 
     suspend fun runSingle(
@@ -213,6 +243,7 @@ object WorkerPoolBacktestCoordinator {
         maxStopPoints: Double,
         pointSize: Double,
         enableTimeSplit: Boolean = true,
+        workerCount: Int = 4,
         onProgress: (BacktestProgressSnapshot) -> Unit
     ): BacktestParseOutcome {
         val totalFromBin = BinaryCandleCache.readCandleCount(csvFile)
@@ -228,6 +259,7 @@ object WorkerPoolBacktestCoordinator {
                 totalCandles = totalFromBin,
                 maxStopPoints = maxStopPoints,
                 pointSize = pointSize,
+                workerCount = workerCount,
                 onProgress = onProgress
             )
             if (sharded != null) return sharded
@@ -332,10 +364,11 @@ object WorkerPoolBacktestCoordinator {
         totalCandles: Int,
         maxStopPoints: Double,
         pointSize: Double,
+        workerCount: Int,
         onProgress: (BacktestProgressSnapshot) -> Unit
     ): BacktestParseOutcome? = coroutineScope {
         val appContext = context.applicationContext
-        val desiredWorkers = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
+        val desiredWorkers = optimalWorkerCount(workerCount)
         val boundWorkers = bindWorkers(appContext, desiredWorkers)
         if (boundWorkers.size < 2) {
             boundWorkers.forEach { w -> runCatching { appContext.unbindService(w.connection) } }
@@ -500,10 +533,11 @@ object WorkerPoolBacktestCoordinator {
         totalCandles: Int,
         maxStopPoints: Double,
         pointSize: Double,
+        workersPerStrategy: Int,
         onProgress: (BacktestProgressSnapshot) -> Unit
     ): BatchBacktestParseOutcome? = coroutineScope {
         val appContext = context.applicationContext
-        val desiredWorkers = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
+        val desiredWorkers = optimalWorkerCount(workersPerStrategy, specs.size)
         val boundWorkers = bindWorkers(appContext, desiredWorkers)
         if (boundWorkers.size < 2) {
             boundWorkers.forEach { worker -> runCatching { appContext.unbindService(worker.connection) } }
@@ -712,6 +746,7 @@ object WorkerPoolBacktestCoordinator {
         estimatedRows: Int,
         maxStopPoints: Double,
         pointSize: Double,
+        workersPerStrategy: Int = 4,
         onProgress: (BacktestProgressSnapshot) -> Unit
     ): BatchBacktestParseOutcome = coroutineScope {
         if (specs.isEmpty()) {
@@ -733,6 +768,7 @@ object WorkerPoolBacktestCoordinator {
                 totalCandles = binaryCandleCount,
                 maxStopPoints = maxStopPoints,
                 pointSize = pointSize,
+                workersPerStrategy = workersPerStrategy,
                 onProgress = onProgress
             )
             if (sharded != null) return@coroutineScope sharded
@@ -780,7 +816,7 @@ object WorkerPoolBacktestCoordinator {
             }
         )
 
-        val desiredCount = optimalWorkerCount(specs.size)
+        val desiredCount = specs.size.coerceAtMost(MAX_WORKER_PROCESSES)
         var boundWorkers: List<BoundWorker> = emptyList()
         try {
             boundWorkers = bindWorkers(appContext, desiredCount)
