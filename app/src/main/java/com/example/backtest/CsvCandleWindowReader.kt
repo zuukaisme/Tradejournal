@@ -144,8 +144,8 @@ object CsvCandleWindowReader {
                 )
             }
             fun positionFor(index: Int): Int {
-                val rawPosition = (index - startIndex).coerceAtLeast(0)
-                return (rawPosition / bucketSize).coerceIn(0, chartCandles.lastIndex)
+                val position = chartCandles.indexOfLast { it.index <= index }
+                return position.coerceIn(0, chartCandles.lastIndex)
             }
             val markers = indexedTrades.map { trade ->
                 TradeReplayMarker(trade, positionFor(trade.openIndex), positionFor(trade.closeIndex))
