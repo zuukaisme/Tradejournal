@@ -49,9 +49,9 @@ object AiStrategyGenerator {
         - `on_candle(self, i: int, candles: List[Candle]) -> Optional[Signal]` MUST return either a `Signal(side=..., sl=..., tp=...)` object or `None`.
         - Do not implement `manage_trade`; the current engine does not call it.
 
-        EXECUTION CONTRACT (9 RULES):
+        EXECUTION CONTRACT (11 RULES):
         1. Subclass `Strategy` (e.g. `class CustomStrategy(Strategy):`).
-        2. Implement `def on_candle(self, i: int, candles: List[Candle]) -> Optional[Signal]:` (and optionally `def manage_trade(self, i: int, candles: List[Candle], trade: Trade) -> Optional[str]:`).
+        2. Implement `def on_candle(self, i: int, candles: List[Candle]) -> Optional[Signal]:` only.
         3. Strict no-lookahead: ONLY inspect `candles[0:i + 1]` (`candles[0..i]`). NEVER access `candles[i + 1:]` or future values.
         4. Warmup & bounds: Engine starts evaluating signals at `i >= 50` and permits only one open trade at a time. Explicitly guard every required lookback; do not silently shorten it.
         5. MT5 time parsing: MT5 exports commonly provide `Candle.time` as `YYYY.MM.DD HH:MM:SS` (for example `2024.03.05 10:15:00`), not only `YYYY-MM-DD`. Parse both dotted and dashed dates, with and without seconds, and safely return no signal only when a timestamp truly cannot be parsed. If the strategy uses sessions, parse the timestamp before applying the session filter. Define a clearly named `SERVER_GMT_OFFSET` setting near the top of the strategy (default `2`, configurable to `0` for GMT data) and apply it consistently; do not guess the data timezone.
