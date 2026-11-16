@@ -89,7 +89,8 @@ ENGINE CONTRACT (9 RULES):
 6. Return `Signal(side, sl, tp)` or `None`.
 7. `side` must be `"buy"` or `"sell"` (lowercase).
 8. Entry happens at `candles[i + 1].open`. Ensure for `"buy"`: `sl < entry < tp`, and for `"sell"`: `tp < entry < sl`. (If both SL and TP hit in one candle, SL hits first.)
-9. Output ONLY valid raw Python code with docstrings and comments explaining every entry, stop loss, and take profit rule.
+9. Keep per-candle calculations efficient. Prefer precomputed indicators or rolling state when they produce exactly the same values as the requested indicator and lookback. Never shorten or cap required historical lookbacks, indicator periods, entry/exit conditions, stop/target rules, or cooldowns to make a strategy faster. Preserve the same signal on every candle; optimize calculations, not trading logic.
+10. Output ONLY valid raw Python code with docstrings and comments explaining every entry, stop loss, and take profit rule.
 
 My strategy idea:
 [DESCRIBE YOUR ENTRY RULES, STOP LOSS, AND TAKE PROFIT HERE]"""
@@ -127,6 +128,7 @@ fun StrategyGuideScreen(
             "Return `Signal(side, sl, tp)` to request an entry, or `None` to stay flat.",
             "`side` must be lowercase `\"buy\"` or `\"sell\"`.",
             "Next-open fill: a signal on candle `i` enters at `candles[i + 1].open`. For `\"buy\"`, ensure `sl < entry < tp`; for `\"sell\"`, ensure `tp < entry < sl`. If SL and TP both fall inside one candle, SL hits first.",
+            "Performance without changing results: precompute or incrementally update indicators only when mathematically equivalent; never shorten required lookbacks or change entry, exit, SL, TP, or cooldown rules.",
             "Python standard library only (no `pandas`, `numpy`, or pip installs) so execution stays 100% offline inside the APK."
         )
     }

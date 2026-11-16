@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.io.File
 import kotlinx.coroutines.withContext
 
 data class BacktestUiState(
@@ -805,8 +806,8 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
 
 private data class LoadedCsvBundle(
     val displayName: String,
-    val bytes: ByteArray,
-    val preview: com.example.backtest.DecodedCsv,
+    val cacheFile: File,
+    val inspection: com.example.backtest.CsvStreamInspection,
     val detectedTimeframe: com.example.backtest.DetectedTimeframe,
     val targets: List<BacktestTimeframe>
 )

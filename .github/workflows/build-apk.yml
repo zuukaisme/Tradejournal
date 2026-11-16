@@ -83,6 +83,9 @@ jobs:
               -dname "CN=Android Debug,O=Android,C=US"
           fi
 
+      - name: Run Python backtester regression tests
+        run: PYTHONPATH=app/src/main/python python -m unittest discover -s app/src/test/python -v
+
       - name: Run unit tests
         run: gradle :app:testDebugUnitTest --no-daemon
 

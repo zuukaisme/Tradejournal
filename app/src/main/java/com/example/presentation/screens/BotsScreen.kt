@@ -63,6 +63,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.backtest.BacktestCodec
 import com.example.domain.model.Bot
 import com.example.domain.model.BotStatus
 import com.example.domain.model.BotType
@@ -590,12 +591,10 @@ fun BotEditorBottomSheet(
                 require(extension in setOf("mq5", "mq4", "mqh", "txt")) {
                     "Choose an MQL source file: .mq5, .mq4, .mqh or .txt."
                 }
-                val importedCode = context.contentResolver.openInputStream(uri)
-                    ?.bufferedReader()
-                    ?.use { it.readText() }
-                    ?: error("The selected file could not be read.")
+                val importedCode = context.contentResolver.openInputStream(uri)?.use { stream ->
+                    BacktestCodec.readTextStreamWithBom(stream, 12L * 1024L * 1024L)
+                } ?: error("The selected file could not be read.")
                 require(importedCode.isNotBlank()) { "The selected file is empty." }
-                require(importedCode.length <= 2_000_000) { "The selected file is larger than 2 MB." }
                 code = importedCode
                 if (bot == null || name.isBlank()) {
                     name = fileName.substringBeforeLast('.')
