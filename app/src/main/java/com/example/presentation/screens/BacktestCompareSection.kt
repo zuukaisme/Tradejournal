@@ -1,6 +1,7 @@
 package com.example.presentation.screens
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -26,6 +27,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -64,6 +66,22 @@ fun BacktestCompareContent(
 
     val colorA = MaterialTheme.colorScheme.primary
     val colorB = AmberGold
+    val strategyRows = remember(savedRuns) {
+        savedRuns.groupBy { it.strategyName }
+            .map { (name, runs) ->
+                val trades = runs.sumOf { it.totalTrades }
+                StrategyPerformanceRow(
+                    strategyName = name,
+                    totalPoints = runs.sumOf { it.netPoints },
+                    totalR = runs.sumOf { it.netR },
+                    totalTrades = trades,
+                    winRatePct = if (trades > 0) runs.sumOf { it.winRatePct * it.totalTrades } / trades else 0.0,
+                    runCount = runs.size,
+                    maxDrawdownR = runs.maxOfOrNull { it.maxDrawdownR } ?: 0.0
+                )
+            }
+            .sortedByDescending { it.totalPoints }
+    }
 
     LazyColumn(
         modifier = modifier.fillMaxWidth(),
@@ -88,13 +106,21 @@ fun BacktestCompareContent(
                     }
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Run a backtest and tap Save Run on the results card to log historical simulations and compare strategies side by side.",
+                        text = "Completed backtests are saved automatically. Run several strategies to build your performance leaderboard and compare them side by side.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
         } else {
+            item {
+                StrategyLeaderboardCard(
+                    rows = strategyRows,
+                    colorPositive = colorA,
+                    colorNegative = MaterialTheme.colorScheme.error
+                )
+            }
+
             if (runA != null && runB != null) {
                 item {
                     SideBySideComparisonCard(
@@ -467,4 +493,113 @@ private fun SavedBacktestRunCard(
 private fun formatSigned(value: Double, decimals: Int): String {
     val sign = if (value > 0.0) "+" else ""
     return "$sign${String.format(Locale.US, "%.${decimals}f", value)}"
+}
+
+
+private data class StrategyPerformanceRow(
+    val strategyName: String,
+    val totalPoints: Double,
+    val totalR: Double,
+    val totalTrades: Int,
+    val winRatePct: Double,
+    val runCount: Int,
+    val maxDrawdownR: Double
+)
+
+@Composable
+private fun StrategyLeaderboardCard(
+    rows: List<StrategyPerformanceRow>,
+    colorPositive: Color,
+    colorNegative: Color
+) {
+    LiquidGlassCard(testTag = "strategy_performance_leaderboard") {
+        Text("Strategy Performance", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+        Text(
+            "Ranked by combined net points across saved runs",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        val maxMagnitude = rows.maxOfOrNull { kotlin.math.abs(it.totalPoints) }?.coerceAtLeast(1.0) ?: 1.0
+        val chartRows = rows.take(8)
+        if (chartRows.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(10.dp))
+            Text("Net Points • Top ${chartRows.size}", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+            chartRows.forEachIndexed { index, row ->
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "${index + 1}. ${row.strategyName}",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            String.format(Locale.US, "%+.1f", row.totalPoints),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            color = if (row.totalPoints >= 0.0) colorPositive else colorNegative
+                        )
+                    }
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(10.dp)
+                            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(6.dp))
+                    ) {
+                        Box(
+                            modifier = Modifier.fillMaxWidth((kotlin.math.abs(row.totalPoints) / maxMagnitude).toFloat().coerceIn(0f, 1f))
+                                .height(10.dp)
+                                .background(if (row.totalPoints >= 0.0) colorPositive else colorNegative, RoundedCornerShape(6.dp))
+                        )
+                    }
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+        Spacer(modifier = Modifier.height(8.dp))
+        Text("Leaderboard", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+        rows.forEachIndexed { index, row ->
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("#${index + 1}", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = colorPositive, modifier = Modifier.width(30.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(row.strategyName, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        "${row.runCount} runs • ${row.totalTrades} trades • WR ${String.format(Locale.US, "%.1f", row.winRatePct)}%",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        String.format(Locale.US, "%+.1f pts", row.totalPoints),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        color = if (row.totalPoints >= 0.0) colorPositive else colorNegative
+                    )
+                    Text(
+                        String.format(Locale.US, "%+.2fR • DD %.2fR", row.totalR, row.maxDrawdownR),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+            }
+            if (index != rows.lastIndex) HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+        }
+        Text(
+            "Use the same symbol, dataset and timeframe when comparing strategies. Results from different datasets or timeframes are not directly equivalent.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
 }
