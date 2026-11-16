@@ -1,6 +1,7 @@
 package com.example.presentation.screens
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -105,7 +106,7 @@ fun BacktestCompareContent(
                     }
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Run a backtest and tap Save Run on the results card to log historical simulations and compare strategies side by side.",
+                        text = "Completed backtests are saved automatically. Run several strategies to build your performance leaderboard and compare them side by side.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
