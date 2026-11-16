@@ -202,7 +202,7 @@ fun TradeReplayTabContent(
     var revealedCount by remember(safeIndex, totalCandles) {
         mutableIntStateOf(totalCandles.coerceAtLeast(1))
     }
-    var isPlaying by remember { mutableStateOf(false) }
+    var isPlaying by remember(safeIndex) { mutableStateOf(false) }
 
     val stepDelayMs = when (playbackSpeed) {
         4 -> 45L
