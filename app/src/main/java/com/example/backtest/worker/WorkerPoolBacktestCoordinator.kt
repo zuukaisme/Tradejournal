@@ -175,7 +175,7 @@ class BatchProgressAggregator(
 
 /**
  * Coordinates parallel execution across isolated multi-process Android Services
- * (`BacktestWorkerService1..4`) with file-backed IPC and automatic in-process fallback.
+ * (`BacktestWorkerService1..32`) with file-backed IPC and automatic in-process fallback.
  */
 object WorkerPoolBacktestCoordinator {
 
