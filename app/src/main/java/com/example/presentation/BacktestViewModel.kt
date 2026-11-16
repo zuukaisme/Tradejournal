@@ -688,10 +688,16 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
             }
             return
         }
-        val workerCount = WorkerPoolBacktestCoordinator.optimalWorkerCount(
-            workersPerStrategy,
-            if (isBatchRun) selectedList.size else 1
-        )
+        val isLargeTimeSplitRun = snapshot.csvFileSizeBytes >= WorkerPoolBacktestCoordinator.LARGE_DATASET_TIME_SPLIT_BYTES &&
+            snapshot.estimatedRows >= WorkerPoolBacktestCoordinator.MIN_CANDLES_FOR_TIME_SPLIT
+        val workerCount = if (isBatchRun && !isLargeTimeSplitRun) {
+            selectedList.size
+        } else {
+            WorkerPoolBacktestCoordinator.optimalWorkerCount(
+                workersPerStrategy,
+                if (isBatchRun) selectedList.size else 1
+            )
+        }
         viewModelScope.launch {
             _uiState.update {
                 it.copy(
