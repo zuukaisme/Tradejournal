@@ -13,6 +13,9 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.charset.Charset
 import java.util.Locale
+import java.security.MessageDigest
+import android.os.Build
+import android.os.Environment
 import kotlin.math.abs
 
 /**
@@ -61,8 +64,21 @@ object BinaryCandleCache {
         val tsIdx: Int
     )
 
-    fun cacheFileFor(csvFile: File): File =
-        File(csvFile.parentFile ?: File("."), "${csvFile.name}.btbin")
+    fun cacheDirectory(): File =
+        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Tradepulse/cache")
+
+    fun hasCacheStorageAccess(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.R || Environment.isExternalStorageManager()
+
+    fun cacheFileFor(csvFile: File): File {
+        val identity = runCatching {
+            MessageDigest.getInstance("SHA-256")
+                .digest(csvFile.canonicalPath.toByteArray(Charsets.UTF_8))
+                .take(12)
+                .joinToString("") { "%02x".format(it) }
+        }.getOrElse { csvFile.name.hashCode().toUInt().toString(16) }
+        return File(cacheDirectory(), "${csvFile.name}-${identity}.btbin")
+    }
 
     fun isCacheValid(csvFile: File): Boolean {
         val binFile = cacheFileFor(csvFile)
@@ -111,11 +127,14 @@ object BinaryCandleCache {
      */
     @Synchronized
     fun ensureCache(csvFile: File, onProgress: (Int) -> Unit = {}): File? {
+        if (!hasCacheStorageAccess()) return null
         if (!csvFile.exists() || !csvFile.isFile || csvFile.length() == 0L) return null
         val binFile = cacheFileFor(csvFile)
+        binFile.parentFile?.mkdirs()
+        if (binFile.parentFile?.isDirectory != true) return null
         if (isCacheValid(csvFile)) return binFile
 
-        val workDir = File(csvFile.parentFile ?: File("."), ".btbin_tmp_${System.nanoTime()}")
+        val workDir = File(binFile.parentFile, ".btbin_tmp_${System.nanoTime()}")
         workDir.mkdirs()
         val opensTmp = File(workDir, "o.bin")
         val highsTmp = File(workDir, "h.bin")
@@ -124,7 +143,7 @@ object BinaryCandleCache {
         val volumesTmp = File(workDir, "v.bin")
         val offsetsTmp = File(workDir, "off.bin")
         val timesTmp = File(workDir, "t.bin")
-        val targetTmp = File(csvFile.parentFile ?: File("."), "${binFile.name}.tmp")
+        val targetTmp = File(binFile.parentFile, "${binFile.name}.tmp")
 
         try {
             val (pushback, charset) = openUtfAwareReader(csvFile)

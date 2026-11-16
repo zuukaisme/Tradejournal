@@ -925,6 +925,7 @@ fun BacktestReplayScreen(
         mutableIntStateOf(totalCandles.coerceAtLeast(1))
     }
     var isPlaying by remember { mutableStateOf(false) }
+    var showLandscapeTradeList by remember { mutableStateOf(false) }
 
     val positiveColor = MaterialTheme.colorScheme.primary
     val negativeColor = MaterialTheme.colorScheme.error
@@ -1034,6 +1035,11 @@ fun BacktestReplayScreen(
                                 modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
                             )
                         }
+                        if (isLandscape) {
+                            TextButton(onClick = { showLandscapeTradeList = !showLandscapeTradeList }) {
+                                Text(if (showLandscapeTradeList) "Hide trades" else "Trades", fontSize = 11.sp)
+                            }
+                        }
                         Surface(
                             color = outcomeColor.copy(alpha = 0.18f),
                             shape = RoundedCornerShape(6.dp)
@@ -1119,9 +1125,9 @@ fun BacktestReplayScreen(
             ) {
                 Column(
                     modifier = Modifier
-                        .weight(0.72f)
+                        .weight(if (isLandscape && showLandscapeTradeList) 0.76f else if (isLandscape) 1f else 0.72f)
                         .fillMaxHeight()
-                        .verticalScroll(rememberScrollState()),
+                        .then(if (isLandscape) Modifier else Modifier.verticalScroll(rememberScrollState())),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                 // Candlestick Canvas Card
@@ -1130,7 +1136,7 @@ fun BacktestReplayScreen(
                     shape = RoundedCornerShape(16.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(if (isLandscape) 250.dp else 340.dp)
+                        .then(if (isLandscape) Modifier.weight(1f) else Modifier.height(340.dp))
                         .testTag("replay_chart_surface")
                 ) {
                     when {
@@ -1196,6 +1202,7 @@ fun BacktestReplayScreen(
                     }
                 }
 
+                if (!isLandscape) {
                 // Legend row
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1258,8 +1265,10 @@ fun BacktestReplayScreen(
                     }
                 }
 
+                }
+
                 // Telemetry Card
-                LiquidGlassCard {
+                if (!isLandscape) LiquidGlassCard {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1293,14 +1302,16 @@ fun BacktestReplayScreen(
                 Spacer(modifier = Modifier.height(8.dp))
                 }
 
-                ReplayTradeListColumn(
-                    filteredIndexedTrades = trades.withIndex().toList(),
-                    activeIndex = safeIndex,
-                    onSelectTrade = onSelectTradeIndex,
-                    modifier = Modifier
-                        .weight(0.28f)
-                        .fillMaxHeight()
-                )
+                if (!isLandscape || showLandscapeTradeList) {
+                    ReplayTradeListColumn(
+                        filteredIndexedTrades = trades.withIndex().toList(),
+                        activeIndex = safeIndex,
+                        onSelectTrade = onSelectTradeIndex,
+                        modifier = Modifier
+                            .weight(if (isLandscape) 0.24f else 0.28f)
+                            .fillMaxHeight()
+                    )
+                }
             }
 
             // Bottom Navigation & Play Controls Bar
@@ -1408,7 +1419,7 @@ private fun CandlestickReplayCanvas(
         val padTop = 14.dp.toPx()
         val padBottom = 14.dp.toPx()
         val chartHeight = (size.height - padTop - padBottom).coerceAtLeast(40f)
-        val maxVisibleCandles = (chartRight / (12.dp.toPx())).toInt().coerceIn(24, 96)
+        val maxVisibleCandles = (chartRight / (8.dp.toPx())).toInt().coerceIn(16, 140)
         val candleOffset = (visibleCandles.size - maxVisibleCandles).coerceAtLeast(0)
         val chartCandles = visibleCandles.drop(candleOffset)
         val adjustedEntryPos = entryPos - candleOffset
@@ -1506,8 +1517,8 @@ private fun CandlestickReplayCanvas(
         )
 
         // Draw OHLC candlesticks up to visibleCandles.size
-        val candleBodyWidth = (slotWidth * 0.62f).coerceIn(2f, 16.dp.toPx())
-        val wickWidth = (slotWidth * 0.14f).coerceIn(1f, 2.5.dp.toPx())
+        val candleBodyWidth = (slotWidth * 0.72f).coerceIn(3.dp.toPx(), 14.dp.toPx())
+        val wickWidth = (slotWidth * 0.16f).coerceIn(1.2.dp.toPx(), 2.2.dp.toPx())
 
         chartCandles.forEachIndexed { idx, candle ->
             val cx = (idx + 0.5f) * slotWidth
