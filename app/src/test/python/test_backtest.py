@@ -11,6 +11,7 @@ from backtest import (
     compute_stats,
     run_backtest,
     run_with_multiple_strategies_file,
+    run_with_strategy_file,
 )
 
 
@@ -87,17 +88,21 @@ class BacktestRegressionTests(unittest.TestCase):
         self.assertEqual(first_trade["openIndex"], trades[0].open_i)
         self.assertEqual(first_trade["closeIndex"], trades[0].close_i)
 
-    def test_run_with_multiple_strategies_file_isolates_errors_and_tracks_progress(self):
+    def test_run_with_multiple_strategies_file_runs_simultaneously_with_parity_and_isolation(self):
         fd, csv_path = tempfile.mkstemp(suffix=".csv")
         os.close(fd)
         progress_updates = []
         try:
             with open(csv_path, "w", encoding="utf-8") as fh:
                 fh.write("<DATE>\t<TIME>\t<OPEN>\t<HIGH>\t<LOW>\t<CLOSE>\t<TICKVOL>\n")
-                for idx in range(120):
+                for idx in range(150):
                     hour = 9 + (idx // 60)
                     minute = idx % 60
-                    fh.write(f"2025.02.07\t{hour:02d}:{minute:02d}:00\t2850.0\t2853.0\t2848.0\t2851.0\t100\n")
+                    base = 2850.0 + (idx % 5) * 0.4
+                    fh.write(
+                        f"2025.02.07\t{hour:02d}:{minute:02d}:00\t"
+                        f"{base:.2f}\t{base + 3.0:.2f}\t{base - 2.0:.2f}\t{base + 1.0:.2f}\t100\n"
+                    )
 
             buy_code = (
                 "class BuyStrat(Strategy):\n"
@@ -116,10 +121,16 @@ class BacktestRegressionTests(unittest.TestCase):
                 "    def on_candle(self, i, candles):\n"
                 "        return 1 / 0\n"
             )
+            syntax_err_code = "class BadSyntax(Strategy)\n    pass\n"
+
+            single_buy = json.loads(run_with_strategy_file(csv_path, buy_code, "BuyStrat"))
+            single_sell = json.loads(run_with_strategy_file(csv_path, sell_code, "SellStrat"))
+
             specs = [
                 {"id": 1, "name": "Buy Scalp", "className": "BuyStrat", "code": buy_code},
                 {"id": 2, "name": "Sell Scalp", "className": "SellStrat", "code": sell_code},
                 {"id": 3, "name": "Broken", "className": "BrokenStrat", "code": broken_code},
+                {"id": 4, "name": "Bad Syntax", "className": "BadSyntax", "code": syntax_err_code},
             ]
             raw = run_with_multiple_strategies_file(
                 csv_path=csv_path,
@@ -127,16 +138,32 @@ class BacktestRegressionTests(unittest.TestCase):
                 progress_callback=lambda msg: progress_updates.append(json.loads(msg)),
             )
             payload = json.loads(raw)
-            self.assertEqual(payload["totalCandles"], 120)
-            self.assertEqual(len(payload["results"]), 3)
+            self.assertEqual(payload["totalCandles"], 150)
+            self.assertEqual(len(payload["results"]), 4)
 
-            self.assertIn("result", payload["results"][0])
-            self.assertGreater(payload["results"][0]["result"]["summary"]["totalTrades"], 0)
-            self.assertIn("result", payload["results"][1])
-            self.assertGreater(payload["results"][1]["result"]["summary"]["totalTrades"], 0)
-            self.assertIn("error", payload["results"][2])
+            # Exact parity between single-pass simultaneous batch run and individual single-strategy runs
+            self.assertEqual(payload["results"][0]["result"], single_buy)
+            self.assertEqual(payload["results"][1]["result"], single_sell)
             self.assertIn("ZeroDivisionError", payload["results"][2]["error"])
-            self.assertTrue(any(p.get("totalStrategies") == 3 for p in progress_updates))
+            self.assertIn("SyntaxError", payload["results"][3]["error"])
+
+            # Verify progress advances in a single monotonic pass with per-strategy statuses together
+            processed_seq = [p["candlesProcessed"] for p in progress_updates]
+            self.assertGreaterEqual(len(processed_seq), 2)
+            self.assertEqual(processed_seq[0], 0)
+            self.assertEqual(processed_seq[-1], 150)
+            self.assertEqual(processed_seq, sorted(processed_seq))
+
+            final_progress = progress_updates[-1]
+            self.assertEqual(final_progress["totalStrategies"], 4)
+            statuses = final_progress["strategyStatuses"]
+            self.assertEqual(len(statuses), 4)
+            self.assertEqual(statuses[0]["status"], "done")
+            self.assertEqual(statuses[1]["status"], "done")
+            self.assertEqual(statuses[2]["status"], "error")
+            self.assertEqual(statuses[3]["status"], "error")
+            self.assertEqual(statuses[0]["closedTrades"], single_buy["summary"]["totalTrades"])
+            self.assertEqual(statuses[1]["closedTrades"], single_sell["summary"]["totalTrades"])
         finally:
             if os.path.exists(csv_path):
                 os.remove(csv_path)

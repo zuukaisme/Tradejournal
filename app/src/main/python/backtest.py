@@ -995,6 +995,386 @@ def run_with_strategy_file(csv_path: str, strategy_code: str, class_name: str = 
                            "details": traceback.format_exc(limit=3)})
 
 
+def _run_multi_backtest_detailed(
+    candles: Sequence[Candle],
+    strategy_specs: List[dict],
+    warmup: int = 50,
+    max_stop: Optional[float] = None,
+    point_size: float = 1.0,
+    progress_callback=None,
+) -> List[dict]:
+    """Runs all supplied strategies concurrently in a single pass over candles,
+    keeping each strategy's positions, stats, and errors strictly isolated."""
+    total_candles = len(candles)
+    total_strategies = len(strategy_specs)
+    be_eps = BE_EPS
+    abs_fn = abs
+    trade_cls = Trade
+    has_progress = progress_callback is not None
+    inv_point_size = 1.0 / point_size if point_size else 1.0
+    mono = time.monotonic
+    last_emit_at = mono() if has_progress else 0.0
+    is_series = isinstance(candles, CandleSeries)
+
+    slots: List[dict] = []
+    active_slots: List[dict] = []
+
+    for idx, spec in enumerate(strategy_specs):
+        strat_id = spec.get("id", idx)
+        strat_name = str(spec.get("name", f"Strategy {idx + 1}"))
+        class_name = str(spec.get("className", "") or "")
+        code = str(spec.get("code", "") or "")
+        slot = {
+            "id": strat_id,
+            "name": strat_name,
+            "className": class_name,
+            "trades": [],
+            "pos": None,
+            "skipped": 0,
+            "entered": 0,
+            "wins": 0,
+            "losses": 0,
+            "be": 0,
+            "running_pts": 0.0,
+            "running_r": 0.0,
+            "open_at_end": 0,
+            "on_candle": None,
+            "manage_fn": None,
+            "active": False,
+            "error": None,
+            "details": "",
+        }
+        try:
+            strategy_cls, err_msg = _compile_and_find_strategy(code, class_name)
+            if err_msg or strategy_cls is None:
+                slot["error"] = err_msg or "Missing Strategy class"
+            else:
+                strat_instance = strategy_cls()
+                slot["className"] = class_name or strategy_cls.__name__
+                slot["on_candle"] = strat_instance.on_candle
+                slot["manage_fn"] = (
+                    strat_instance.manage_trade
+                    if type(strat_instance).manage_trade is not Strategy.manage_trade
+                    else None
+                )
+                slot["active"] = True
+                active_slots.append(slot)
+        except Exception as strat_err:
+            slot["error"] = f"{type(strat_err).__name__}: {strat_err}"
+            slot["details"] = traceback.format_exc(limit=3)
+        slots.append(slot)
+
+    def push_progress(processed: int, current_time: str, finished: bool = False) -> None:
+        if not has_progress:
+            return
+        agg_entered = 0
+        agg_closed = 0
+        agg_open = 0
+        agg_wins = 0
+        agg_losses = 0
+        agg_be = 0
+        agg_skipped = 0
+        agg_pts = 0.0
+        agg_r = 0.0
+        statuses = []
+        for s in slots:
+            closed_n = len(s["trades"])
+            open_n = 1 if s["pos"] is not None else 0
+            agg_entered += s["entered"]
+            agg_closed += closed_n
+            agg_open += open_n
+            agg_wins += s["wins"]
+            agg_losses += s["losses"]
+            agg_be += s["be"]
+            agg_skipped += s["skipped"]
+            agg_pts += s["running_pts"]
+            agg_r += s["running_r"]
+            if s["error"] is not None:
+                status_label = "error"
+            elif finished:
+                status_label = "done"
+            else:
+                status_label = "running"
+            statuses.append({
+                "strategyId": s["id"],
+                "name": s["name"],
+                "closedTrades": closed_n,
+                "openTrades": open_n,
+                "wins": s["wins"],
+                "losses": s["losses"],
+                "breakEvens": s["be"],
+                "netPoints": round(s["running_pts"], 2),
+                "netR": round(s["running_r"], 2),
+                "status": status_label,
+                "error": s["error"] or "",
+            })
+
+        active_count = len(active_slots)
+        _emit_progress(progress_callback, {
+            "candlesProcessed": processed,
+            "totalCandles": total_candles,
+            "enteredTrades": agg_entered,
+            "closedTrades": agg_closed,
+            "openTrades": agg_open,
+            "wins": agg_wins,
+            "losses": agg_losses,
+            "breakEvens": agg_be,
+            "skippedByStopCap": agg_skipped,
+            "netPoints": round(agg_pts, 2),
+            "netR": round(agg_r, 2),
+            "currentTime": current_time,
+            "strategyIndex": active_count,
+            "totalStrategies": total_strategies,
+            "currentStrategyName": f"{active_count}/{total_strategies} active",
+            "strategyStatuses": statuses,
+        })
+
+    if has_progress:
+        first_time = (
+            candles.time_at(0)
+            if (is_series and total_candles > 0)
+            else (candles[0].time if total_candles > 0 else "")
+        )
+        push_progress(0, first_time, finished=(total_candles == 0 or not active_slots))
+
+    if active_slots and total_candles > 0:
+        if is_series:
+            opens = candles.opens
+            highs = candles.highs
+            lows = candles.lows
+            closes = candles.closes
+            time_at = candles.time_at
+            emit_mask = 1023 if total_candles > 50_000 else 255
+
+            for i in range(total_candles):
+                if not active_slots:
+                    break
+                c_low = lows[i]
+                c_high = highs[i]
+                nxt_i = i + 1
+                has_next = nxt_i < total_candles
+                can_enter = i >= warmup and has_next
+                c_time = None
+                nxt_open = None
+                nxt_time = None
+                any_failed = False
+
+                for slot in active_slots:
+                    try:
+                        pos = slot["pos"]
+                        if pos is not None:
+                            hit = None
+                            if pos.side == "buy":
+                                if c_low <= pos.sl:
+                                    rzn = "be" if abs_fn(pos.sl - pos.entry) <= be_eps else "sl"
+                                    hit = (pos.sl, rzn)
+                                elif c_high >= pos.tp:
+                                    hit = (pos.tp, "tp")
+                            else:
+                                if c_high >= pos.sl:
+                                    rzn = "be" if abs_fn(pos.sl - pos.entry) <= be_eps else "sl"
+                                    hit = (pos.sl, rzn)
+                                elif c_low <= pos.tp:
+                                    hit = (pos.tp, "tp")
+
+                            manage_fn = slot["manage_fn"]
+                            if hit is None and manage_fn is not None:
+                                action = manage_fn(i, candles, pos)
+                                if isinstance(action, str):
+                                    act = action.strip().lower()
+                                    if act in ("be", "breakeven", "break_even", "exit", "close"):
+                                        exit_px = pos.entry if act in ("be", "breakeven", "break_even") else closes[i]
+                                        hit_move = (exit_px - pos.entry) if pos.side == "buy" else (pos.entry - exit_px)
+                                        rzn = "be" if abs_fn(hit_move) <= be_eps else "exit"
+                                        hit = (exit_px, rzn)
+
+                            if hit is not None:
+                                exit_px, reason = hit
+                                pos.exit = exit_px
+                                pos.reason = reason
+                                if c_time is None:
+                                    c_time = time_at(i)
+                                pos.close_time = c_time
+                                pos.close_i = i
+                                risk_sl = pos.initial_sl if pos.initial_sl is not None else pos.sl
+                                risk = abs_fn(pos.entry - risk_sl)
+                                move = (exit_px - pos.entry) if pos.side == "buy" else (pos.entry - exit_px)
+                                r_val = move / risk if risk > 0.0 else 0.0
+                                pos.r = r_val
+                                if abs_fn(r_val) <= be_eps:
+                                    pos.reason = "be"
+                                    slot["be"] += 1
+                                elif r_val > be_eps:
+                                    slot["wins"] += 1
+                                else:
+                                    slot["losses"] += 1
+                                slot["trades"].append(pos)
+                                slot["running_pts"] += move * inv_point_size
+                                slot["running_r"] += r_val
+                                pos = None
+                                slot["pos"] = None
+
+                        if pos is None and can_enter:
+                            sig = slot["on_candle"](i, candles)
+                            if sig is not None:
+                                if nxt_open is None:
+                                    nxt_open = opens[nxt_i]
+                                entry = nxt_open
+                                valid = (
+                                    (sig.sl < entry < sig.tp)
+                                    if sig.side == "buy"
+                                    else (sig.tp < entry < sig.sl)
+                                )
+                                if valid and max_stop is not None and abs_fn(entry - sig.sl) > max_stop:
+                                    slot["skipped"] += 1
+                                    valid = False
+                                if valid:
+                                    if nxt_time is None:
+                                        nxt_time = time_at(nxt_i)
+                                    slot["pos"] = trade_cls(
+                                        sig.side,
+                                        entry,
+                                        sig.sl,
+                                        sig.tp,
+                                        nxt_time,
+                                        open_i=nxt_i,
+                                        initial_sl=sig.sl,
+                                    )
+                                    slot["entered"] += 1
+                    except Exception as strat_err:
+                        slot["error"] = f"{type(strat_err).__name__}: {strat_err}"
+                        slot["details"] = traceback.format_exc(limit=3)
+                        slot["active"] = False
+                        slot["pos"] = None
+                        any_failed = True
+
+                if any_failed:
+                    active_slots = [s for s in active_slots if s["active"]]
+
+                if has_progress and (any_failed or (i & emit_mask) == emit_mask or i + 1 == total_candles or not active_slots):
+                    now = mono()
+                    if any_failed or i + 1 == total_candles or not active_slots or (now - last_emit_at) >= 0.15:
+                        last_emit_at = now
+                        if c_time is None:
+                            c_time = time_at(i)
+                        push_progress(
+                            total_candles if (i + 1 == total_candles or not active_slots) else (i + 1),
+                            c_time,
+                            finished=(i + 1 == total_candles or not active_slots),
+                        )
+        else:
+            for i, c in enumerate(candles):
+                if not active_slots:
+                    break
+                nxt_i = i + 1
+                has_next = nxt_i < total_candles
+                can_enter = i >= warmup and has_next
+                nxt_c = None
+                any_failed = False
+
+                for slot in active_slots:
+                    try:
+                        pos = slot["pos"]
+                        if pos is not None:
+                            hit = None
+                            if pos.side == "buy":
+                                if c.low <= pos.sl:
+                                    rzn = "be" if abs_fn(pos.sl - pos.entry) <= be_eps else "sl"
+                                    hit = (pos.sl, rzn)
+                                elif c.high >= pos.tp:
+                                    hit = (pos.tp, "tp")
+                            else:
+                                if c.high >= pos.sl:
+                                    rzn = "be" if abs_fn(pos.sl - pos.entry) <= be_eps else "sl"
+                                    hit = (pos.sl, rzn)
+                                elif c.low <= pos.tp:
+                                    hit = (pos.tp, "tp")
+
+                            manage_fn = slot["manage_fn"]
+                            if hit is None and manage_fn is not None:
+                                action = manage_fn(i, candles, pos)
+                                if isinstance(action, str):
+                                    act = action.strip().lower()
+                                    if act in ("be", "breakeven", "break_even", "exit", "close"):
+                                        exit_px = pos.entry if act in ("be", "breakeven", "break_even") else c.close
+                                        hit_move = (exit_px - pos.entry) if pos.side == "buy" else (pos.entry - exit_px)
+                                        rzn = "be" if abs_fn(hit_move) <= be_eps else "exit"
+                                        hit = (exit_px, rzn)
+
+                            if hit is not None:
+                                exit_px, reason = hit
+                                pos.exit = exit_px
+                                pos.reason = reason
+                                pos.close_time = c.time
+                                pos.close_i = i
+                                risk_sl = pos.initial_sl if pos.initial_sl is not None else pos.sl
+                                risk = abs_fn(pos.entry - risk_sl)
+                                move = (exit_px - pos.entry) if pos.side == "buy" else (pos.entry - exit_px)
+                                r_val = move / risk if risk > 0.0 else 0.0
+                                pos.r = r_val
+                                if abs_fn(r_val) <= be_eps:
+                                    pos.reason = "be"
+                                    slot["be"] += 1
+                                elif r_val > be_eps:
+                                    slot["wins"] += 1
+                                else:
+                                    slot["losses"] += 1
+                                slot["trades"].append(pos)
+                                slot["running_pts"] += move * inv_point_size
+                                slot["running_r"] += r_val
+                                pos = None
+                                slot["pos"] = None
+
+                        if pos is None and can_enter:
+                            sig = slot["on_candle"](i, candles)
+                            if sig is not None:
+                                if nxt_c is None:
+                                    nxt_c = candles[nxt_i]
+                                entry = nxt_c.open
+                                valid = (
+                                    (sig.sl < entry < sig.tp)
+                                    if sig.side == "buy"
+                                    else (sig.tp < entry < sig.sl)
+                                )
+                                if valid and max_stop is not None and abs_fn(entry - sig.sl) > max_stop:
+                                    slot["skipped"] += 1
+                                    valid = False
+                                if valid:
+                                    slot["pos"] = trade_cls(
+                                        sig.side,
+                                        entry,
+                                        sig.sl,
+                                        sig.tp,
+                                        nxt_c.time,
+                                        open_i=nxt_i,
+                                        initial_sl=sig.sl,
+                                    )
+                                    slot["entered"] += 1
+                    except Exception as strat_err:
+                        slot["error"] = f"{type(strat_err).__name__}: {strat_err}"
+                        slot["details"] = traceback.format_exc(limit=3)
+                        slot["active"] = False
+                        slot["pos"] = None
+                        any_failed = True
+
+                if any_failed:
+                    active_slots = [s for s in active_slots if s["active"]]
+
+                if has_progress and (any_failed or (i & 255) == 255 or i + 1 == total_candles or not active_slots):
+                    now = mono()
+                    if any_failed or i + 1 == total_candles or not active_slots or (now - last_emit_at) >= 0.12:
+                        last_emit_at = now
+                        push_progress(
+                            total_candles if (i + 1 == total_candles or not active_slots) else (i + 1),
+                            c.time,
+                            finished=(i + 1 == total_candles or not active_slots),
+                        )
+
+    for slot in slots:
+        slot["open_at_end"] = 1 if slot["pos"] is not None else 0
+    return slots
+
+
 def run_with_multiple_strategies_file(
     csv_path: str,
     strategies_json: str,
@@ -1002,8 +1382,8 @@ def run_with_multiple_strategies_file(
     point_size: float = 1.0,
     progress_callback=None,
 ) -> str:
-    """Loads candles once from csv_path and runs multiple strategies sequentially,
-    returning a JSON batch payload with per-strategy stats or isolated errors."""
+    """Loads candles once from csv_path and runs all strategies simultaneously in
+    a single pass, returning a JSON batch payload with per-strategy stats or isolated errors."""
     try:
         strategy_specs = json.loads(strategies_json)
         if not isinstance(strategy_specs, list) or not strategy_specs:
@@ -1011,68 +1391,39 @@ def run_with_multiple_strategies_file(
 
         candles = load_candles(csv_path)
         total_candles = len(candles)
-        total_strategies = len(strategy_specs)
         max_stop = max_stop_points * point_size if max_stop_points > 0 else None
+
+        slots = _run_multi_backtest_detailed(
+            candles=candles,
+            strategy_specs=strategy_specs,
+            max_stop=max_stop,
+            point_size=point_size,
+            progress_callback=progress_callback,
+        )
+
         results = []
-
-        for idx, spec in enumerate(strategy_specs):
-            strat_id = spec.get("id", idx)
-            strat_name = str(spec.get("name", f"Strategy {idx + 1}"))
-            class_name = str(spec.get("className", "") or "")
-            code = str(spec.get("code", "") or "")
-
-            def wrapped_progress(encoded_json: str, s_idx=idx, s_name=strat_name) -> None:
-                if progress_callback is None:
-                    return
-                try:
-                    payload = json.loads(encoded_json)
-                    payload["strategyIndex"] = s_idx + 1
-                    payload["totalStrategies"] = total_strategies
-                    payload["currentStrategyName"] = s_name
-                    _emit_progress(progress_callback, payload)
-                except Exception:
-                    pass
-
-            cb = wrapped_progress if progress_callback is not None else None
-            try:
-                strategy_cls, err_msg = _compile_and_find_strategy(code, class_name)
-                if err_msg or strategy_cls is None:
-                    results.append({
-                        "id": strat_id,
-                        "name": strat_name,
-                        "className": class_name,
-                        "error": err_msg or "Missing Strategy class",
-                        "details": "",
-                    })
-                    continue
-
-                trades, skipped, open_trades, _ = _run_backtest_detailed(
-                    candles,
-                    strategy_cls(),
-                    max_stop=max_stop,
-                    point_size=point_size,
-                    progress_callback=cb,
-                )
+        for slot in slots:
+            if slot["error"] is not None:
+                results.append({
+                    "id": slot["id"],
+                    "name": slot["name"],
+                    "className": slot["className"],
+                    "error": slot["error"],
+                    "details": slot["details"],
+                })
+            else:
                 stats = compute_stats(
-                    trades,
-                    skipped,
+                    slot["trades"],
+                    slot["skipped"],
                     point_size,
-                    open_trades=open_trades,
+                    open_trades=slot["open_at_end"],
                     total_candles=total_candles,
                 )
                 results.append({
-                    "id": strat_id,
-                    "name": strat_name,
-                    "className": class_name or strategy_cls.__name__,
+                    "id": slot["id"],
+                    "name": slot["name"],
+                    "className": slot["className"],
                     "result": stats,
-                })
-            except Exception as strat_err:
-                results.append({
-                    "id": strat_id,
-                    "name": strat_name,
-                    "className": class_name,
-                    "error": f"{type(strat_err).__name__}: {strat_err}",
-                    "details": traceback.format_exc(limit=3),
                 })
 
         return json.dumps({

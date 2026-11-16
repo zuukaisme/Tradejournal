@@ -391,6 +391,35 @@ internal data class ErrorCheckDto(
 )
 
 @JsonClass(generateAdapter = true)
+internal data class StrategyLiveProgressDto(
+    val strategyId: Long = 0L,
+    val name: String = "",
+    val closedTrades: Int = 0,
+    val openTrades: Int = 0,
+    val wins: Int = 0,
+    val losses: Int = 0,
+    val breakEvens: Int = 0,
+    val netPoints: Double = 0.0,
+    val netR: Double = 0.0,
+    val status: String = "running",
+    val error: String = ""
+) {
+    fun toDomain() = StrategyLiveProgress(
+        strategyId = strategyId,
+        name = name,
+        closedTrades = closedTrades,
+        openTrades = openTrades,
+        wins = wins,
+        losses = losses,
+        breakEvens = breakEvens,
+        netPoints = netPoints,
+        netR = netR,
+        status = status,
+        error = error
+    )
+}
+
+@JsonClass(generateAdapter = true)
 internal data class BacktestProgressDto(
     val candlesProcessed: Int = 0,
     val totalCandles: Int = 0,
@@ -406,7 +435,8 @@ internal data class BacktestProgressDto(
     val currentTime: String = "",
     val strategyIndex: Int = 0,
     val totalStrategies: Int = 0,
-    val currentStrategyName: String = ""
+    val currentStrategyName: String = "",
+    val strategyStatuses: List<StrategyLiveProgressDto> = emptyList()
 ) {
     fun toDomain() = BacktestProgressSnapshot(
         candlesProcessed = candlesProcessed,
@@ -423,7 +453,8 @@ internal data class BacktestProgressDto(
         currentTime = currentTime,
         strategyIndex = strategyIndex,
         totalStrategies = totalStrategies,
-        currentStrategyName = currentStrategyName
+        currentStrategyName = currentStrategyName,
+        strategyStatuses = strategyStatuses.map { it.toDomain() }
     )
 }
 

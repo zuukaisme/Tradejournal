@@ -620,9 +620,20 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                     isLoading = true,
                     liveProgress = BacktestProgressSnapshot(
                         totalCandles = snapshot.estimatedRows,
-                        strategyIndex = if (isBatchRun) 1 else 0,
+                        strategyIndex = if (isBatchRun) selectedList.size else 0,
                         totalStrategies = if (isBatchRun) selectedList.size else 0,
-                        currentStrategyName = selectedList.first().name
+                        currentStrategyName = if (isBatchRun) "${selectedList.size}/${selectedList.size} active" else selectedList.first().name,
+                        strategyStatuses = if (isBatchRun) {
+                            selectedList.map { s ->
+                                com.example.backtest.StrategyLiveProgress(
+                                    strategyId = s.id,
+                                    name = s.name,
+                                    status = "running"
+                                )
+                            }
+                        } else {
+                            emptyList()
+                        }
                     ),
                     backtestError = null
                 )

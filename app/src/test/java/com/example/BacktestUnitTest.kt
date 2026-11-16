@@ -637,4 +637,78 @@ class BacktestUnitTest {
         assertEquals(14, ok.runs[0].result!!.trades[0].closeIndex)
         assertEquals("NameError: missing helper", ok.runs[1].error!!.error)
     }
+
+    @Test
+    fun parseProgressJson_parsesSimultaneousStrategyStatuses() {
+        val progressJson = """
+            {
+              "candlesProcessed": 1200,
+              "totalCandles": 2400,
+              "enteredTrades": 15,
+              "closedTrades": 13,
+              "openTrades": 2,
+              "wins": 8,
+              "losses": 4,
+              "breakEvens": 1,
+              "skippedByStopCap": 0,
+              "netPoints": 34.5,
+              "netR": 2.75,
+              "currentTime": "2025.02.10 12:00:00",
+              "strategyIndex": 2,
+              "totalStrategies": 3,
+              "currentStrategyName": "2/3 active",
+              "strategyStatuses": [
+                {
+                  "strategyId": 1,
+                  "name": "Buy Scalp",
+                  "closedTrades": 8,
+                  "openTrades": 1,
+                  "wins": 5,
+                  "losses": 2,
+                  "breakEvens": 1,
+                  "netPoints": 22.0,
+                  "netR": 1.85,
+                  "status": "running",
+                  "error": ""
+                },
+                {
+                  "strategyId": 2,
+                  "name": "Sell Scalp",
+                  "closedTrades": 5,
+                  "openTrades": 1,
+                  "wins": 3,
+                  "losses": 2,
+                  "breakEvens": 0,
+                  "netPoints": 12.5,
+                  "netR": 0.90,
+                  "status": "running",
+                  "error": ""
+                },
+                {
+                  "strategyId": 3,
+                  "name": "Broken",
+                  "closedTrades": 0,
+                  "openTrades": 0,
+                  "wins": 0,
+                  "losses": 0,
+                  "breakEvens": 0,
+                  "netPoints": 0.0,
+                  "netR": 0.0,
+                  "status": "error",
+                  "error": "ZeroDivisionError: division by zero"
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val snapshot = BacktestCodec.parseProgressJson(progressJson)!!
+        assertEquals(3, snapshot.totalStrategies)
+        assertEquals(2, snapshot.strategyIndex)
+        assertEquals(3, snapshot.strategyStatuses.size)
+        assertEquals("Buy Scalp", snapshot.strategyStatuses[0].name)
+        assertEquals(8, snapshot.strategyStatuses[0].closedTrades)
+        assertEquals(1.85, snapshot.strategyStatuses[0].netR, 1e-6)
+        assertEquals("error", snapshot.strategyStatuses[2].status)
+        assertTrue(snapshot.strategyStatuses[2].error.contains("ZeroDivisionError"))
+    }
 }

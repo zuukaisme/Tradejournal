@@ -12,6 +12,20 @@ enum class ExitReason {
     EXIT
 }
 
+data class StrategyLiveProgress(
+    val strategyId: Long = 0L,
+    val name: String = "",
+    val closedTrades: Int = 0,
+    val openTrades: Int = 0,
+    val wins: Int = 0,
+    val losses: Int = 0,
+    val breakEvens: Int = 0,
+    val netPoints: Double = 0.0,
+    val netR: Double = 0.0,
+    val status: String = "running",
+    val error: String = ""
+)
+
 data class BacktestProgressSnapshot(
     val candlesProcessed: Int = 0,
     val totalCandles: Int = 0,
@@ -27,7 +41,8 @@ data class BacktestProgressSnapshot(
     val currentTime: String = "",
     val strategyIndex: Int = 0,
     val totalStrategies: Int = 0,
-    val currentStrategyName: String = ""
+    val currentStrategyName: String = "",
+    val strategyStatuses: List<StrategyLiveProgress> = emptyList()
 ) {
     val candleProgressFraction: Float
         get() = if (totalCandles > 0) (candlesProcessed.toFloat() / totalCandles).coerceIn(0f, 1f) else 0f

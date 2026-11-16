@@ -95,6 +95,7 @@ import com.example.backtest.BatchStrategyRunResult
 import com.example.backtest.ExitReason
 import com.example.backtest.SavedCsvDataset
 import com.example.backtest.Side
+import com.example.backtest.StrategyLiveProgress
 import com.example.backtest.Trade
 import com.example.presentation.BacktestViewModel
 import com.example.presentation.components.LiquidGlassCard
@@ -608,11 +609,12 @@ fun BacktestScreen(
                         val canRun = !state.isLoading && !state.isImportingCsv && state.hasCsvBytes &&
                             (if (state.isMultiStrategyMode) state.selectedStrategyIds.isNotEmpty() else state.selectedStrategy != null)
                         val multiCount = state.selectedStrategyIds.size
+                        val totalLiveStrategies = state.liveProgress?.totalStrategies ?: 0
                         val runButtonText = when {
-                            state.isLoading && (state.liveProgress?.totalStrategies ?: 0) > 1 ->
-                                "Running ${state.liveProgress?.strategyIndex ?: 1}/${state.liveProgress?.totalStrategies}..."
+                            state.isLoading && totalLiveStrategies > 1 ->
+                                "Running $totalLiveStrategies Strategies..."
                             state.isLoading -> "Running Python Engine..."
-                            state.isMultiStrategyMode && multiCount > 1 -> "Run $multiCount Strategies"
+                            state.isMultiStrategyMode && multiCount > 1 -> "Run $multiCount Strategies Together"
                             else -> "Run Backtest"
                         }
 
@@ -1114,7 +1116,7 @@ private fun BacktestLiveProgressCard(progress: BacktestProgressSnapshot) {
                 )
                 if (progress.totalStrategies > 1) {
                     Text(
-                        text = "Strategy ${progress.strategyIndex}/${progress.totalStrategies}: ${progress.currentStrategyName}",
+                        text = "Running ${progress.totalStrategies} strategies simultaneously (${progress.strategyIndex} active)",
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
                         color = positiveColor,
                         fontWeight = FontWeight.SemiBold,
@@ -1230,6 +1232,101 @@ private fun BacktestLiveProgressCard(progress: BacktestProgressSnapshot) {
                 color = if (progress.netPoints >= 0.0) positiveColor else negativeColor,
                 modifier = Modifier.weight(1f)
             )
+        }
+
+        if (progress.strategyStatuses.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(10.dp))
+            Column(
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("live_strategy_statuses_list")
+            ) {
+                progress.strategyStatuses.forEach { stratStatus ->
+                    LiveStrategyStatusRow(item = stratStatus)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LiveStrategyStatusRow(item: StrategyLiveProgress) {
+    val positiveColor = MaterialTheme.colorScheme.primary
+    val negativeColor = MaterialTheme.colorScheme.error
+    val isError = item.status == "error"
+    val pnlColor = if (item.netPoints >= 0.0) positiveColor else negativeColor
+
+    Surface(
+        color = if (isError) {
+            negativeColor.copy(alpha = 0.12f)
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+        },
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("live_strategy_status_${item.strategyId}")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 7.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = item.name,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (isError) {
+                    Text(
+                        text = item.error.ifBlank { "Execution failed" },
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                        color = negativeColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                } else {
+                    val openNote = if (item.openTrades > 0) " • ${item.openTrades} open" else ""
+                    Text(
+                        text = "${item.closedTrades}t • ${item.wins}W/${item.losses}L/${item.breakEvens}BE$openNote",
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            if (isError) {
+                Text(
+                    text = "ERROR",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = negativeColor,
+                    fontFamily = FontFamily.Monospace
+                )
+            } else {
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = formatSignedR(item.netR),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = pnlColor,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Text(
+                        text = "${formatSignedPoints(item.netPoints)}p",
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                        color = pnlColor,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+            }
         }
     }
 }
