@@ -31,6 +31,23 @@
         <receiver
             android:name=".notifications.EveningReminderReceiver"
             android:exported="false" />
+
+        <service
+            android:name=".backtest.worker.BacktestWorkerService1"
+            android:exported="false"
+            android:process=":bt_worker_1" />
+        <service
+            android:name=".backtest.worker.BacktestWorkerService2"
+            android:exported="false"
+            android:process=":bt_worker_2" />
+        <service
+            android:name=".backtest.worker.BacktestWorkerService3"
+            android:exported="false"
+            android:process=":bt_worker_3" />
+        <service
+            android:name=".backtest.worker.BacktestWorkerService4"
+            android:exported="false"
+            android:process=":bt_worker_4" />
     </application>
 
 </manifest>

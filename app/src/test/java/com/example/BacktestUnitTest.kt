@@ -711,4 +711,294 @@ class BacktestUnitTest {
         assertEquals("error", snapshot.strategyStatuses[2].status)
         assertTrue(snapshot.strategyStatuses[2].error.contains("ZeroDivisionError"))
     }
+
+    @Test
+    fun binaryCandleCache_buildsCacheAndMatchesCsvWindowReaderExact() {
+        val tempDir = java.nio.file.Files.createTempDirectory("tradepulse-btbin-").toFile()
+        val csvFile = File(tempDir, "XAUUSD_M1.csv")
+        try {
+            val sb = StringBuilder()
+            sb.appendLine("<DATE>\t<TIME>\t<OPEN>\t<HIGH>\t<LOW>\t<CLOSE>\t<TICKVOL>")
+            for (i in 0 until 400) {
+                val h = 10 + (i / 60)
+                val m = i % 60
+                val p = 2800.0 + i * 0.25
+                sb.appendLine(
+                    String.format(
+                        java.util.Locale.US,
+                        "2025.02.07\t%02d:%02d:00\t%.2f\t%.2f\t%.2f\t%.2f\t%d",
+                        h, m, p, p + 2.0, p - 1.5, p + 1.0, 100 + i
+                    )
+                )
+            }
+            csvFile.writeText(sb.toString(), Charsets.UTF_8)
+
+            // Read expected from raw CSV before .btbin exists
+            val shortTrade = com.example.backtest.Trade(
+                side = Side.BUY,
+                entry = 2806.25,
+                sl = 2801.0,
+                tp = 2816.0,
+                exit = 2816.0,
+                openTime = "2025.02.07 10:25:00",
+                closeTime = "2025.02.07 10:32:00",
+                reason = ExitReason.TP,
+                points = 9.75,
+                r = 1.85,
+                durationCandles = 8,
+                openIndex = 25,
+                closeIndex = 32
+            )
+            val csvWindowShort = com.example.backtest.CsvCandleWindowReader.readTradeWindow(csvFile, shortTrade, 5, 4)
+
+            val binFile = com.example.backtest.BinaryCandleCache.ensureCache(csvFile)
+            assertTrue(binFile != null && binFile.exists())
+            assertTrue(com.example.backtest.BinaryCandleCache.isCacheValid(csvFile))
+
+            val binWindowShort = com.example.backtest.CsvCandleWindowReader.readTradeWindow(csvFile, shortTrade, 5, 4)
+            assertEquals(csvWindowShort.entryCandlePos, binWindowShort.entryCandlePos)
+            assertEquals(csvWindowShort.exitCandlePos, binWindowShort.exitCandlePos)
+            assertEquals(csvWindowShort.truncatedMiddle, binWindowShort.truncatedMiddle)
+            assertEquals(csvWindowShort.candles, binWindowShort.candles)
+
+            // Long trade triggers middle compression (>220 span)
+            val longTrade = shortTrade.copy(
+                closeTime = "2025.02.07 16:00:00",
+                openIndex = 10,
+                closeIndex = 360,
+                durationCandles = 351
+            )
+            val binWindowLong = com.example.backtest.BinaryCandleCache.readTradeWindow(csvFile, longTrade)
+            assertTrue(binWindowLong != null)
+            assertTrue(binWindowLong!!.truncatedMiddle)
+            assertEquals("2025.02.07 10:10:00", binWindowLong.candles[binWindowLong.entryCandlePos].time)
+            assertEquals("2025.02.07 16:00:00", binWindowLong.candles[binWindowLong.exitCandlePos].time)
+        } finally {
+            tempDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun batchProgressAggregator_tracksParallelWorkersAndErrorIsolation() {
+        val specs = listOf(
+            com.example.backtest.BatchStrategySpec(id = 1L, name = "Alpha", className = "AlphaStrat", code = "pass"),
+            com.example.backtest.BatchStrategySpec(id = 2L, name = "Beta", className = "BetaStrat", code = "pass"),
+            com.example.backtest.BatchStrategySpec(id = 3L, name = "Gamma", className = "GammaStrat", code = "pass")
+        )
+        val agg = com.example.backtest.worker.BatchProgressAggregator(specs, defaultTotalCandles = 1000)
+
+        val initial = agg.snapshot()
+        assertEquals(3, initial.strategyStatuses.size)
+        assertEquals("queued", initial.strategyStatuses[0].status)
+        assertEquals(0, initial.candlesProcessed)
+
+        agg.markAssigned(1L, "W1")
+        agg.markAssigned(2L, "W2")
+        agg.onWorkerProgress(
+            1L,
+            "W1",
+            com.example.backtest.BacktestProgressSnapshot(
+                candlesProcessed = 500,
+                totalCandles = 1000,
+                closedTrades = 4,
+                openTrades = 1,
+                wins = 3,
+                losses = 1,
+                netPoints = 20.0,
+                netR = 2.0,
+                currentTime = "2025.02.07 12:00:00"
+            )
+        )
+        agg.onWorkerProgress(
+            2L,
+            "W2",
+            com.example.backtest.BacktestProgressSnapshot(
+                candlesProcessed = 250,
+                totalCandles = 1000,
+                closedTrades = 2,
+                openTrades = 0,
+                wins = 1,
+                losses = 1,
+                netPoints = 5.0,
+                netR = 0.5,
+                currentTime = "2025.02.07 10:30:00"
+            )
+        )
+        agg.markAssigned(3L, "W1")
+        agg.markFinished(
+            3L,
+            BacktestParseOutcome.Failure(com.example.backtest.BacktestError("RuntimeError: boom", ""))
+        )
+
+        val mid = agg.snapshot("2025.02.07 12:00:00")
+        assertEquals(2, mid.strategyIndex) // 2 still running (Alpha, Beta)
+        assertEquals(583, mid.candlesProcessed) // (500 + 250 + 1000) / 3
+        assertEquals(6, mid.closedTrades)
+        assertEquals(25.0, mid.netPoints, 1e-6)
+        assertEquals("W1", mid.strategyStatuses[0].workerLabel)
+        assertEquals(0.5f, mid.strategyStatuses[0].progressFraction, 1e-4f)
+        assertEquals("W2", mid.strategyStatuses[1].workerLabel)
+        assertEquals("error", mid.strategyStatuses[2].status)
+        assertEquals("RuntimeError: boom", mid.strategyStatuses[2].error)
+    }
+
+    @Test
+    fun parseProgressJson_parsesWorkerLabelAndPerStrategyCandleProgress() {
+        val json = """
+            {
+              "candlesProcessed": 400,
+              "totalCandles": 800,
+              "enteredTrades": 3,
+              "closedTrades": 3,
+              "openTrades": 0,
+              "wins": 2,
+              "losses": 1,
+              "breakEvens": 0,
+              "netPoints": 14.0,
+              "netR": 1.4,
+              "strategyStatuses": [
+                {
+                  "strategyId": 9,
+                  "name": "FastEMA",
+                  "workerLabel": "W3",
+                  "candlesProcessed": 400,
+                  "totalCandles": 800,
+                  "closedTrades": 3,
+                  "openTrades": 0,
+                  "wins": 2,
+                  "losses": 1,
+                  "breakEvens": 0,
+                  "netPoints": 14.0,
+                  "netR": 1.4,
+                  "status": "running",
+                  "error": ""
+                }
+              ]
+            }
+        """.trimIndent()
+        val snap = BacktestCodec.parseProgressJson(json)!!
+        val status = snap.strategyStatuses.single()
+        assertEquals("W3", status.workerLabel)
+        assertEquals(400, status.candlesProcessed)
+        assertEquals(800, status.totalCandles)
+        assertEquals(0.5f, status.progressFraction, 1e-5f)
+    }
+
+    @Test
+    fun binaryCandleCache_readsCandleCountAndTimestampsByIndex() {
+        val tempDir = java.nio.file.Files.createTempDirectory("tradepulse-ts-").toFile()
+        val csvFile = File(tempDir, "XAUUSD.csv")
+        try {
+            val sb = StringBuilder()
+            sb.appendLine("<DATE>\t<TIME>\t<OPEN>\t<HIGH>\t<LOW>\t<CLOSE>")
+            for (i in 0 until 50) {
+                sb.appendLine("2025.01.${String.format(java.util.Locale.US, "%02d", (i / 24) + 1)}\t${String.format(java.util.Locale.US, "%02d", i % 24)}:00:00\t100\t102\t99\t101")
+            }
+            csvFile.writeText(sb.toString(), Charsets.UTF_8)
+            com.example.backtest.BinaryCandleCache.ensureCache(csvFile)
+
+            assertEquals(50, com.example.backtest.BinaryCandleCache.readCandleCount(csvFile))
+            assertEquals("2025.01.01 00:00:00", com.example.backtest.BinaryCandleCache.readTimestampAt(csvFile, 0))
+            assertEquals("2025.01.02 01:00:00", com.example.backtest.BinaryCandleCache.readTimestampAt(csvFile, 25))
+            assertEquals("2025.01.03 01:00:00", com.example.backtest.BinaryCandleCache.readTimestampAt(csvFile, 49))
+            assertNull(com.example.backtest.BinaryCandleCache.readTimestampAt(csvFile, 50))
+        } finally {
+            tempDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun backtestShardStitcher_plansWarmShardsAndDeduplicatesBoundaryOverlaps() {
+        val plans = com.example.backtest.worker.BacktestShardStitcher.planTimeShards(
+            totalCandles = 100_000,
+            workerCount = 4,
+            warmupBars = 3_000,
+            tailBars = 1_500
+        )
+        assertEquals(4, plans.size)
+        assertEquals(0, plans[0].loadStart)
+        assertEquals(0, plans[0].entryStart)
+        assertEquals(25_000, plans[0].entryEnd)
+        assertEquals(26_500, plans[0].loadEnd)
+        assertEquals(22_000, plans[1].loadStart)
+        assertEquals(25_000, plans[1].entryStart)
+        assertEquals(50_000, plans[1].entryEnd)
+        assertEquals(51_500, plans[1].loadEnd)
+        assertEquals(100_000, plans[3].loadEnd)
+
+        val shard1Trade = com.example.backtest.Trade(
+            side = Side.BUY, entry = 2800.0, sl = 2790.0, tp = 2820.0, exit = 2820.0,
+            openTime = "2020.01.01 23:55:00", closeTime = "2020.01.02 00:15:00",
+            reason = ExitReason.TP, points = 20.0, r = 2.0, durationCandles = 20,
+            openIndex = 24_995, closeIndex = 25_015
+        )
+        // Overlapping seam trade from shard2 starts inside [24995..25015] -> must be dropped
+        val shard2OverlapTrade = com.example.backtest.Trade(
+            side = Side.SELL, entry = 2810.0, sl = 2820.0, tp = 2790.0, exit = 2820.0,
+            openTime = "2020.01.02 00:05:00", closeTime = "2020.01.02 00:12:00",
+            reason = ExitReason.SL, points = -10.0, r = -1.0, durationCandles = 7,
+            openIndex = 25_005, closeIndex = 25_012
+        )
+        val shard2ValidTrade = com.example.backtest.Trade(
+            side = Side.SELL, entry = 2820.0, sl = 2830.0, tp = 2800.0, exit = 2800.0,
+            openTime = "2020.01.02 01:00:00", closeTime = "2020.01.02 01:20:00",
+            reason = ExitReason.TP, points = 20.0, r = 2.0, durationCandles = 20,
+            openIndex = 25_060, closeIndex = 25_080
+        )
+
+        val emptyPoints = com.example.backtest.BacktestPoints(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        val emptyRisk = com.example.backtest.BacktestRisk(0.0, 0.0, 0, 0)
+        val emptyBySide = com.example.backtest.BySideStats(
+            buy = com.example.backtest.SideStat(0, 0.0, 0.0),
+            sell = com.example.backtest.SideStat(0, 0.0, 0.0)
+        )
+        val emptyTiming = com.example.backtest.BacktestTiming(0.0)
+        val shard1Res = com.example.backtest.BacktestResult(
+            summary = com.example.backtest.BacktestSummary(
+                totalTrades = 1, wins = 1, losses = 0, winRatePct = 100.0,
+                netPoints = 20.0, netR = 2.0, avgR = 2.0, profitFactor = null,
+                skippedByStopCap = 1, totalCandles = 25_000
+            ),
+            points = emptyPoints, risk = emptyRisk, bySide = emptyBySide, timing = emptyTiming,
+            trades = listOf(shard1Trade)
+        )
+        val shard2Res = com.example.backtest.BacktestResult(
+            summary = com.example.backtest.BacktestSummary(
+                totalTrades = 2, wins = 1, losses = 1, winRatePct = 50.0,
+                netPoints = 10.0, netR = 1.0, avgR = 0.5, profitFactor = 2.0,
+                skippedByStopCap = 2, totalCandles = 25_000
+            ),
+            points = emptyPoints, risk = emptyRisk, bySide = emptyBySide, timing = emptyTiming,
+            trades = listOf(shard2OverlapTrade, shard2ValidTrade)
+        )
+
+        val stitched = com.example.backtest.worker.BacktestShardStitcher.stitch(
+            shardResults = listOf(shard1Res, shard2Res),
+            fullTotalCandles = 50_000
+        )
+        assertEquals(2, stitched.summary.totalTrades)
+        assertEquals(2, stitched.summary.wins)
+        assertEquals(0, stitched.summary.losses)
+        assertEquals(3, stitched.summary.skippedByStopCap)
+        assertEquals(40.0, stitched.summary.netPoints, 1e-6)
+        assertEquals(4.0, stitched.summary.netR, 1e-6)
+        assertEquals(50_000, stitched.summary.totalCandles)
+        assertEquals(listOf(20.0, 40.0), stitched.equityCurve)
+
+        // Verify BatchProgressAggregator summed candle progress mode
+        val agg = com.example.backtest.worker.BatchProgressAggregator(
+            specs = listOf(
+                com.example.backtest.BatchStrategySpec(10_000L, "S1", "C", "pass"),
+                com.example.backtest.BatchStrategySpec(10_001L, "S2", "C", "pass")
+            ),
+            defaultTotalCandles = 50_000,
+            sumCandleProgress = true,
+            perSlotTotalCandles = listOf(25_000, 25_000)
+        )
+        agg.onWorkerProgress(10_000L, "W1", com.example.backtest.BacktestProgressSnapshot(candlesProcessed = 10_000, totalCandles = 25_000))
+        agg.onWorkerProgress(10_001L, "W2", com.example.backtest.BacktestProgressSnapshot(candlesProcessed = 15_000, totalCandles = 25_000))
+        val snap = agg.snapshot()
+        assertEquals(25_000, snap.candlesProcessed)
+        assertEquals(50_000, snap.totalCandles)
+    }
 }

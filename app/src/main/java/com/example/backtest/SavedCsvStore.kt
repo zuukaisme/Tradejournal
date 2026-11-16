@@ -118,7 +118,11 @@ object SavedCsvStore {
                 previous.estimatedRows == entry.estimatedRows &&
                 previous.fileSizeBytes == entry.fileSizeBytes
         }
-        replaced.forEach { File(rootDir, it.storedFileName).delete() }
+        replaced.forEach {
+            val f = File(rootDir, it.storedFileName)
+            BinaryCandleCache.cacheFileFor(f).delete()
+            f.delete()
+        }
 
         val updated = listOf(entry) + remaining
         writeIndexJson(File(rootDir, INDEX_FILE), updated)
@@ -133,7 +137,11 @@ object SavedCsvStore {
         rootDir.mkdirs()
         val current = listDatasets(rootDir)
         val target = current.firstOrNull { it.id == datasetId }
-        target?.let { File(rootDir, it.storedFileName).delete() }
+        target?.let {
+            val f = File(rootDir, it.storedFileName)
+            BinaryCandleCache.cacheFileFor(f).delete()
+            f.delete()
+        }
         val remaining = current.filterNot { it.id == datasetId }
         writeIndexJson(File(rootDir, INDEX_FILE), remaining)
         return remaining

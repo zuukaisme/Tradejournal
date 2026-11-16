@@ -167,6 +167,147 @@ class BacktestRegressionTests(unittest.TestCase):
         finally:
             if os.path.exists(csv_path):
                 os.remove(csv_path)
+            if os.path.exists(csv_path + ".btbin"):
+                os.remove(csv_path + ".btbin")
+
+    def test_btbin_binary_cache_roundtrip_and_backtest_parity(self):
+        from backtest import _populate_from_stream, _save_btbin, _try_load_btbin, load_candles
+
+        fd, csv_path = tempfile.mkstemp(suffix=".csv")
+        os.close(fd)
+        bin_path = csv_path + ".btbin"
+        try:
+            with open(csv_path, "w", encoding="utf-8") as fh:
+                fh.write("<DATE>\t<TIME>\t<OPEN>\t<HIGH>\t<LOW>\t<CLOSE>\t<TICKVOL>\n")
+                for idx in range(240):
+                    hour = 8 + (idx // 60)
+                    minute = idx % 60
+                    base = 2900.0 + (idx % 7) * 0.5
+                    fh.write(
+                        f"2025.03.03\t{hour:02d}:{minute:02d}:00\t"
+                        f"{base:.2f}\t{base + 2.5:.2f}\t{base - 1.5:.2f}\t{base + 1.0:.2f}\t{100 + idx}\n"
+                    )
+
+            code = (
+                "class BinCacheStrat(Strategy):\n"
+                "    def on_candle(self, i, candles):\n"
+                "        c = candles[i]\n"
+                "        return Signal('buy', c.close - 1.5, c.close + 1.5)\n"
+            )
+            raw_res = json.loads(run_with_strategy_file(csv_path, code, "BinCacheStrat"))
+
+            with open(csv_path, "r", encoding="utf-8-sig") as fh:
+                compact = _populate_from_stream(fh, use_compact_series=True)
+            st = os.stat(csv_path)
+            _save_btbin(csv_path, st, compact)
+            self.assertTrue(os.path.exists(bin_path))
+
+            loaded_bin = _try_load_btbin(csv_path, st)
+            self.assertIsNotNone(loaded_bin)
+            self.assertEqual(len(loaded_bin), 240)
+            for idx in (0, 17, 120, 239):
+                self.assertEqual(loaded_bin[idx], compact[idx])
+
+            bin_res = json.loads(run_with_strategy_file(csv_path, code, "BinCacheStrat"))
+            self.assertEqual(bin_res["trades"], raw_res["trades"])
+            self.assertEqual(bin_res["summary"], raw_res["summary"])
+        finally:
+            if os.path.exists(bin_path):
+                os.remove(bin_path)
+            if os.path.exists(csv_path):
+                os.remove(csv_path)
+
+    def test_btbin_slice_and_time_sharded_execution_parity(self):
+        from backtest import (
+            _populate_from_stream,
+            _save_btbin,
+            _try_load_btbin_slice,
+            run_with_strategy_file_slice,
+        )
+
+        fd, csv_path = tempfile.mkstemp(suffix=".csv")
+        os.close(fd)
+        bin_path = csv_path + ".btbin"
+        try:
+            with open(csv_path, "w", encoding="utf-8") as fh:
+                fh.write("<DATE>\t<TIME>\t<OPEN>\t<HIGH>\t<LOW>\t<CLOSE>\t<TICKVOL>\n")
+                for idx in range(600):
+                    hour = 0 + (idx // 60)
+                    minute = idx % 60
+                    wave = (idx % 20) * 0.4
+                    base = 2800.0 + wave
+                    fh.write(
+                        f"2025.04.01\t{hour:02d}:{minute:02d}:00\t"
+                        f"{base:.2f}\t{base + 2.5:.2f}\t{base - 1.5:.2f}\t{base + 1.0:.2f}\t{50 + idx}\n"
+                    )
+
+            with open(csv_path, "r", encoding="utf-8-sig") as fh:
+                full_series = _populate_from_stream(fh, use_compact_series=True)
+            st = os.stat(csv_path)
+            _save_btbin(csv_path, st, full_series)
+
+            # Verify .btbin slice matches full_series slice byte-for-byte
+            bt_slice, actual_start, full_count = _try_load_btbin_slice(csv_path, st, 150, 320)
+            self.assertEqual(actual_start, 150)
+            self.assertEqual(full_count, 600)
+            self.assertEqual(len(bt_slice), 170)
+            for k in (0, 25, 169):
+                self.assertEqual(bt_slice[k], full_series[150 + k])
+
+            code = (
+                "class EmaWarmStrat(Strategy):\n"
+                "    def __init__(self):\n"
+                "        self.ema = None\n"
+                "        self.last_i = -1\n"
+                "    def on_candle(self, i, candles):\n"
+                "        alpha = 2.0 / 21.0\n"
+                "        for k in range(self.last_i + 1, i + 1):\n"
+                "            c = candles[k].close\n"
+                "            self.ema = c if self.ema is None else (alpha * c + (1.0 - alpha) * self.ema)\n"
+                "        self.last_i = i\n"
+                "        c = candles[i]\n"
+                "        if c.close > self.ema:\n"
+                "            return Signal('buy', c.close - 2.0, c.close + 2.0)\n"
+                "        return None\n"
+            )
+            full_res = json.loads(run_with_strategy_file(csv_path, code, "EmaWarmStrat"))
+
+            shard0 = json.loads(
+                run_with_strategy_file_slice(
+                    csv_path, code, "EmaWarmStrat",
+                    load_start=0, load_end=340, entry_start=0, entry_end=300,
+                )
+            )
+            shard1 = json.loads(
+                run_with_strategy_file_slice(
+                    csv_path, code, "EmaWarmStrat",
+                    load_start=180, load_end=600, entry_start=300, entry_end=600,
+                )
+            )
+
+            # Shard 0 entries all originate before bar 300; Shard 1 entries all >= 300 in global coords
+            for t in shard0["trades"]:
+                self.assertLess(t["openIndex"], 302)
+            self.assertGreater(len(shard1["trades"]), 0)
+            for t in shard1["trades"]:
+                self.assertGreaterEqual(t["openIndex"], 300)
+                self.assertLess(t["closeIndex"], 600)
+
+            # Stitch with overlap dedupe
+            stitched = []
+            max_close = -1
+            for t in shard0["trades"] + shard1["trades"]:
+                if t["openIndex"] <= max_close:
+                    continue
+                stitched.append(t)
+                max_close = max(max_close, t["closeIndex"])
+            self.assertEqual(len(stitched), len(full_res["trades"]))
+            self.assertEqual([t["openIndex"] for t in stitched], [t["openIndex"] for t in full_res["trades"]])
+        finally:
+            if os.path.exists(bin_path):
+                os.remove(bin_path)
+            if os.path.exists(csv_path):
+                os.remove(csv_path)
 
 
 if __name__ == "__main__":

@@ -20,6 +20,8 @@ import io
 import json
 import os
 import random
+import struct
+import sys
 import time
 import traceback
 from array import array
@@ -304,10 +306,171 @@ def _populate_from_stream(stream, use_compact_series: bool):
     return candles
 
 
+_BTBIN_MAGIC = b"BTBN"
+_BTBIN_HEADER_FMT = "<4sIqqq"
+_BTBIN_HEADER_SIZE = struct.calcsize(_BTBIN_HEADER_FMT)
+
+
+def _try_load_btbin(csv_path: str, st) -> Optional[CandleSeries]:
+    if sys.byteorder != "little" or array("I").itemsize != 4 or array("d").itemsize != 8:
+        return None
+    bin_path = csv_path + ".btbin"
+    try:
+        if not os.path.exists(bin_path) or os.path.getsize(bin_path) < _BTBIN_HEADER_SIZE:
+            return None
+        with open(bin_path, "rb") as f:
+            hdr = f.read(_BTBIN_HEADER_SIZE)
+            if len(hdr) != _BTBIN_HEADER_SIZE:
+                return None
+            magic, version, count, src_size, src_mtime_ms = struct.unpack(_BTBIN_HEADER_FMT, hdr)
+            if magic != _BTBIN_MAGIC or version != 1 or count <= 0:
+                return None
+            csv_mtime_ms = int(getattr(st, "st_mtime", 0.0) * 1000)
+            if src_size != st.st_size or abs(src_mtime_ms - csv_mtime_ms) > 2500:
+                return None
+
+            series = CandleSeries()
+            series.opens.fromfile(f, count)
+            series.highs.fromfile(f, count)
+            series.lows.fromfile(f, count)
+            series.closes.fromfile(f, count)
+            series.volumes.fromfile(f, count)
+            series._time_offsets = array("I")
+            series._time_offsets.fromfile(f, count + 1)
+            total_t_bytes = series._time_offsets[count]
+            t_raw = f.read(total_t_bytes)
+            if len(t_raw) != total_t_bytes:
+                return None
+            series._time_buf = bytearray(t_raw)
+            return series
+    except Exception:
+        return None
+
+
+def _try_load_btbin_slice(
+    csv_path: str,
+    st,
+    load_start: int,
+    load_end: int,
+) -> Optional[Tuple[CandleSeries, int, int]]:
+    """Loads ONLY [load_start, load_end) from the columnar .btbin cache via direct file seeks,
+    keeping each worker process's RAM footprint to ~1/K of the full dataset."""
+    if sys.byteorder != "little" or array("I").itemsize != 4 or array("d").itemsize != 8:
+        return None
+    bin_path = csv_path + ".btbin"
+    try:
+        if not os.path.exists(bin_path) or os.path.getsize(bin_path) < _BTBIN_HEADER_SIZE:
+            return None
+        with open(bin_path, "rb") as f:
+            hdr = f.read(_BTBIN_HEADER_SIZE)
+            if len(hdr) != _BTBIN_HEADER_SIZE:
+                return None
+            magic, version, count, src_size, src_mtime_ms = struct.unpack(_BTBIN_HEADER_FMT, hdr)
+            if magic != _BTBIN_MAGIC or version != 1 or count <= 0:
+                return None
+            csv_mtime_ms = int(getattr(st, "st_mtime", 0.0) * 1000)
+            if src_size != st.st_size or abs(src_mtime_ms - csv_mtime_ms) > 2500:
+                return None
+
+            s_idx = max(0, int(load_start))
+            e_idx = count if load_end < 0 else min(count, int(load_end))
+            if s_idx >= e_idx:
+                return CandleSeries(), s_idx, count
+
+            slice_len = e_idx - s_idx
+            opens_base = _BTBIN_HEADER_SIZE
+            highs_base = opens_base + 8 * count
+            lows_base = highs_base + 8 * count
+            closes_base = lows_base + 8 * count
+            vols_base = closes_base + 8 * count
+            offsets_base = vols_base + 8 * count
+            time_buf_base = offsets_base + 4 * (count + 1)
+
+            series = CandleSeries()
+            for base, arr in (
+                (opens_base, series.opens),
+                (highs_base, series.highs),
+                (lows_base, series.lows),
+                (closes_base, series.closes),
+                (vols_base, series.volumes),
+            ):
+                f.seek(base + s_idx * 8)
+                arr.fromfile(f, slice_len)
+
+            raw_offsets = array("I")
+            f.seek(offsets_base + s_idx * 4)
+            raw_offsets.fromfile(f, slice_len + 1)
+            t_first = raw_offsets[0]
+            t_last = raw_offsets[slice_len]
+            span_bytes = max(0, t_last - t_first)
+            if span_bytes > 0:
+                f.seek(time_buf_base + t_first)
+                t_raw = f.read(span_bytes)
+                if len(t_raw) != span_bytes:
+                    return None
+                series._time_buf = bytearray(t_raw)
+            else:
+                series._time_buf = bytearray()
+
+            if t_first == 0:
+                series._time_offsets = raw_offsets
+            else:
+                series._time_offsets = array("I", (off - t_first for off in raw_offsets))
+            return series, s_idx, count
+    except Exception:
+        return None
+
+
+def load_candle_slice(csv_path: str, load_start: int = 0, load_end: int = -1) -> Tuple[Sequence[Candle], int, int]:
+    """Loads [load_start, load_end) from .btbin in O(1) disk seek when available, or slices
+    load_candles(csv_path) otherwise. Returns (candles_slice, actual_load_start, full_total_candles)."""
+    st = os.stat(csv_path)
+    bt_slice = _try_load_btbin_slice(csv_path, st, load_start, load_end)
+    if bt_slice is not None:
+        return bt_slice
+
+    all_candles = load_candles(csv_path)
+    full_total = len(all_candles)
+    s_idx = max(0, int(load_start))
+    e_idx = full_total if load_end < 0 else min(full_total, int(load_end))
+    if s_idx == 0 and e_idx == full_total:
+        return all_candles, 0, full_total
+    return all_candles[s_idx:e_idx], s_idx, full_total
+
+
+def _save_btbin(csv_path: str, st, series: CandleSeries) -> None:
+    if sys.byteorder != "little" or array("I").itemsize != 4 or array("d").itemsize != 8:
+        return
+    n = len(series)
+    if n <= 0 or len(series._time_offsets) != n + 1:
+        return
+    bin_path = csv_path + ".btbin"
+    tmp_path = bin_path + f".pytmp.{os.getpid()}"
+    try:
+        mtime_ms = int(getattr(st, "st_mtime", 0.0) * 1000)
+        hdr = struct.pack(_BTBIN_HEADER_FMT, _BTBIN_MAGIC, 1, n, st.st_size, mtime_ms)
+        with open(tmp_path, "wb") as f:
+            f.write(hdr)
+            series.opens.tofile(f)
+            series.highs.tofile(f)
+            series.lows.tofile(f)
+            series.closes.tofile(f)
+            series.volumes.tofile(f)
+            series._time_offsets.tofile(f)
+            f.write(series._time_buf)
+        os.replace(tmp_path, bin_path)
+    except Exception:
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
+
+
 def load_candles(path: str) -> Sequence[Candle]:
     """Streams MT5 history exports (tab separated, <DATE> <TIME> ...) or any CSV
-    from disk without loading the full file bytes into RAM. Uses CandleSeries
-    on large files to keep multi-million-row 1m datasets within Android memory."""
+    from disk without loading the full file bytes into RAM. Reads the compiled
+    `.btbin` binary candle cache when present for sub-second loading across workers."""
     global _FILE_CACHE, _PARSED_CACHE
 
     st = os.stat(path)
@@ -321,6 +484,14 @@ def load_candles(path: str) -> Sequence[Candle]:
         _FILE_CACHE = None
         _PARSED_CACHE = None
 
+    bin_series = _try_load_btbin(path, st)
+    if bin_series is not None:
+        if len(bin_series) <= _MAX_CACHE_CANDLES:
+            _FILE_CACHE = (file_key, bin_series)
+        else:
+            _FILE_CACHE = None
+        return bin_series
+
     with open(path, "rb") as bf:
         prefix = bf.read(4)
     encoding = "utf-16" if prefix[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8-sig"
@@ -328,6 +499,9 @@ def load_candles(path: str) -> Sequence[Candle]:
 
     with open(path, "r", encoding=encoding, errors="replace", buffering=1024 * 1024) as f:
         candles = _populate_from_stream(f, use_compact_series=use_compact)
+
+    if isinstance(candles, CandleSeries) and len(candles) > 0:
+        _save_btbin(path, st, candles)
 
     if len(candles) <= _MAX_CACHE_CANDLES:
         _FILE_CACHE = (file_key, candles)
@@ -430,6 +604,9 @@ def _run_backtest_detailed(
     max_stop: Optional[float] = None,
     point_size: float = 1.0,
     progress_callback=None,
+    global_offset: int = 0,
+    local_entry_start: int = 0,
+    local_entry_end: Optional[int] = None,
 ) -> Tuple[List[Trade], int, int, int]:
     trades: List[Trade] = []
     trades_append = trades.append
@@ -453,10 +630,22 @@ def _run_backtest_detailed(
     last_emit_at = mono() if has_progress else 0.0
     is_series = isinstance(candles, CandleSeries)
 
+    eff_entry_start = max(warmup, local_entry_start)
+    eff_entry_end = total_candles if local_entry_end is None else min(total_candles, max(0, local_entry_end))
+    owned_span = max(1, eff_entry_end - eff_entry_start) if local_entry_end is not None or local_entry_start > 0 else total_candles
+
     def push_progress(processed: int, current_time: str) -> None:
+        if local_entry_end is not None or local_entry_start > 0:
+            done_owned = min(processed, eff_entry_end) - eff_entry_start
+            if done_owned < 0:
+                done_owned = 0
+            prog_total = max(1, eff_entry_end - eff_entry_start)
+        else:
+            done_owned = processed
+            prog_total = total_candles
         _emit_progress(progress_callback, {
-            "candlesProcessed": processed,
-            "totalCandles": total_candles,
+            "candlesProcessed": done_owned,
+            "totalCandles": prog_total,
             "enteredTrades": entered,
             "closedTrades": len(trades),
             "openTrades": 1 if pos is not None else 0,
@@ -473,6 +662,7 @@ def _run_backtest_detailed(
         first_time = candles.time_at(0) if (is_series and total_candles > 0) else (candles[0].time if total_candles > 0 else "")
         push_progress(0, first_time)
 
+    last_idx = -1
     if is_series:
         opens = candles.opens
         highs = candles.highs
@@ -482,6 +672,7 @@ def _run_backtest_detailed(
         emit_mask = 1023 if total_candles > 50_000 else 255
 
         for i in range(total_candles):
+            last_idx = i
             if pos is not None:
                 c_low = lows[i]
                 c_high = highs[i]
@@ -514,7 +705,7 @@ def _run_backtest_detailed(
                     pos.exit = exit_px
                     pos.reason = reason
                     pos.close_time = time_at(i)
-                    pos.close_i = i
+                    pos.close_i = i + global_offset
                     risk_sl = pos.initial_sl if pos.initial_sl is not None else pos.sl
                     risk = abs_fn(pos.entry - risk_sl)
                     move = (exit_px - pos.entry) if pos.side == "buy" else (pos.entry - exit_px)
@@ -532,18 +723,31 @@ def _run_backtest_detailed(
                     running_r += r_val
                     pos = None
 
-            if pos is None and i >= warmup and i + 1 < total_candles:
-                sig = on_candle(i, candles)
-                if sig is not None:
-                    nxt_i = i + 1
-                    entry = opens[nxt_i]
-                    valid = (sig.sl < entry < sig.tp) if sig.side == "buy" else (sig.tp < entry < sig.sl)
-                    if valid and max_stop is not None and abs_fn(entry - sig.sl) > max_stop:
-                        skipped += 1
-                        valid = False
-                    if valid:
-                        pos = trade_cls(sig.side, entry, sig.sl, sig.tp, time_at(nxt_i), open_i=nxt_i, initial_sl=sig.sl)
-                        entered += 1
+            if pos is None:
+                if i >= eff_entry_end:
+                    # Shard entry window finished and seam trade (if any) is now closed
+                    break
+                if i >= warmup and i + 1 < total_candles:
+                    sig = on_candle(i, candles)
+                    # Only record entries starting inside [eff_entry_start, eff_entry_end)
+                    if sig is not None and i >= eff_entry_start:
+                        nxt_i = i + 1
+                        entry = opens[nxt_i]
+                        valid = (sig.sl < entry < sig.tp) if sig.side == "buy" else (sig.tp < entry < sig.sl)
+                        if valid and max_stop is not None and abs_fn(entry - sig.sl) > max_stop:
+                            skipped += 1
+                            valid = False
+                        if valid:
+                            pos = trade_cls(
+                                sig.side,
+                                entry,
+                                sig.sl,
+                                sig.tp,
+                                time_at(nxt_i),
+                                open_i=nxt_i + global_offset,
+                                initial_sl=sig.sl,
+                            )
+                            entered += 1
 
             if has_progress and ((i & emit_mask) == emit_mask or i + 1 == total_candles):
                 now = mono()
@@ -552,6 +756,7 @@ def _run_backtest_detailed(
                     push_progress(i + 1, time_at(i))
     else:
         for i, c in enumerate(candles):
+            last_idx = i
             if pos is not None:
                 hit = None
                 if pos.side == "buy":
@@ -582,7 +787,7 @@ def _run_backtest_detailed(
                     pos.exit = exit_px
                     pos.reason = reason
                     pos.close_time = c.time
-                    pos.close_i = i
+                    pos.close_i = i + global_offset
                     risk_sl = pos.initial_sl if pos.initial_sl is not None else pos.sl
                     risk = abs_fn(pos.entry - risk_sl)
                     move = (exit_px - pos.entry) if pos.side == "buy" else (pos.entry - exit_px)
@@ -600,18 +805,29 @@ def _run_backtest_detailed(
                     running_r += r_val
                     pos = None
 
-            if pos is None and i >= warmup and i + 1 < total_candles:
-                sig = on_candle(i, candles)
-                if sig is not None:
-                    nxt = candles[i + 1]
-                    entry = nxt.open
-                    valid = (sig.sl < entry < sig.tp) if sig.side == "buy" else (sig.tp < entry < sig.sl)
-                    if valid and max_stop is not None and abs_fn(entry - sig.sl) > max_stop:
-                        skipped += 1
-                        valid = False
-                    if valid:
-                        pos = trade_cls(sig.side, entry, sig.sl, sig.tp, nxt.time, open_i=i + 1, initial_sl=sig.sl)
-                        entered += 1
+            if pos is None:
+                if i >= eff_entry_end:
+                    break
+                if i >= warmup and i + 1 < total_candles:
+                    sig = on_candle(i, candles)
+                    if sig is not None and i >= eff_entry_start:
+                        nxt = candles[i + 1]
+                        entry = nxt.open
+                        valid = (sig.sl < entry < sig.tp) if sig.side == "buy" else (sig.tp < entry < sig.sl)
+                        if valid and max_stop is not None and abs_fn(entry - sig.sl) > max_stop:
+                            skipped += 1
+                            valid = False
+                        if valid:
+                            pos = trade_cls(
+                                sig.side,
+                                entry,
+                                sig.sl,
+                                sig.tp,
+                                nxt.time,
+                                open_i=i + 1 + global_offset,
+                                initial_sl=sig.sl,
+                            )
+                            entered += 1
 
             if has_progress and (i & 255 == 255 or i + 1 == total_candles):
                 now = mono()
@@ -619,8 +835,12 @@ def _run_backtest_detailed(
                     last_emit_at = now
                     push_progress(i + 1, c.time)
 
+    if has_progress and last_idx >= 0:
+        final_time = candles.time_at(last_idx) if is_series else candles[last_idx].time
+        push_progress(eff_entry_end, final_time)
+
     open_at_end = 1 if pos is not None else 0
-    return trades, skipped, open_at_end, total_candles
+    return trades, skipped, open_at_end, owned_span
 
 
 def run_backtest(candles: Sequence[Candle], strategy: Strategy, warmup: int = 50,
@@ -988,6 +1208,56 @@ def run_with_strategy_file(csv_path: str, strategy_code: str, class_name: str = 
                 point_size,
                 open_trades=open_trades,
                 total_candles=total_candles,
+            )
+        )
+    except Exception as e:
+        return json.dumps({"error": f"{type(e).__name__}: {e}",
+                           "details": traceback.format_exc(limit=3)})
+
+
+def run_with_strategy_file_slice(
+    csv_path: str,
+    strategy_code: str,
+    class_name: str = "",
+    max_stop_points: float = 0.0,
+    point_size: float = 1.0,
+    progress_callback=None,
+    load_start: int = 0,
+    load_end: int = -1,
+    entry_start: int = 0,
+    entry_end: int = -1,
+) -> str:
+    """Runs a strategy on a specific chronological shard [entry_start, entry_end) using a
+    pre-warmed candle slice [load_start, load_end) seeked directly from .btbin. Recorded
+    trade openIndex/closeIndex values preserve global CSV positions for replay."""
+    try:
+        strategy_cls, err_msg = _compile_and_find_strategy(strategy_code, class_name)
+        if err_msg or strategy_cls is None:
+            return json.dumps({"error": err_msg or "Missing Strategy class", "details": ""})
+
+        candles, actual_load_start, full_total = load_candle_slice(csv_path, load_start, load_end)
+        local_entry_start = max(0, int(entry_start) - actual_load_start)
+        eff_global_end = full_total if entry_end < 0 else min(full_total, int(entry_end))
+        local_entry_end = max(local_entry_start, eff_global_end - actual_load_start)
+
+        max_stop = max_stop_points * point_size if max_stop_points > 0 else None
+        trades, skipped, open_trades, owned_candles = _run_backtest_detailed(
+            candles,
+            strategy_cls(),
+            max_stop=max_stop,
+            point_size=point_size,
+            progress_callback=progress_callback,
+            global_offset=actual_load_start,
+            local_entry_start=local_entry_start,
+            local_entry_end=local_entry_end,
+        )
+        return json.dumps(
+            compute_stats(
+                trades,
+                skipped,
+                point_size,
+                open_trades=open_trades,
+                total_candles=owned_candles,
             )
         )
     except Exception as e:

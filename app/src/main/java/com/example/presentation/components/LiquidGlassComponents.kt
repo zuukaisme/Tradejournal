@@ -299,6 +299,7 @@ fun LiquidGlassTabRow(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null
                         ) { onTabSelected(index) }
+                        .padding(horizontal = 4.dp)
                         .testTag("liquid_tab_$index"),
                     contentAlignment = Alignment.Center
                 ) {
@@ -311,16 +312,17 @@ fun LiquidGlassTabRow(
                                 imageVector = icon,
                                 contentDescription = null,
                                 tint = textColor,
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(14.dp)
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
                         }
                         Text(
                             text = title,
                             color = textColor,
-                            fontSize = 12.sp,
+                            fontSize = 11.sp,
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                            maxLines = 1
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                         )
                     }
                 }

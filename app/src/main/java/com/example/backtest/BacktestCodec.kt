@@ -394,6 +394,9 @@ internal data class ErrorCheckDto(
 internal data class StrategyLiveProgressDto(
     val strategyId: Long = 0L,
     val name: String = "",
+    val workerLabel: String = "",
+    val candlesProcessed: Int = 0,
+    val totalCandles: Int = 0,
     val closedTrades: Int = 0,
     val openTrades: Int = 0,
     val wins: Int = 0,
@@ -407,6 +410,9 @@ internal data class StrategyLiveProgressDto(
     fun toDomain() = StrategyLiveProgress(
         strategyId = strategyId,
         name = name,
+        workerLabel = workerLabel,
+        candlesProcessed = candlesProcessed,
+        totalCandles = totalCandles,
         closedTrades = closedTrades,
         openTrades = openTrades,
         wins = wins,

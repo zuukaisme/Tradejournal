@@ -1,24 +1,32 @@
 package com.example.presentation.screens
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -27,6 +35,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.CandlestickChart
+import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
@@ -35,6 +45,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -63,6 +74,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.backtest.BatchStrategyRunResult
 import com.example.backtest.ExitReason
 import com.example.backtest.ReplayCandle
 import com.example.backtest.Side
@@ -76,6 +88,778 @@ import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
+
+/**
+ * Dedicated top-bar Replay tab: combines a filterable trade list (All / Losses / Wins / BE),
+ * batch strategy switcher, and live OHLC candlestick playback with SL/TP risk-reward zones.
+ */
+@Composable
+fun TradeReplayTabContent(
+    strategyName: String,
+    trades: List<Trade>,
+    currentIndex: Int,
+    window: TradeReplayWindow?,
+    isLoading: Boolean,
+    error: String?,
+    outcomeFilter: Int,
+    playbackSpeed: Int,
+    batchResults: List<BatchStrategyRunResult>,
+    activeBatchStrategyId: Long?,
+    onSelectBatchStrategy: (Long) -> Unit,
+    onSelectFilter: (Int) -> Unit,
+    onCycleSpeed: () -> Unit,
+    onSelectTradeIndex: (Int) -> Unit,
+    onExpandFullscreen: () -> Unit,
+    onGoToBacktest: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val positiveColor = MaterialTheme.colorScheme.primary
+    val negativeColor = MaterialTheme.colorScheme.error
+
+    if (trades.isEmpty()) {
+        Box(
+            modifier = modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            LiquidGlassCard(testTag = "replay_tab_empty_card") {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CandlestickChart,
+                        contentDescription = null,
+                        tint = positiveColor,
+                        modifier = Modifier.size(38.dp)
+                    )
+                    Text(
+                        text = "No Trades to Replay Yet",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Run a single or multi-strategy backtest on the Run tab to inspect candlestick entries, Stop Losses, and Take Profits right here.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Button(
+                        onClick = onGoToBacktest,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("replay_empty_go_run")
+                    ) {
+                        Text("Go to Run Tab", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+        return
+    }
+
+    val safeIndex = currentIndex.coerceIn(0, trades.lastIndex)
+    val trade = trades[safeIndex]
+
+    val totalWins = remember(trades) {
+        trades.count { t ->
+            val be = t.reason == ExitReason.BE || (abs(t.points) <= 1e-6 && abs(t.r) <= 1e-6)
+            !be && (t.points > 1e-6 || t.r > 1e-6)
+        }
+    }
+    val totalLosses = remember(trades) {
+        trades.count { t ->
+            val be = t.reason == ExitReason.BE || (abs(t.points) <= 1e-6 && abs(t.r) <= 1e-6)
+            val win = !be && (t.points > 1e-6 || t.r > 1e-6)
+            !be && !win
+        }
+    }
+    val totalBe = (trades.size - totalWins - totalLosses).coerceAtLeast(0)
+
+    val filteredIndexedTrades = remember(trades, outcomeFilter) {
+        trades.withIndex().filter { (_, t) ->
+            val be = t.reason == ExitReason.BE || (abs(t.points) <= 1e-6 && abs(t.r) <= 1e-6)
+            val win = !be && (t.points > 1e-6 || t.r > 1e-6)
+            when (outcomeFilter) {
+                1 -> !be && !win
+                2 -> win
+                3 -> be
+                else -> true
+            }
+        }
+    }
+    val matchingIndices = remember(filteredIndexedTrades) { filteredIndexedTrades.map { it.index } }
+
+    val totalCandles = window?.candles?.size ?: 0
+    var revealedCount by remember(safeIndex, totalCandles) {
+        mutableIntStateOf(totalCandles.coerceAtLeast(1))
+    }
+    var isPlaying by remember(safeIndex) { mutableStateOf(false) }
+
+    val stepDelayMs = when (playbackSpeed) {
+        4 -> 45L
+        2 -> 80L
+        else -> 150L
+    }
+
+    LaunchedEffect(isPlaying, safeIndex, totalCandles, playbackSpeed) {
+        if (!isPlaying || totalCandles <= 0) return@LaunchedEffect
+        if (revealedCount >= totalCandles) {
+            revealedCount = (window?.entryCandlePos ?: 0).coerceIn(1, totalCandles)
+        }
+        while (isPlaying && revealedCount < totalCandles) {
+            delay(stepDelayMs)
+            revealedCount = (revealedCount + 1).coerceAtMost(totalCandles)
+        }
+        isPlaying = false
+    }
+
+    val posInFiltered = matchingIndices.indexOf(safeIndex)
+    val prevMatchingIdx = when {
+        matchingIndices.isEmpty() -> null
+        posInFiltered > 0 -> matchingIndices[posInFiltered - 1]
+        else -> matchingIndices.lastOrNull { it < safeIndex }
+    }
+    val nextMatchingIdx = when {
+        matchingIndices.isEmpty() -> null
+        posInFiltered in 0 until (matchingIndices.size - 1) -> matchingIndices[posInFiltered + 1]
+        else -> matchingIndices.firstOrNull { it > safeIndex }
+    }
+
+    val successfulBatchRuns = remember(batchResults) {
+        batchResults.filter { it.result != null }
+    }
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .testTag("replay_tab_content"),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        if (successfulBatchRuns.size > 1) {
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                items(successfulBatchRuns, key = { it.strategyId }) { batchItem ->
+                    val selected = batchItem.strategyId == activeBatchStrategyId
+                    val count = batchItem.result?.trades?.size ?: 0
+                    FilterChip(
+                        selected = selected,
+                        onClick = { onSelectBatchStrategy(batchItem.strategyId) },
+                        label = {
+                            Text(
+                                text = "${batchItem.strategyName} ($count)",
+                                fontSize = 11.sp,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = positiveColor,
+                            selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                        ),
+                        modifier = Modifier.testTag("replay_batch_strat_${batchItem.strategyId}")
+                    )
+                }
+            }
+        }
+
+        val filterLabels = listOf(
+            "All (${trades.size})",
+            "Losses ($totalLosses)",
+            "Wins ($totalWins)",
+            "BE ($totalBe)"
+        )
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            itemsIndexed(filterLabels) { fIdx, label ->
+                val selected = outcomeFilter == fIdx
+                FilterChip(
+                    selected = selected,
+                    onClick = {
+                        onSelectFilter(fIdx)
+                        val targetSet = trades.indices.filter { idx ->
+                            val t = trades[idx]
+                            val be = t.reason == ExitReason.BE || (abs(t.points) <= 1e-6 && abs(t.r) <= 1e-6)
+                            val win = !be && (t.points > 1e-6 || t.r > 1e-6)
+                            when (fIdx) {
+                                1 -> !be && !win
+                                2 -> win
+                                3 -> be
+                                else -> true
+                            }
+                        }
+                        if (targetSet.isNotEmpty() && safeIndex !in targetSet) {
+                            onSelectTradeIndex(targetSet.first())
+                        }
+                    },
+                    label = {
+                        Text(
+                            text = label,
+                            fontSize = 11.sp,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+                        )
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = if (fIdx == 1) negativeColor else positiveColor,
+                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                    ),
+                    modifier = Modifier.testTag("replay_tab_filter_$fIdx")
+                )
+            }
+        }
+
+        BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            val isWide = maxWidth >= 700.dp
+            if (isWide) {
+                Row(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    ReplayTradeListColumn(
+                        filteredIndexedTrades = filteredIndexedTrades,
+                        activeIndex = safeIndex,
+                        onSelectTrade = onSelectTradeIndex,
+                        modifier = Modifier
+                            .weight(0.42f)
+                            .fillMaxHeight()
+                    )
+                    Column(
+                        modifier = Modifier
+                            .weight(0.58f)
+                            .fillMaxHeight()
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        InlineReplayPlayerCard(
+                            strategyName = strategyName,
+                            trade = trade,
+                            tradeNumber = safeIndex + 1,
+                            totalTrades = trades.size,
+                            window = window,
+                            isLoading = isLoading,
+                            error = error,
+                            revealedCount = revealedCount,
+                            isPlaying = isPlaying,
+                            playbackSpeed = playbackSpeed,
+                            hasPrev = prevMatchingIdx != null,
+                            hasNext = nextMatchingIdx != null,
+                            onSeekBar = {
+                                isPlaying = false
+                                revealedCount = it
+                            },
+                            onTogglePlay = {
+                                if (window != null && window.candles.isNotEmpty()) {
+                                    if (!isPlaying && revealedCount >= window.candles.size) {
+                                        revealedCount = (window.entryCandlePos).coerceIn(1, window.candles.size)
+                                    }
+                                    isPlaying = !isPlaying
+                                }
+                            },
+                            onRestart = {
+                                if (window != null && window.candles.isNotEmpty()) {
+                                    revealedCount = 1
+                                    isPlaying = true
+                                }
+                            },
+                            onShowAll = {
+                                isPlaying = false
+                                revealedCount = window?.candles?.size ?: 1
+                            },
+                            onCycleSpeed = onCycleSpeed,
+                            onPrevTrade = { prevMatchingIdx?.let(onSelectTradeIndex) },
+                            onNextTrade = { nextMatchingIdx?.let(onSelectTradeIndex) },
+                            onExpandFullscreen = onExpandFullscreen
+                        )
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    item(key = "player") {
+                        InlineReplayPlayerCard(
+                            strategyName = strategyName,
+                            trade = trade,
+                            tradeNumber = safeIndex + 1,
+                            totalTrades = trades.size,
+                            window = window,
+                            isLoading = isLoading,
+                            error = error,
+                            revealedCount = revealedCount,
+                            isPlaying = isPlaying,
+                            playbackSpeed = playbackSpeed,
+                            hasPrev = prevMatchingIdx != null,
+                            hasNext = nextMatchingIdx != null,
+                            onSeekBar = {
+                                isPlaying = false
+                                revealedCount = it
+                            },
+                            onTogglePlay = {
+                                if (window != null && window.candles.isNotEmpty()) {
+                                    if (!isPlaying && revealedCount >= window.candles.size) {
+                                        revealedCount = (window.entryCandlePos).coerceIn(1, window.candles.size)
+                                    }
+                                    isPlaying = !isPlaying
+                                }
+                            },
+                            onRestart = {
+                                if (window != null && window.candles.isNotEmpty()) {
+                                    revealedCount = 1
+                                    isPlaying = true
+                                }
+                            },
+                            onShowAll = {
+                                isPlaying = false
+                                revealedCount = window?.candles?.size ?: 1
+                            },
+                            onCycleSpeed = onCycleSpeed,
+                            onPrevTrade = { prevMatchingIdx?.let(onSelectTradeIndex) },
+                            onNextTrade = { nextMatchingIdx?.let(onSelectTradeIndex) },
+                            onExpandFullscreen = onExpandFullscreen
+                        )
+                    }
+
+                    item(key = "list_header") {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 2.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Filtered Trades (${filteredIndexedTrades.size})",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Tap any trade to load candles",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    if (filteredIndexedTrades.isEmpty()) {
+                        item(key = "filtered_empty") {
+                            LiquidGlassCard {
+                                Text(
+                                    text = "No trades match this filter.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    } else {
+                        items(filteredIndexedTrades, key = { it.index }) { indexed ->
+                            ReplaySelectableTradeRow(
+                                index = indexed.index,
+                                trade = indexed.value,
+                                isSelected = indexed.index == safeIndex,
+                                onClick = { onSelectTradeIndex(indexed.index) }
+                            )
+                        }
+                    }
+                    item(key = "bottom_pad") {
+                        Spacer(modifier = Modifier.height(16.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReplayTradeListColumn(
+    filteredIndexedTrades: List<IndexedValue<Trade>>,
+    activeIndex: Int,
+    onSelectTrade: (Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    LazyColumn(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        if (filteredIndexedTrades.isEmpty()) {
+            item {
+                LiquidGlassCard {
+                    Text(
+                        text = "No trades match this filter.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        } else {
+            items(filteredIndexedTrades, key = { it.index }) { indexed ->
+                ReplaySelectableTradeRow(
+                    index = indexed.index,
+                    trade = indexed.value,
+                    isSelected = indexed.index == activeIndex,
+                    onClick = { onSelectTrade(indexed.index) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReplaySelectableTradeRow(
+    index: Int,
+    trade: Trade,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    val positiveColor = MaterialTheme.colorScheme.primary
+    val negativeColor = MaterialTheme.colorScheme.error
+    val isBe = trade.reason == ExitReason.BE || (abs(trade.points) <= 1e-6 && abs(trade.r) <= 1e-6)
+    val isWin = !isBe && (trade.points > 1e-6 || trade.r > 1e-6)
+    val pnlColor = when {
+        isWin -> positiveColor
+        isBe -> SlateBreakEven
+        else -> negativeColor
+    }
+    val sideColor = if (trade.side == Side.BUY) positiveColor else negativeColor
+
+    Surface(
+        color = if (isSelected) {
+            positiveColor.copy(alpha = 0.14f)
+        } else {
+            MaterialTheme.colorScheme.surfaceContainer
+        },
+        shape = RoundedCornerShape(14.dp),
+        border = if (isSelected) BorderStroke(1.2.dp, positiveColor) else null,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .testTag("replay_list_item_$index")
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = "#${index + 1}",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Surface(color = sideColor.copy(alpha = 0.16f), shape = RoundedCornerShape(6.dp)) {
+                        Text(
+                            text = trade.side.name,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = sideColor,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                    Surface(color = pnlColor.copy(alpha = 0.16f), shape = RoundedCornerShape(6.dp)) {
+                        Text(
+                            text = trade.reason.name,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = pnlColor,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+                val sign = if (trade.r > 0) "+" else ""
+                val ptSign = if (trade.points > 0) "+" else ""
+                Text(
+                    text = "$sign${String.format(Locale.US, "%.2f", trade.r)}R (${ptSign}${String.format(Locale.US, "%.1f", trade.points)}p)",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = pnlColor,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "IN ${String.format(Locale.US, "%.2f", trade.entry)} • SL ${String.format(Locale.US, "%.2f", trade.sl)} • TP ${String.format(Locale.US, "%.2f", trade.tp)}",
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    text = "${trade.durationCandles}c",
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+            Text(
+                text = "${trade.openTime} -> ${trade.closeTime}",
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun InlineReplayPlayerCard(
+    strategyName: String,
+    trade: Trade,
+    tradeNumber: Int,
+    totalTrades: Int,
+    window: TradeReplayWindow?,
+    isLoading: Boolean,
+    error: String?,
+    revealedCount: Int,
+    isPlaying: Boolean,
+    playbackSpeed: Int,
+    hasPrev: Boolean,
+    hasNext: Boolean,
+    onSeekBar: (Int) -> Unit,
+    onTogglePlay: () -> Unit,
+    onRestart: () -> Unit,
+    onShowAll: () -> Unit,
+    onCycleSpeed: () -> Unit,
+    onPrevTrade: () -> Unit,
+    onNextTrade: () -> Unit,
+    onExpandFullscreen: () -> Unit
+) {
+    val positiveColor = MaterialTheme.colorScheme.primary
+    val negativeColor = MaterialTheme.colorScheme.error
+    val isBe = trade.reason == ExitReason.BE || (abs(trade.points) <= 1e-6 && abs(trade.r) <= 1e-6)
+    val isWin = !isBe && (trade.points > 1e-6 || trade.r > 1e-6)
+    val outcomeColor = when {
+        isWin -> positiveColor
+        isBe -> SlateBreakEven
+        else -> negativeColor
+    }
+
+    LiquidGlassCard(testTag = "inline_replay_player_card") {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Trade #$tradeNumber / $totalTrades • ${trade.side.name} ${trade.reason.name}",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                val rSign = if (trade.r > 0) "+" else ""
+                val pSign = if (trade.points > 0) "+" else ""
+                Text(
+                    text = "$strategyName • $pSign${String.format(Locale.US, "%.1f", trade.points)}p ($rSign${String.format(Locale.US, "%.2f", trade.r)}R)",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = outcomeColor,
+                    fontWeight = FontWeight.SemiBold,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(
+                    onClick = onCycleSpeed,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier.testTag("replay_speed_button")
+                ) {
+                    Text(
+                        text = "${playbackSpeed}x",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+                IconButton(
+                    onClick = onExpandFullscreen,
+                    modifier = Modifier.testTag("replay_expand_fullscreen_button")
+                ) {
+                    Icon(Icons.Default.Fullscreen, contentDescription = "Expand Replay Fullscreen")
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        Surface(
+            color = Color(0xFF0A111A),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(250.dp)
+                .testTag("inline_replay_chart_surface")
+        ) {
+            when {
+                isLoading -> {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = positiveColor)
+                    }
+                }
+                error != null -> {
+                    Box(modifier = Modifier.fillMaxSize().padding(14.dp), contentAlignment = Alignment.Center) {
+                        Text(text = error, color = negativeColor, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                window == null || window.candles.isEmpty() -> {
+                    Box(modifier = Modifier.fillMaxSize().padding(14.dp), contentAlignment = Alignment.Center) {
+                        Text(
+                            text = "No matching candles in CSV for ${trade.openTime}.",
+                            color = Color(0xFF94A3B8),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+                else -> {
+                    val visibleCandles = window.candles.take(revealedCount.coerceIn(1, window.candles.size))
+                    CandlestickReplayCanvas(
+                        visibleCandles = visibleCandles,
+                        totalWindowCount = window.candles.size,
+                        trade = trade,
+                        entryPos = window.entryCandlePos,
+                        exitPos = window.exitCandlePos,
+                        bullColor = Color(0xFF10B981),
+                        bearColor = Color(0xFFEF4444),
+                        tpColor = Color(0xFF22C55E),
+                        slColor = Color(0xFFF43F5E),
+                        entryLineColor = Color(0xFF38BDF8),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(8.dp)
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            ReplayLegendDot("TP ${String.format(Locale.US, "%.2f", trade.tp)}", Color(0xFF22C55E))
+            ReplayLegendDot("SL ${String.format(Locale.US, "%.2f", trade.sl)}", Color(0xFFF43F5E))
+            ReplayLegendDot("IN ${String.format(Locale.US, "%.2f", trade.entry)}", Color(0xFF38BDF8))
+        }
+
+        if (window != null && window.candles.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(4.dp))
+            val activeCandle = window.candles.getOrNull((revealedCount - 1).coerceIn(0, window.candles.lastIndex))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Bar $revealedCount/${window.candles.size}" + (activeCandle?.let { " • ${it.time}" } ?: ""),
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(
+                    onClick = onShowAll,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                ) {
+                    Text("All Bars", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+            if (window.candles.size > 1) {
+                Slider(
+                    value = revealedCount.toFloat(),
+                    onValueChange = { onSeekBar(it.toInt().coerceIn(1, window.candles.size)) },
+                    valueRange = 1f..window.candles.size.toFloat(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedButton(
+                onClick = onPrevTrade,
+                enabled = hasPrev,
+                contentPadding = PaddingValues(horizontal = 8.dp),
+                modifier = Modifier
+                    .weight(0.9f)
+                    .height(48.dp)
+                    .testTag("inline_replay_prev"),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Previous trade")
+                Text("Prev", fontSize = 12.sp)
+            }
+            Button(
+                onClick = onTogglePlay,
+                enabled = window != null && window.candles.isNotEmpty(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = positiveColor,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                ),
+                contentPadding = PaddingValues(horizontal = 10.dp),
+                modifier = Modifier
+                    .weight(1.2f)
+                    .height(48.dp)
+                    .testTag("inline_replay_play"),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Icon(
+                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(if (isPlaying) "Pause" else "Play", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+            OutlinedButton(
+                onClick = onRestart,
+                enabled = window != null && window.candles.isNotEmpty(),
+                contentPadding = PaddingValues(horizontal = 8.dp),
+                modifier = Modifier.height(48.dp),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Icon(Icons.Default.Refresh, contentDescription = "Restart")
+            }
+            OutlinedButton(
+                onClick = onNextTrade,
+                enabled = hasNext,
+                contentPadding = PaddingValues(horizontal = 8.dp),
+                modifier = Modifier
+                    .weight(0.9f)
+                    .height(48.dp)
+                    .testTag("inline_replay_next"),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Text("Next", fontSize = 12.sp)
+                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Next trade")
+            }
+        }
+    }
+}
 
 /**
  * Full-screen candlestick replay inspector showing historical candles around a closed trade,

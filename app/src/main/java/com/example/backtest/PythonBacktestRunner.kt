@@ -90,4 +90,36 @@ object PythonBacktestRunner {
             )
             .toString()
     }
+
+    fun runWithStrategyFileSlice(
+        context: Context,
+        csvPath: String,
+        strategyCode: String,
+        className: String = "",
+        maxStopPoints: Double = 0.0,
+        pointSize: Double = 1.0,
+        progressListener: BacktestProgressListener? = null,
+        loadStart: Int = 0,
+        loadEnd: Int = -1,
+        entryStart: Int = 0,
+        entryEnd: Int = -1
+    ): String {
+        ensureStarted(context)
+        return Python.getInstance()
+            .getModule("backtest")
+            .callAttr(
+                "run_with_strategy_file_slice",
+                csvPath,
+                strategyCode,
+                className,
+                maxStopPoints,
+                pointSize,
+                progressListener,
+                loadStart,
+                loadEnd,
+                entryStart,
+                entryEnd
+            )
+            .toString()
+    }
 }

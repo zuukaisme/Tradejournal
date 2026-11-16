@@ -60,6 +60,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -97,6 +98,7 @@ import com.example.backtest.SavedCsvDataset
 import com.example.backtest.Side
 import com.example.backtest.StrategyLiveProgress
 import com.example.backtest.Trade
+import com.example.backtest.worker.WorkerPoolBacktestCoordinator
 import com.example.presentation.BacktestViewModel
 import com.example.presentation.components.LiquidGlassCard
 import com.example.presentation.components.LiquidGlassTabRow
@@ -144,10 +146,16 @@ fun BacktestScreen(
             .background(MaterialTheme.colorScheme.background)
             .padding(horizontal = 16.dp, vertical = 8.dp)
     ) {
+        val replayLabel = if (state.replaySourceTrades.isEmpty()) "Replay" else "Replay (${state.replaySourceTrades.size})"
         val compareLabel = if (state.savedRuns.isEmpty()) "Compare" else "Compare (${state.savedRuns.size})"
         LiquidGlassTabRow(
-            tabs = listOf("Backtest", "AI Builder", compareLabel),
-            icons = listOf(Icons.Default.PlayArrow, Icons.Default.AutoAwesome, Icons.Default.CompareArrows),
+            tabs = listOf("Run", replayLabel, "Builder", compareLabel),
+            icons = listOf(
+                Icons.Default.PlayArrow,
+                Icons.Default.CandlestickChart,
+                Icons.Default.AutoAwesome,
+                Icons.Default.CompareArrows
+            ),
             selectedIndex = state.selectedTab,
             onTabSelected = { backtestViewModel.selectTab(it) }
         )
@@ -155,12 +163,34 @@ fun BacktestScreen(
         Spacer(modifier = Modifier.height(10.dp))
 
         when (state.selectedTab) {
-            1 -> AiStrategyBuilderContent(
+            1 -> TradeReplayTabContent(
+                strategyName = state.replayStrategyName,
+                trades = state.replaySourceTrades,
+                currentIndex = state.replayTradeIndex,
+                window = state.replayWindow,
+                isLoading = state.isReplayLoading,
+                error = state.replayError,
+                outcomeFilter = state.replayOutcomeFilter,
+                playbackSpeed = state.replayPlaybackSpeed,
+                batchResults = state.batchResults,
+                activeBatchStrategyId = state.activeBatchStrategyId,
+                onSelectBatchStrategy = { stratId ->
+                    backtestViewModel.selectBatchResult(stratId)
+                    backtestViewModel.selectTab(1)
+                },
+                onSelectFilter = backtestViewModel::selectReplayFilter,
+                onCycleSpeed = backtestViewModel::cycleReplaySpeed,
+                onSelectTradeIndex = backtestViewModel::selectReplayTradeAt,
+                onExpandFullscreen = { backtestViewModel.setReplayFullscreen(true) },
+                onGoToBacktest = { backtestViewModel.selectTab(0) },
+                modifier = Modifier.weight(1f)
+            )
+            2 -> AiStrategyBuilderContent(
                 state = state,
                 backtestViewModel = backtestViewModel,
                 modifier = Modifier.weight(1f)
             )
-            2 -> BacktestCompareContent(
+            3 -> BacktestCompareContent(
                 savedRuns = state.savedRuns,
                 runAId = state.compareRunAId,
                 runBId = state.compareRunBId,
@@ -376,7 +406,7 @@ fun BacktestScreen(
                                             Text("Upload .py", fontSize = 12.sp)
                                         }
                                         Button(
-                                            onClick = { backtestViewModel.selectTab(1) },
+                                            onClick = { backtestViewModel.selectTab(2) },
                                             modifier = Modifier
                                                 .weight(1f)
                                                 .testTag("backtest_open_ai_builder_button"),
@@ -567,6 +597,66 @@ fun BacktestScreen(
                                             }
                                         }
                                     }
+                                }
+                            }
+                        }
+
+                        if (!state.isMultiStrategyMode && state.hasCsvBytes) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            val isLargeCsv = state.csvFileSizeBytes >= WorkerPoolBacktestCoordinator.LARGE_DATASET_TIME_SPLIT_BYTES
+                            val sizeMb = (state.csvFileSizeBytes / (1024L * 1024L)).coerceAtLeast(1L)
+                            Surface(
+                                color = if (isLargeCsv && state.timeSplitLargeCsv) {
+                                    positiveColor.copy(alpha = 0.10f)
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Text(
+                                                text = "Time-Split Workers (≥50 MB)",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            Surface(
+                                                color = if (isLargeCsv) positiveColor.copy(alpha = 0.18f) else MaterialTheme.colorScheme.surfaceVariant,
+                                                shape = RoundedCornerShape(5.dp)
+                                            ) {
+                                                Text(
+                                                    text = if (isLargeCsv) "${sizeMb} MB • Active" else "Standby (<50 MB)",
+                                                    fontSize = 9.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (isLargeCsv) positiveColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                                )
+                                            }
+                                        }
+                                        Text(
+                                            text = "Splits 2015→2026 across cores (3,000-bar indicator warm-up per chunk)",
+                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 2
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Switch(
+                                        checked = state.timeSplitLargeCsv,
+                                        onCheckedChange = backtestViewModel::setTimeSplitLargeCsv,
+                                        modifier = Modifier.testTag("time_split_workers_switch")
+                                    )
                                 }
                             }
                         }
@@ -770,7 +860,7 @@ fun BacktestScreen(
                                 color = if (feedback.startsWith("Could not")) negativeColor else positiveColor,
                                 modifier = Modifier.weight(1f)
                             )
-                            TextButton(onClick = { backtestViewModel.selectTab(2) }) {
+                            TextButton(onClick = { backtestViewModel.selectTab(3) }) {
                                 Text("View Compare", fontWeight = FontWeight.Bold)
                             }
                         }
@@ -1116,7 +1206,7 @@ private fun BacktestLiveProgressCard(progress: BacktestProgressSnapshot) {
                 )
                 if (progress.totalStrategies > 1) {
                     Text(
-                        text = "Running ${progress.totalStrategies} strategies simultaneously (${progress.strategyIndex} active)",
+                        text = "Parallel workers active (${progress.strategyIndex}/${progress.totalStrategies} running)",
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
                         color = positiveColor,
                         fontWeight = FontWeight.SemiBold,
@@ -1255,7 +1345,10 @@ private fun LiveStrategyStatusRow(item: StrategyLiveProgress) {
     val positiveColor = MaterialTheme.colorScheme.primary
     val negativeColor = MaterialTheme.colorScheme.error
     val isError = item.status == "error"
+    val isQueued = item.status == "queued"
+    val isDone = item.status == "done"
     val pnlColor = if (item.netPoints >= 0.0) positiveColor else negativeColor
+    val pct = (item.progressFraction * 100f).toInt().coerceIn(0, 100)
 
     Surface(
         color = if (isError) {
@@ -1268,64 +1361,141 @@ private fun LiveStrategyStatusRow(item: StrategyLiveProgress) {
             .fillMaxWidth()
             .testTag("live_strategy_status_${item.strategyId}")
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 10.dp, vertical = 7.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            verticalArrangement = Arrangement.spacedBy(5.dp)
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = item.name,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                if (isError) {
-                    Text(
-                        text = item.error.ifBlank { "Execution failed" },
-                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                        color = negativeColor,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                } else {
-                    val openNote = if (item.openTrades > 0) " • ${item.openTrades} open" else ""
-                    Text(
-                        text = "${item.closedTrades}t • ${item.wins}W/${item.losses}L/${item.breakEvens}BE$openNote",
-                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontFamily = FontFamily.Monospace
-                    )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        if (item.workerLabel.isNotBlank()) {
+                            Surface(
+                                color = if (isDone) {
+                                    positiveColor.copy(alpha = 0.2f)
+                                } else {
+                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
+                                },
+                                shape = RoundedCornerShape(5.dp)
+                            ) {
+                                Text(
+                                    text = item.workerLabel,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = if (isDone) positiveColor else MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                )
+                            }
+                        } else if (isQueued) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                shape = RoundedCornerShape(5.dp)
+                            ) {
+                                Text(
+                                    text = "QUEUE",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                )
+                            }
+                        }
+                        Text(
+                            text = item.name,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                    }
+                    when {
+                        isError -> {
+                            Text(
+                                text = item.error.ifBlank { "Execution failed" },
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                color = negativeColor,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        isQueued -> {
+                            Text(
+                                text = "Waiting for next free worker...",
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        else -> {
+                            val openNote = if (item.openTrades > 0) " • ${item.openTrades} open" else ""
+                            val pctNote = if (item.totalCandles > 0) " • $pct%" else ""
+                            Text(
+                                text = "${item.closedTrades}t • ${item.wins}W/${item.losses}L/${item.breakEvens}BE$openNote$pctNote",
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                when {
+                    isError -> {
+                        Text(
+                            text = "ERROR",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = negativeColor,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                    isQueued -> {
+                        Text(
+                            text = "QUEUED",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                    else -> {
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text(
+                                text = formatSignedR(item.netR),
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = pnlColor,
+                                fontFamily = FontFamily.Monospace
+                            )
+                            Text(
+                                text = "${formatSignedPoints(item.netPoints)}p",
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                color = pnlColor,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                    }
                 }
             }
-            Spacer(modifier = Modifier.width(8.dp))
-            if (isError) {
-                Text(
-                    text = "ERROR",
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = negativeColor,
-                    fontFamily = FontFamily.Monospace
+            if (!isError && !isQueued && item.totalCandles > 0) {
+                LinearProgressIndicator(
+                    progress = { item.progressFraction },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(3.dp),
+                    color = if (isDone) positiveColor else MaterialTheme.colorScheme.secondary,
+                    trackColor = MaterialTheme.colorScheme.surfaceVariant
                 )
-            } else {
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = formatSignedR(item.netR),
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = pnlColor,
-                        fontFamily = FontFamily.Monospace
-                    )
-                    Text(
-                        text = "${formatSignedPoints(item.netPoints)}p",
-                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                        color = pnlColor,
-                        fontFamily = FontFamily.Monospace
-                    )
-                }
             }
         }
     }

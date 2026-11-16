@@ -54,6 +54,18 @@ object CsvCandleWindowReader {
             return TradeReplayWindow(emptyList(), -1, -1)
         }
 
+        BinaryCandleCache.readTradeWindow(
+            csvFile = csvFile,
+            trade = trade,
+            paddingBefore = paddingBefore,
+            paddingAfter = paddingAfter,
+            maxWindowCandles = maxWindowCandles
+        )?.let { cachedWindow ->
+            if (cachedWindow.candles.isNotEmpty()) {
+                return cachedWindow
+            }
+        }
+
         val (pushback, charset) = openUtfAwareReader(csvFile)
         BufferedReader(InputStreamReader(pushback, charset), 65_536).use { reader ->
             var headerLine: String? = null

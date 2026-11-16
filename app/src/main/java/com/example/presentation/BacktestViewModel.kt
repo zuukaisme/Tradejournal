@@ -13,22 +13,23 @@ import com.example.backtest.AiStrategyGenerator
 import com.example.backtest.BacktestCodec
 import com.example.backtest.BacktestError
 import com.example.backtest.BacktestParseOutcome
-import com.example.backtest.BacktestProgressListener
 import com.example.backtest.BacktestProgressSnapshot
 import com.example.backtest.BacktestResult
 import com.example.backtest.BacktestTimeframe
 import com.example.backtest.BatchBacktestParseOutcome
 import com.example.backtest.BatchStrategyRunResult
 import com.example.backtest.BatchStrategySpec
+import com.example.backtest.BinaryCandleCache
 import com.example.backtest.CandleTimeframeResampler
 import com.example.backtest.CsvCandleWindowReader
-import com.example.backtest.PythonBacktestRunner
 import com.example.backtest.ResampledCsvFileResult
 import com.example.backtest.SavedBacktestRun
 import com.example.backtest.SavedCsvDataset
 import com.example.backtest.SavedCsvStore
+import com.example.backtest.StrategyLiveProgress
 import com.example.backtest.Trade
 import com.example.backtest.TradeReplayWindow
+import com.example.backtest.worker.WorkerPoolBacktestCoordinator
 import com.example.data.local.TradingDatabase
 import com.example.data.repository.TradingRepository
 import com.example.domain.model.PythonStrategy
@@ -46,7 +47,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 data class BacktestUiState(
-    val selectedTab: Int = 0, // 0 = Run Backtest, 1 = AI Strategy Builder, 2 = Compare
+    val selectedTab: Int = 0, // 0 = Run, 1 = Replay, 2 = AI Builder, 3 = Compare
     val fileName: String? = null,
     val estimatedRows: Int = 0,
     val detectedEncoding: String = "",
@@ -58,6 +59,7 @@ data class BacktestUiState(
     val lastRunTimeframeLabel: String? = null,
     val lastRunCandleCount: Int? = null,
     val hasCsvBytes: Boolean = false,
+    val csvFileSizeBytes: Long = 0L,
     // Saved persistent CSV datasets
     val savedCsvs: List<SavedCsvDataset> = emptyList(),
     val activeSavedCsvId: String? = null,
@@ -65,6 +67,7 @@ data class BacktestUiState(
     val availableStrategies: List<PythonStrategy> = emptyList(),
     val selectedStrategy: PythonStrategy? = null,
     val isMultiStrategyMode: Boolean = false,
+    val timeSplitLargeCsv: Boolean = true,
     val selectedStrategyIds: Set<Long> = emptySet(),
     val batchResults: List<BatchStrategyRunResult> = emptyList(),
     val activeBatchStrategyId: Long? = null,
@@ -78,7 +81,7 @@ data class BacktestUiState(
     val liveProgress: BacktestProgressSnapshot? = null,
     val backtestError: BacktestError? = null,
     val result: BacktestResult? = null,
-    // Candlestick Trade Replay modal state
+    // Dedicated Replay tab + optional full-screen modal state
     val isReplayOpen: Boolean = false,
     val isReplayLoading: Boolean = false,
     val replayStrategyName: String = "",
@@ -86,6 +89,8 @@ data class BacktestUiState(
     val replayTradeIndex: Int = -1,
     val replayWindow: TradeReplayWindow? = null,
     val replayError: String? = null,
+    val replayOutcomeFilter: Int = 0, // 0 = All, 1 = Losses, 2 = Wins, 3 = BE
+    val replayPlaybackSpeed: Int = 1, // 1, 2, 4
     // AI Strategy Builder state (Backtester only)
     val selectedProvider: AiProvider = AiProvider.CLAUDE,
     val selectedModelId: String = AiModelCatalog.defaultModelFor(AiProvider.CLAUDE).id,
@@ -227,7 +232,8 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                         detectedTimeframeMinutes = active.detectedTimeframeMinutes,
                         availableTimeframes = targets,
                         selectedTimeframe = BacktestTimeframe.NATIVE,
-                        hasCsvBytes = activeFile.exists() && active.estimatedRows > 0
+                        hasCsvBytes = activeFile.exists() && active.estimatedRows > 0,
+                        csvFileSizeBytes = activeFile.length().takeIf { it > 0L } ?: active.fileSizeBytes
                     )
                 }
             } else {
@@ -238,6 +244,33 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
 
     fun selectTab(tabIndex: Int) {
         _uiState.update { it.copy(selectedTab = tabIndex) }
+        if (tabIndex == 1) {
+            ensureReplayLoadedForActiveResult()
+        }
+    }
+
+    private fun ensureReplayLoadedForActiveResult() {
+        val snapshot = _uiState.value
+        val activeRes = snapshot.result ?: return
+        if (activeRes.trades.isEmpty()) return
+        val needsSync = snapshot.replaySourceTrades != activeRes.trades ||
+            snapshot.replayTradeIndex !in activeRes.trades.indices
+        if (needsSync) {
+            val stratName = snapshot.activeBatchStrategyId?.let { id ->
+                snapshot.batchResults.firstOrNull { it.strategyId == id }?.strategyName
+            } ?: snapshot.selectedStrategy?.name ?: "Strategy"
+            _uiState.update {
+                it.copy(
+                    replayStrategyName = stratName,
+                    replaySourceTrades = activeRes.trades,
+                    replayTradeIndex = 0,
+                    replayError = null
+                )
+            }
+            loadReplayWindow(activeRes.trades[0])
+        } else if (snapshot.replayWindow == null && !snapshot.isReplayLoading) {
+            loadReplayWindow(activeRes.trades[snapshot.replayTradeIndex])
+        }
     }
 
     // --- Saved CSV Controls ---
@@ -271,6 +304,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                 lastRunTimeframeLabel = null,
                 lastRunCandleCount = null,
                 hasCsvBytes = dataset.estimatedRows > 0,
+                csvFileSizeBytes = file.length().takeIf { it > 0L } ?: dataset.fileSizeBytes,
                 backtestError = null,
                 result = null,
                 batchResults = emptyList(),
@@ -296,7 +330,8 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                 val next = remaining.firstOrNull()
                 if (next != null) {
                     SavedCsvStore.setLastSelectedId(appContext, next.id)
-                    csvCacheFile = SavedCsvStore.resolveFile(root, next)
+                    val activeNextFile = SavedCsvStore.resolveFile(root, next)
+                    csvCacheFile = activeNextFile
                     val targets = CandleTimeframeResampler.availableTargets(next.detectedTimeframeMinutes)
                     _uiState.update {
                         it.copy(
@@ -311,6 +346,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                             availableTimeframes = targets,
                             selectedTimeframe = BacktestTimeframe.NATIVE,
                             hasCsvBytes = next.estimatedRows > 0,
+                            csvFileSizeBytes = activeNextFile.length().takeIf { l -> l > 0L } ?: next.fileSizeBytes,
                             result = null,
                             batchResults = emptyList(),
                             activeBatchStrategyId = null
@@ -333,6 +369,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                             availableTimeframes = listOf(BacktestTimeframe.NATIVE),
                             selectedTimeframe = BacktestTimeframe.NATIVE,
                             hasCsvBytes = false,
+                            csvFileSizeBytes = 0L,
                             result = null,
                             batchResults = emptyList(),
                             activeBatchStrategyId = null
@@ -373,6 +410,10 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    fun setTimeSplitLargeCsv(enabled: Boolean) {
+        _uiState.update { it.copy(timeSplitLargeCsv = enabled, backtestError = null) }
+    }
+
     fun toggleStrategySelection(strategyId: Long) {
         _uiState.update { current ->
             val updated = if (strategyId in current.selectedStrategyIds) {
@@ -400,12 +441,21 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun selectBatchResult(strategyId: Long) {
+        val picked = _uiState.value.batchResults.firstOrNull { it.strategyId == strategyId }
+        val newRes = picked?.result
         _uiState.update { current ->
-            val picked = current.batchResults.firstOrNull { it.strategyId == strategyId }
             current.copy(
                 activeBatchStrategyId = strategyId,
-                result = picked?.result ?: current.result
+                result = newRes ?: current.result,
+                replayStrategyName = picked?.strategyName ?: current.replayStrategyName,
+                replaySourceTrades = newRes?.trades ?: current.replaySourceTrades,
+                replayTradeIndex = if (newRes != null && newRes.trades.isNotEmpty()) 0 else -1,
+                replayWindow = if (newRes != null) null else current.replayWindow,
+                replayError = null
             )
+        }
+        if (newRes != null && newRes.trades.isNotEmpty()) {
+            loadReplayWindow(newRes.trades[0])
         }
     }
 
@@ -491,6 +541,9 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
 
                 if (resolvedFile != null) {
                     csvCacheFile = resolvedFile
+                    viewModelScope.launch(Dispatchers.IO) {
+                        BinaryCandleCache.ensureCache(resolvedFile)
+                    }
                 }
                 lastRunBacktestFile = null
 
@@ -509,6 +562,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                         lastRunTimeframeLabel = null,
                         lastRunCandleCount = null,
                         hasCsvBytes = inspection.estimatedRows > 0,
+                        csvFileSizeBytes = resolvedFile?.length()?.takeIf { l -> l > 0L } ?: inspection.fileSizeBytes,
                         isImportingCsv = false,
                         importProgress = 1f,
                         importBytesRead = totalBytes.takeIf { it > 0L } ?: inspection.fileSizeBytes,
@@ -614,6 +668,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
         }
 
         val isBatchRun = snapshot.isMultiStrategyMode && selectedList.size > 1
+        val workerCount = WorkerPoolBacktestCoordinator.optimalWorkerCount(selectedList.size)
         viewModelScope.launch {
             _uiState.update {
                 it.copy(
@@ -622,13 +677,15 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                         totalCandles = snapshot.estimatedRows,
                         strategyIndex = if (isBatchRun) selectedList.size else 0,
                         totalStrategies = if (isBatchRun) selectedList.size else 0,
-                        currentStrategyName = if (isBatchRun) "${selectedList.size}/${selectedList.size} active" else selectedList.first().name,
+                        currentStrategyName = if (isBatchRun) "${workerCount} worker processes" else selectedList.first().name,
+                        currentTime = "Preparing binary candle cache...",
                         strategyStatuses = if (isBatchRun) {
                             selectedList.map { s ->
-                                com.example.backtest.StrategyLiveProgress(
+                                StrategyLiveProgress(
                                     strategyId = s.id,
                                     name = s.name,
-                                    status = "running"
+                                    totalCandles = snapshot.estimatedRows,
+                                    status = "queued"
                                 )
                             }
                         } else {
@@ -640,16 +697,8 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
             }
             try {
                 val appContext = getApplication<Application>()
-                val listener = BacktestProgressListener { json ->
-                    val parsed = BacktestCodec.parseProgressJson(json)
-                    if (parsed != null) {
-                        _uiState.update { current ->
-                            if (current.isLoading) current.copy(liveProgress = parsed) else current
-                        }
-                    }
-                }
                 val activeDatasetKey = snapshot.activeSavedCsvId ?: sourceFile.name
-                val prepared = withContext(Dispatchers.Default) {
+                val preparedFileAndTf = withContext(Dispatchers.IO) {
                     val targetTf = snapshot.selectedTimeframe
                     val backtestFile: File
                     val candleCount: Int
@@ -671,40 +720,57 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                         backtestFile = resampled.file
                         candleCount = resampled.outputCandleCount
                     }
-
-                    if (isBatchRun) {
-                        val specs = selectedList.map {
-                            BatchStrategySpec(id = it.id, name = it.name, className = it.className, code = it.code)
+                    // Build/verify fast columnar .btbin cache once so all worker processes map arrays in ms
+                    BinaryCandleCache.ensureCache(backtestFile) { indexedRows ->
+                        _uiState.update { current ->
+                            if (!current.isLoading) current else current.copy(
+                                liveProgress = current.liveProgress?.copy(
+                                    candlesProcessed = indexedRows.coerceAtMost(candleCount.coerceAtLeast(1)),
+                                    totalCandles = candleCount.coerceAtLeast(indexedRows),
+                                    currentTime = "Indexing binary cache ($indexedRows rows)..."
+                                )
+                            )
                         }
-                        val specsJson = BacktestCodec.encodeBatchStrategySpecs(specs)
-                        val jsonString = PythonBacktestRunner.runWithMultipleStrategiesFile(
-                            context = appContext,
-                            csvPath = backtestFile.absolutePath,
-                            strategiesJson = specsJson,
-                            maxStopPoints = maxStopPoints,
-                            pointSize = pointSize,
-                            progressListener = listener
-                        )
-                        val batchOutcome = BacktestCodec.parseBatchBacktestJson(jsonString)
-                        Triple(batchOutcome, Triple(backtestFile, candleCount, targetTf), selectedList)
-                    } else {
-                        val single = selectedList.first()
-                        val jsonString = PythonBacktestRunner.runWithStrategyFile(
-                            context = appContext,
-                            csvPath = backtestFile.absolutePath,
-                            strategyCode = single.code,
-                            className = single.className,
-                            maxStopPoints = maxStopPoints,
-                            pointSize = pointSize,
-                            progressListener = listener
-                        )
-                        val singleOutcome = BacktestCodec.parseBacktestJson(jsonString)
-                        Triple(singleOutcome, Triple(backtestFile, candleCount, targetTf), selectedList)
                     }
+                    Triple(backtestFile, candleCount, targetTf)
                 }
 
-                val (rawOutcome, fileAndTf, usedStrategies) = prepared
-                val (backtestFile, candleCount, usedTimeframe) = fileAndTf
+                val (backtestFile, candleCount, usedTimeframe) = preparedFileAndTf
+                val specs = selectedList.map {
+                    BatchStrategySpec(id = it.id, name = it.name, className = it.className, code = it.code)
+                }
+
+                val rawOutcome: Any = if (isBatchRun) {
+                    WorkerPoolBacktestCoordinator.runBatchParallel(
+                        context = appContext,
+                        csvFile = backtestFile,
+                        specs = specs,
+                        estimatedRows = candleCount,
+                        maxStopPoints = maxStopPoints,
+                        pointSize = pointSize,
+                        onProgress = { progressSnapshot ->
+                            _uiState.update { current ->
+                                if (current.isLoading) current.copy(liveProgress = progressSnapshot) else current
+                            }
+                        }
+                    )
+                } else {
+                    WorkerPoolBacktestCoordinator.runSingle(
+                        context = appContext,
+                        csvFile = backtestFile,
+                        spec = specs.first(),
+                        estimatedRows = candleCount,
+                        maxStopPoints = maxStopPoints,
+                        pointSize = pointSize,
+                        enableTimeSplit = snapshot.timeSplitLargeCsv,
+                        onProgress = { progressSnapshot ->
+                            _uiState.update { current ->
+                                if (current.isLoading) current.copy(liveProgress = progressSnapshot) else current
+                            }
+                        }
+                    )
+                }
+
                 lastRunBacktestFile = backtestFile
 
                 val runTfLabel = if (usedTimeframe == BacktestTimeframe.NATIVE) {
@@ -720,7 +786,8 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
 
                 when (rawOutcome) {
                     is BacktestParseOutcome.Success -> {
-                        val ranStrategy = usedStrategies.first()
+                        val ranStrategy = selectedList.first()
+                        val initialTrades = rawOutcome.result.trades
                         _uiState.update {
                             it.copy(
                                 isLoading = false,
@@ -731,8 +798,16 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                                 backtestError = null,
                                 runSavedFeedback = null,
                                 lastRunTimeframeLabel = runTfLabel,
-                                lastRunCandleCount = candleCount
+                                lastRunCandleCount = candleCount,
+                                replayStrategyName = ranStrategy.name,
+                                replaySourceTrades = initialTrades,
+                                replayTradeIndex = if (initialTrades.isNotEmpty()) 0 else -1,
+                                replayWindow = null,
+                                replayError = null
                             )
+                        }
+                        if (initialTrades.isNotEmpty()) {
+                            loadReplayWindow(initialTrades[0])
                         }
                         saveSingleResult(ranStrategy.name, rawOutcome.result, snapshot)
                     }
@@ -755,6 +830,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                             rawOutcome.runs.firstOrNull()?.error
                                 ?: BacktestError("All selected strategies failed to produce results.")
                         } else null
+                        val initialTrades = firstOk?.result?.trades.orEmpty()
                         _uiState.update {
                             it.copy(
                                 isLoading = false,
@@ -765,8 +841,16 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                                 backtestError = firstErr,
                                 runSavedFeedback = null,
                                 lastRunTimeframeLabel = runTfLabel,
-                                lastRunCandleCount = candleCount
+                                lastRunCandleCount = candleCount,
+                                replayStrategyName = firstOk?.strategyName ?: "",
+                                replaySourceTrades = initialTrades,
+                                replayTradeIndex = if (initialTrades.isNotEmpty()) 0 else -1,
+                                replayWindow = null,
+                                replayError = null
                             )
+                        }
+                        if (initialTrades.isNotEmpty()) {
+                            loadReplayWindow(initialTrades[0])
                         }
                         saveBatchResults(rawOutcome.runs, snapshot)
                     }
@@ -901,7 +985,8 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
 
         _uiState.update {
             it.copy(
-                isReplayOpen = true,
+                selectedTab = 1, // Switch directly to dedicated Replay tab
+                isReplayOpen = false,
                 replayStrategyName = stratName,
                 replaySourceTrades = result.trades,
                 replayTradeIndex = clamped,
@@ -910,6 +995,25 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
             )
         }
         loadReplayWindow(result.trades[clamped])
+    }
+
+    fun setReplayFullscreen(open: Boolean) {
+        _uiState.update { it.copy(isReplayOpen = open) }
+    }
+
+    fun selectReplayFilter(filterIndex: Int) {
+        _uiState.update { it.copy(replayOutcomeFilter = filterIndex) }
+    }
+
+    fun cycleReplaySpeed() {
+        _uiState.update { current ->
+            val next = when (current.replayPlaybackSpeed) {
+                1 -> 2
+                2 -> 4
+                else -> 1
+            }
+            current.copy(replayPlaybackSpeed = next)
+        }
     }
 
     fun selectReplayTradeAt(index: Int) {
@@ -925,13 +1029,9 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun closeTradeReplay() {
-        replayLoadJob?.cancel()
         _uiState.update {
             it.copy(
-                isReplayOpen = false,
-                isReplayLoading = false,
-                replayWindow = null,
-                replayError = null
+                isReplayOpen = false
             )
         }
     }
