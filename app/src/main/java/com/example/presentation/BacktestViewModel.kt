@@ -409,7 +409,8 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                                 lastRunTimeframeLabel = runTfLabel,
                                 lastRunCandleCount = candleCount
                             )
-                        }
+                            saveCurrentResult()
+                    }
                     }
                     is BacktestParseOutcome.Failure -> {
                         _uiState.update {
@@ -467,8 +468,13 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
             createdAt = System.currentTimeMillis()
         )
         viewModelScope.launch {
-            repository.saveBacktestRun(run)
-            _uiState.update { it.copy(runSavedFeedback = "Saved \"${run.strategyName}\" to Compare tab.") }
+            runCatching { repository.saveBacktestRun(run) }
+                .onSuccess {
+                    _uiState.update { it.copy(runSavedFeedback = "Automatically saved " + run.strategyName + " to Compare tab.") }
+                }
+                .onFailure {
+                    _uiState.update { it.copy(runSavedFeedback = "Could not save this run. Please check available device storage.") }
+                }
         }
     }
 
