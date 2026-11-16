@@ -1903,7 +1903,7 @@ def run_optimizer_with_strategy_file(
                 candidate = int(round(value)) if all(isinstance(item.get(k), int) and not isinstance(item.get(k), bool) for k in ("min", "max", "step")) else round(value, 10)
                 values.append(candidate)
                 if len(values) > max_combinations:
-                    raise ValueError(f"Parameter range exceeds the maximum of {max_combinations} combinations.")
+                    raise ValueError(f"Parameter range maximum is {max_combinations} combinations.")
                 value = start + len(values) * step
             dimensions.append((name, values))
             total *= len(values)
