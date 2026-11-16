@@ -693,56 +693,6 @@ object WorkerPoolBacktestCoordinator {
     }
 
     suspend fun runBatchParallel(
-        context: Context,
-        csvFile: File,
-        specs: List<BatchStrategySpec>,
-        estimatedRows: Int,
-        maxStopPoints: Double,
-        pointSize: Double,
-        onProgress: (BacktestProgressSnapshot) -> Unit
-    ): BatchBacktestParseOutcome = coroutineScope {
-        if (specs.isEmpty()) {
-            return@coroutineScope BatchBacktestParseOutcome.Failure(
-                BacktestError("No strategies supplied for parallel batch backtest.")
-            )
-        }
-
-        val binaryCandleCount = BinaryCandleCache.readCandleCount(csvFile)
-        if (
-            csvFile.length() >= LARGE_DATASET_TIME_SPLIT_BYTES &&
-            binaryCandleCount != null &&
-            binaryCandleCount >= MIN_CANDLES_FOR_TIME_SPLIT
-        ) {
-            val sharded = runBatchTimeShardedParallel(
-                context = context,
-                csvFile = csvFile,
-                specs = specs,
-                totalCandles = binaryCandleCount,
-                maxStopPoints = maxStopPoints,
-                pointSize = pointSize,
-                onProgress = onProgress
-            )
-            if (sharded != null) return@coroutineScope sharded
-        }
-
-        val appContext = context.applicationContext
-        val ipcDir = File(appContext.cacheDir, "worker_ipc/${UUID.randomUUID()}").apply { mkdirs() }
-        context: Context,
-        csvFile: File,
-        specs: List<BatchStrategySpec>,
-        estimatedRows: Int,
-        maxStopPoints: Double,
-        pointSize: Double,
-        onProgress: (BacktestProgressSnapshot) -> Unit
-    ): BatchBacktestParseOutcome = coroutineScope {
-        if (specs.isEmpty()) {
-            return@coroutineScope BatchBacktestParseOutcome.Failure(
-                BacktestError("No strategies supplied for parallel batch backtest.")
-            )
-        }
-
-        val appContext = context.applicationContext
-        val ipcDir = File(appContext.cacheDir, "worker_ipc/${UUID.randomUUID()}").apply { mkdirs() }
         val replyThread = HandlerThread("BacktestBatchReplies").apply { start() }
         val inFlight = ConcurrentHashMap<String, InFlightRequest>()
         val aggregator = BatchProgressAggregator(specs, estimatedRows)
