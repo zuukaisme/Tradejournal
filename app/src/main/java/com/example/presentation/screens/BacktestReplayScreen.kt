@@ -1419,7 +1419,7 @@ private fun CandlestickReplayCanvas(
         val padTop = 14.dp.toPx()
         val padBottom = 14.dp.toPx()
         val chartHeight = (size.height - padTop - padBottom).coerceAtLeast(40f)
-        val maxVisibleCandles = (chartRight / (12.dp.toPx())).toInt().coerceIn(24, 96)
+        val maxVisibleCandles = (chartRight / (8.dp.toPx())).toInt().coerceIn(16, 140)
         val candleOffset = (visibleCandles.size - maxVisibleCandles).coerceAtLeast(0)
         val chartCandles = visibleCandles.drop(candleOffset)
         val adjustedEntryPos = entryPos - candleOffset
@@ -1517,8 +1517,8 @@ private fun CandlestickReplayCanvas(
         )
 
         // Draw OHLC candlesticks up to visibleCandles.size
-        val candleBodyWidth = (slotWidth * 0.62f).coerceIn(2f, 16.dp.toPx())
-        val wickWidth = (slotWidth * 0.14f).coerceIn(1f, 2.5.dp.toPx())
+        val candleBodyWidth = (slotWidth * 0.72f).coerceIn(3.dp.toPx(), 14.dp.toPx())
+        val wickWidth = (slotWidth * 0.16f).coerceIn(1.2.dp.toPx(), 2.2.dp.toPx())
 
         chartCandles.forEachIndexed { idx, candle ->
             val cx = (idx + 0.5f) * slotWidth
