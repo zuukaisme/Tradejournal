@@ -1113,6 +1113,120 @@ def compute_stats(
         "equityCurve": curve,
         "trades": trade_dicts,
         "warnings": warnings,
+        "research": build_research_analytics(trade_dicts),
+    }
+
+
+
+def _parse_trade_datetime(value: str):
+    from datetime import datetime
+    text = str(value or "").strip()
+    for fmt in ("%Y.%m.%d %H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y.%m.%d %H:%M", "%Y-%m-%d %H:%M", "%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M", "%Y.%m.%d", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            pass
+    return None
+
+
+def _drawdown_r(values):
+    equity = peak = drawdown = 0.0
+    for value in values:
+        equity += value
+        peak = max(peak, equity)
+        drawdown = max(drawdown, peak - equity)
+    return drawdown
+
+
+def build_research_analytics(trades, simulations: int = 2000, seed: int = 42):
+    import math
+    from collections import defaultdict
+
+    rows = []
+    for trade in trades:
+        if isinstance(trade, dict):
+            rows.append((float(trade.get("r", 0.0) or 0.0), _parse_trade_datetime(trade.get("openTime", ""))))
+        else:
+            rows.append((float(getattr(trade, "r", 0.0) or 0.0), _parse_trade_datetime(getattr(trade, "open_time", ""))))
+    returns = [row[0] for row in rows]
+    buckets = {"session": defaultdict(list), "weekday": defaultdict(list), "month": defaultdict(list)}
+    for value, opened in rows:
+        if opened is None:
+            continue
+        hour = opened.hour
+        session = "Asia" if hour < 8 else "London" if hour < 13 else "New York" if hour < 22 else "Off-hours"
+        buckets["session"][session].append(value)
+        buckets["weekday"][opened.strftime("%A")].append(value)
+        buckets["month"][opened.strftime("%Y-%m")].append(value)
+
+    def summarize(groups):
+        result = []
+        for label, values in sorted(groups.items()):
+            wins = sum(v > 1e-9 for v in values)
+            losses = sum(v < -1e-9 for v in values)
+            result.append({
+                "label": label, "trades": len(values), "netR": round(sum(values), 3),
+                "avgR": round(sum(values) / len(values), 4),
+                "winRatePct": round(wins / len(values) * 100, 1),
+                "wins": wins, "losses": losses,
+            })
+        return result
+
+    n = len(returns)
+    if n:
+        rng = random.Random(seed)
+        count = max(100, min(int(simulations), 20000))
+        endings, drawdowns = [], []
+        for _ in range(count):
+            sequence = [returns[rng.randrange(n)] for _ in range(n)]
+            endings.append(sum(sequence))
+            drawdowns.append(_drawdown_r(sequence))
+        endings.sort()
+        drawdowns.sort()
+        def pct(values, p):
+            return values[max(0, min(len(values) - 1, int(round((len(values) - 1) * p))))]
+        monte_carlo = {
+            "simulations": count, "tradeCountPerSimulation": n,
+            "endingNetR": {"p05": round(pct(endings, .05), 3), "p50": round(pct(endings, .5), 3), "p95": round(pct(endings, .95), 3)},
+            "maxDrawdownR": {"p05": round(pct(drawdowns, .05), 3), "p50": round(pct(drawdowns, .5), 3), "p95": round(pct(drawdowns, .95), 3)},
+            "probabilityOfNegativeEndingPct": round(sum(v < 0 for v in endings) / count * 100, 1),
+        }
+    else:
+        monte_carlo = {
+            "simulations": 0, "tradeCountPerSimulation": 0,
+            "endingNetR": {"p05": 0.0, "p50": 0.0, "p95": 0.0},
+            "maxDrawdownR": {"p05": 0.0, "p50": 0.0, "p95": 0.0},
+            "probabilityOfNegativeEndingPct": 0.0,
+        }
+
+    wins = sum(v > 1e-9 for v in returns)
+    losses = sum(v < -1e-9 for v in returns)
+    avg = sum(returns) / n if n else 0.0
+    variance = sum((v - avg) ** 2 for v in returns) / (n - 1) if n > 1 else 0.0
+    standard_error = math.sqrt(variance / n) if n > 1 else None
+    z_score = avg / standard_error if standard_error and standard_error > 0 else None
+    sample_factor = min(1.0, n / 100.0)
+    win_factor = wins / (wins + losses) if wins + losses else 0.0
+    dd = _drawdown_r(returns)
+    dd_factor = 1.0 / (1.0 + dd / max(abs(sum(returns) / max(n, 1)), .25)) if n else 0.0
+    score = round(100 * (.4 * sample_factor + .3 * win_factor + .3 * dd_factor)) if n else 0
+    confidence = {
+        "score": max(0, min(100, score)),
+        "label": "Low" if n < 30 else "Developing" if n < 100 else "Stronger sample",
+        "trades": n, "averageR": round(avg, 4),
+        "standardErrorR": round(standard_error, 4) if standard_error is not None else None,
+        "zScore": round(z_score, 3) if z_score is not None else None,
+        "note": "Heuristic research score, not a probability of future profit. No out-of-sample validation is included.",
+    }
+    return {
+        "performanceBreakdown": {
+            "bySession": summarize(buckets["session"]),
+            "byWeekday": summarize(buckets["weekday"]),
+            "byMonth": summarize(buckets["month"]),
+            "unclassifiedTrades": sum(opened is None for _, opened in rows),
+        },
+        "monteCarlo": monte_carlo,
+        "confidence": confidence,
     }
 
 
@@ -1749,3 +1863,100 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def run_optimizer_with_strategy_file(
+    csv_path: str,
+    strategy_code: str,
+    class_name: str,
+    parameter_ranges_json: str,
+    max_stop_points: float = 0.0,
+    point_size: float = 1.0,
+    max_combinations: int = 2500,
+) -> str:
+    """Runs a bounded parameter grid against one cached candle load and ranks every valid result."""
+    try:
+        ranges = json.loads(parameter_ranges_json)
+        if not isinstance(ranges, list) or not ranges:
+            raise ValueError("Add at least one parameter range.")
+        if len(ranges) > 12:
+            raise ValueError("A maximum of 12 parameters can be optimized at once.")
+
+        strategy_cls, err_msg = _compile_and_find_strategy(strategy_code, class_name)
+        if err_msg or strategy_cls is None:
+            raise ValueError(err_msg or "Missing Strategy class")
+
+        dimensions = []
+        total = 1
+        for item in ranges:
+            name = str(item.get("name", "")).strip()
+            if not name or name.startswith("_"):
+                raise ValueError("Parameter names must be public strategy attributes.")
+            start = float(item["min"])
+            stop = float(item["max"])
+            step = float(item["step"])
+            if step <= 0 or stop < start:
+                raise ValueError("Each range needs max >= min and step > 0.")
+            values = []
+            value = start
+            while value <= stop + abs(step) * 1e-9:
+                candidate = int(round(value)) if all(isinstance(item.get(k), int) and not isinstance(item.get(k), bool) for k in ("min", "max", "step")) else round(value, 10)
+                values.append(candidate)
+                if len(values) > max_combinations:
+                    raise ValueError(f"Parameter range maximum is {max_combinations} combinations.")
+                value = start + len(values) * step
+            dimensions.append((name, values))
+            total *= len(values)
+            if total > max_combinations:
+                raise ValueError(f"Grid contains {total} combinations; maximum is {max_combinations}.")
+
+        candles = load_candles(csv_path)
+        max_stop = max_stop_points * point_size if max_stop_points > 0 else None
+        results = []
+        for index in range(total):
+            remainder = index
+            selected = {}
+            for name, values in reversed(dimensions):
+                selected[name] = values[remainder % len(values)]
+                remainder //= len(values)
+            strategy = strategy_cls()
+            for name, value in selected.items():
+                if not hasattr(strategy, name):
+                    raise ValueError(f"Strategy has no public parameter '{name}'. Add it to __init__ first.")
+                setattr(strategy, name, value)
+            trades, skipped, open_trades, total_candles = _run_backtest_detailed(
+                candles, strategy, max_stop=max_stop, point_size=point_size
+            )
+            stats = compute_stats(
+                trades, skipped, point_size,
+                open_trades=open_trades, total_candles=total_candles
+            )
+            summary = stats["summary"]
+            results.append({
+                "parameters": selected,
+                "totalTrades": summary["totalTrades"],
+                "netR": summary["netR"],
+                "avgR": summary["avgR"],
+                "profitFactor": summary["profitFactor"],
+                "maxDrawdownR": stats["risk"]["maxDrawdownR"],
+                "winRatePct": summary["winRatePct"],
+            })
+
+        results.sort(key=lambda row: (
+            row["netR"],
+            row["profitFactor"] if row["profitFactor"] is not None else -1.0,
+            -row["maxDrawdownR"],
+        ), reverse=True)
+        for rank, row in enumerate(results, 1):
+            row["rank"] = rank
+        return json.dumps({
+            "totalCandles": len(candles),
+            "combinationsTested": len(results),
+            "rankingMetric": "Net R, then profit factor, then lower max drawdown",
+            "results": results,
+        })
+    except Exception as exc:
+        return json.dumps({
+            "error": f"{type(exc).__name__}: {exc}",
+            "details": traceback.format_exc(limit=3),
+        })

@@ -473,7 +473,8 @@ internal data class BacktestResultDto(
     val timing: BacktestTimingDto,
     val equityCurve: List<Double> = emptyList(),
     val trades: List<TradeDto> = emptyList(),
-    val warnings: List<String> = emptyList()
+    val warnings: List<String> = emptyList(),
+    val research: BacktestResearchDto? = null
 ) {
     fun toDomain(): BacktestResult {
         val domainTrades = trades.map { it.toDomain() }
@@ -485,9 +486,82 @@ internal data class BacktestResultDto(
             timing = timing.toDomain(),
             equityCurve = equityCurve,
             trades = domainTrades,
-            warnings = warnings
+            warnings = warnings,
+            research = research?.toDomain() ?: BacktestResearch()
         )
     }
+}
+
+
+@JsonClass(generateAdapter = true)
+internal data class ResearchBucketDto(
+    val label: String = "",
+    val trades: Int = 0,
+    val netR: Double = 0.0,
+    val avgR: Double = 0.0,
+    val winRatePct: Double = 0.0,
+    val wins: Int = 0,
+    val losses: Int = 0
+) {
+    fun toDomain() = com.example.backtest.ResearchBucket(label, trades, netR, avgR, winRatePct, wins, losses)
+}
+
+@JsonClass(generateAdapter = true)
+internal data class ResearchPercentilesDto(
+    val p05: Double = 0.0,
+    val p50: Double = 0.0,
+    val p95: Double = 0.0
+) {
+    fun toMap() = mapOf("p05" to p05, "p50" to p50, "p95" to p95)
+}
+
+@JsonClass(generateAdapter = true)
+internal data class MonteCarloResearchDto(
+    val simulations: Int = 0,
+    val tradeCountPerSimulation: Int = 0,
+    val endingNetR: ResearchPercentilesDto = ResearchPercentilesDto(),
+    val maxDrawdownR: ResearchPercentilesDto = ResearchPercentilesDto(),
+    val probabilityOfNegativeEndingPct: Double = 0.0
+) {
+    fun toDomain() = com.example.backtest.MonteCarloResearch(
+        simulations, tradeCountPerSimulation, endingNetR.toMap(), maxDrawdownR.toMap(), probabilityOfNegativeEndingPct
+    )
+}
+
+@JsonClass(generateAdapter = true)
+internal data class ConfidenceResearchDto(
+    val score: Int = 0,
+    val label: String = "Insufficient data",
+    val trades: Int = 0,
+    val averageR: Double = 0.0,
+    val standardErrorR: Double? = null,
+    val zScore: Double? = null,
+    val note: String = ""
+) {
+    fun toDomain() = com.example.backtest.ConfidenceResearch(score, label, trades, averageR, standardErrorR, zScore, note)
+}
+
+@JsonClass(generateAdapter = true)
+internal data class PerformanceBreakdownDto(
+    val bySession: List<ResearchBucketDto> = emptyList(),
+    val byWeekday: List<ResearchBucketDto> = emptyList(),
+    val byMonth: List<ResearchBucketDto> = emptyList(),
+    val unclassifiedTrades: Int = 0
+) {
+    fun toDomain() = com.example.backtest.PerformanceBreakdown(
+        bySession.map { it.toDomain() }, byWeekday.map { it.toDomain() }, byMonth.map { it.toDomain() }, unclassifiedTrades
+    )
+}
+
+@JsonClass(generateAdapter = true)
+internal data class BacktestResearchDto(
+    val performanceBreakdown: PerformanceBreakdownDto = PerformanceBreakdownDto(),
+    val monteCarlo: MonteCarloResearchDto = MonteCarloResearchDto(),
+    val confidence: ConfidenceResearchDto = ConfidenceResearchDto()
+) {
+    fun toDomain() = com.example.backtest.BacktestResearch(
+        performanceBreakdown.toDomain(), monteCarlo.toDomain(), confidence.toDomain()
+    )
 }
 
 @JsonClass(generateAdapter = true)

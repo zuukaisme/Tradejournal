@@ -106,6 +106,7 @@ import com.example.ui.theme.AmberGold
 import com.example.ui.theme.SlateBreakEven
 import java.util.Locale
 import kotlin.math.abs
+import org.json.JSONObject
 
 @Composable
 fun BacktestScreen(
@@ -731,7 +732,7 @@ fun BacktestScreen(
 
                         Spacer(modifier = Modifier.height(12.dp))
 
-                        val canRun = !state.isLoading && !state.isImportingCsv && state.hasCsvBytes &&
+                        val canRun = !state.isLoading && !state.isQueueRunning && !state.isImportingCsv && state.hasCsvBytes &&
                             (if (state.isMultiStrategyMode) state.selectedStrategyIds.isNotEmpty() else state.selectedStrategy != null)
                         val multiCount = state.selectedStrategyIds.size
                         val totalLiveStrategies = state.liveProgress?.totalStrategies ?: 0
@@ -769,6 +770,159 @@ fun BacktestScreen(
                                 Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(runButtonText, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(18.dp))
+                        Text("Strategy Optimizer", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text(
+                            "Optimize one public strategy parameter. Enter its exact attribute name from the Python strategy.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = state.optimizerParameterInput,
+                            onValueChange = backtestViewModel::updateOptimizerParameter,
+                            label = { Text("Parameter name") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                value = state.optimizerMinInput,
+                                onValueChange = backtestViewModel::updateOptimizerMin,
+                                label = { Text("Minimum") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                            OutlinedTextField(
+                                value = state.optimizerMaxInput,
+                                onValueChange = backtestViewModel::updateOptimizerMax,
+                                label = { Text("Maximum") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                            OutlinedTextField(
+                                value = state.optimizerStepInput,
+                                onValueChange = backtestViewModel::updateOptimizerStep,
+                                label = { Text("Step") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                        }
+                        Button(
+                            onClick = backtestViewModel::runOptimizer,
+                            enabled = state.hasCsvBytes && state.selectedStrategy != null && !state.isOptimizing && !state.isLoading && !state.isQueueRunning,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            if (state.isOptimizing) {
+                                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Optimizing parameter grid...")
+                            } else {
+                                Text("Run Optimizer")
+                            }
+                        }
+                        state.optimizerError?.let {
+                            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                        }
+                        if (state.optimizerCombinations > 0) {
+                            Text(
+                                "${state.optimizerCombinations} combinations tested • ranked by Net R, profit factor and drawdown",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            state.optimizerResults.take(10).forEach { result ->
+                                val params = result.optJSONObject("parameters")
+                                Surface(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(10.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text("#${result.optInt("rank")} • ${params?.toString() ?: ""}", fontWeight = FontWeight.SemiBold)
+                                            Text("${result.optInt("totalTrades")} trades • PF ${result.optString("profitFactor")} • DD ${result.optString("maxDrawdownR")}R", style = MaterialTheme.typography.bodySmall)
+                                        }
+                                        Text("${result.optString("netR")}R", fontWeight = FontWeight.Bold, color = positiveColor)
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(18.dp))
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text("Backtest Queue", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text(
+                            "Queue strategies and process them one at a time. Pause prevents the next job from starting.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                            OutlinedButton(
+                                onClick = backtestViewModel::enqueueSelectedStrategies,
+                                enabled = state.hasCsvBytes && !state.isLoading,
+                                modifier = Modifier.weight(1f)
+                            ) { Text("Add selected") }
+                            Button(
+                                onClick = backtestViewModel::startQueue,
+                                enabled = state.backtestQueue.any { it.status == "Queued" } && !state.isQueueRunning && !state.isLoading,
+                                modifier = Modifier.weight(1f)
+                            ) { Text("Start queue") }
+                        }
+                        if (state.isQueueRunning) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = if (state.isQueuePaused) backtestViewModel::resumeQueue else backtestViewModel::pauseQueue,
+                                    modifier = Modifier.weight(1f)
+                                ) { Text(if (state.isQueuePaused) "Resume" else "Pause") }
+                                OutlinedButton(
+                                    onClick = backtestViewModel::clearFinishedQueueItems,
+                                    modifier = Modifier.weight(1f)
+                                ) { Text("Clear finished") }
+                            }
+                        } else if (state.backtestQueue.any { it.status != "Queued" }) {
+                            TextButton(onClick = backtestViewModel::clearFinishedQueueItems) { Text("Clear finished jobs") }
+                        }
+                        state.backtestQueue.forEach { queued ->
+                            Surface(
+                                modifier = Modifier.fillMaxWidth(),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(queued.strategyName, fontWeight = FontWeight.SemiBold)
+                                        Text(queued.status, style = MaterialTheme.typography.bodySmall, color = when {
+                                            queued.status == "Completed" -> positiveColor
+                                            queued.status == "Failed" -> negativeColor
+                                            queued.status == "Running" -> AmberGold
+                                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                        })
+                                    }
+                                    TextButton(onClick = { backtestViewModel.removeQueuedItem(queued.id) }) {
+                                        Text(if (queued.status == "Running") "Cancel" else "Remove")
+                                    }
+                                }
                             }
                         }
                     }
@@ -875,6 +1029,10 @@ fun BacktestScreen(
 
             item {
                 BacktestTradeProgressCard(result = result)
+            }
+
+            item {
+                BacktestResearchCard(result = result)
             }
 
             item {
@@ -1532,6 +1690,81 @@ private fun LiveStrategyStatusRow(item: StrategyLiveProgress) {
                     color = if (isDone) positiveColor else MaterialTheme.colorScheme.secondary,
                     trackColor = MaterialTheme.colorScheme.surfaceVariant
                 )
+            }
+        }
+    }
+}
+
+
+@Composable
+private fun BacktestResearchCard(result: BacktestResult) {
+    val research = result.research
+    val confidence = research.confidence
+    val monteCarlo = research.monteCarlo
+    val breakdown = research.performanceBreakdown
+    val positiveColor = MaterialTheme.colorScheme.primary
+    val negativeColor = MaterialTheme.colorScheme.error
+
+    LiquidGlassCard(testTag = "backtest_research_card") {
+        Text("Research & Reliability", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Column {
+                Text("Confidence score", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("${confidence.score}/100 • ${confidence.label}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text("${confidence.trades} trades", style = MaterialTheme.typography.labelSmall)
+                Text("Avg ${formatSignedR(confidence.averageR)}", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(confidence.note.ifBlank { "Reliability score is unavailable for this result." }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        HorizontalDivider(Modifier.padding(vertical = 10.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f))
+        Text("Monte Carlo • ${monteCarlo.simulations} simulations", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+        val ending = monteCarlo.endingNetR
+        val drawdown = monteCarlo.maxDrawdownR
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            ResearchMetric("Ending R P05", ending["p05"] ?: 0.0, negativeColor)
+            ResearchMetric("Median", ending["p50"] ?: 0.0, positiveColor)
+            ResearchMetric("Ending R P95", ending["p95"] ?: 0.0, positiveColor)
+        }
+        Text("Max drawdown R • P05 ${formatTwoDec(drawdown["p05"] ?: 0.0)}  |  Median ${formatTwoDec(drawdown["p50"] ?: 0.0)}  |  P95 ${formatTwoDec(drawdown["p95"] ?: 0.0)}", style = MaterialTheme.typography.bodySmall)
+        Text("Chance of negative ending: ${formatOneDec(monteCarlo.probabilityOfNegativeEndingPct)}%", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+        HorizontalDivider(Modifier.padding(vertical = 10.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f))
+        Text("Performance breakdown", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+        ResearchBucketGroup("Sessions", breakdown.bySession)
+        ResearchBucketGroup("Weekdays", breakdown.byWeekday)
+        ResearchBucketGroup("Months", breakdown.byMonth)
+        if (breakdown.unclassifiedTrades > 0) {
+            Text("${breakdown.unclassifiedTrades} trades had unrecognized timestamps.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun ResearchMetric(label: String, value: Double, valueColor: Color) {
+    Column {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(formatSignedR(value), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = valueColor)
+    }
+}
+
+@Composable
+private fun ResearchBucketGroup(title: String, rows: List<com.example.backtest.ResearchBucket>) {
+    if (rows.isEmpty()) return
+    var expanded by remember(title, rows) { mutableStateOf(title == "Sessions") }
+    Column(Modifier.fillMaxWidth()) {
+        TextButton(onClick = { expanded = !expanded }, contentPadding = PaddingValues(horizontal = 0.dp, vertical = 2.dp)) {
+            Text("$title (${rows.size})", fontWeight = FontWeight.SemiBold)
+            Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, contentDescription = null)
+        }
+        if (expanded) {
+            rows.forEach { row ->
+                Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("${row.label} • ${row.trades} trades", style = MaterialTheme.typography.bodySmall)
+                    Text("${formatSignedR(row.netR)} • WR ${formatOneDec(row.winRatePct)}%", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                }
             }
         }
     }

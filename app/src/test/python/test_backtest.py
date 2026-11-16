@@ -88,6 +88,33 @@ class BacktestRegressionTests(unittest.TestCase):
         self.assertEqual(first_trade["openIndex"], trades[0].open_i)
         self.assertEqual(first_trade["closeIndex"], trades[0].close_i)
 
+    def test_research_analytics_monte_carlo_breakdown_and_confidence(self):
+        from backtest import build_research_analytics
+
+        trades = [
+            {"r": 1.5, "openTime": "2025.01.06 09:00:00"},
+            {"r": -1.0, "openTime": "2025.01.06 14:00:00"},
+            {"r": 0.5, "openTime": "2025.01.07 10:00:00"},
+            {"r": -0.5, "openTime": "2025.02.03 15:00:00"},
+        ]
+        result = build_research_analytics(trades, simulations=500, seed=7)
+        self.assertEqual(result["monteCarlo"]["simulations"], 500)
+        self.assertEqual(result["monteCarlo"]["tradeCountPerSimulation"], 4)
+        self.assertEqual(result["confidence"]["trades"], 4)
+        self.assertEqual(result["confidence"]["label"], "Low")
+        self.assertEqual(sum(x["trades"] for x in result["performanceBreakdown"]["byWeekday"]), 4)
+        self.assertEqual(sum(x["trades"] for x in result["performanceBreakdown"]["bySession"]), 4)
+        self.assertEqual(result["monteCarlo"], build_research_analytics(trades, simulations=500, seed=7)["monteCarlo"])
+
+    def test_compute_stats_embeds_research_analytics(self):
+        candles = make_candles(80)
+        trades, skipped = run_backtest(candles, FrequentSignalStrategy())
+        stats = compute_stats(trades, skipped, total_candles=len(candles))
+        self.assertIn("research", stats)
+        self.assertIn("monteCarlo", stats["research"])
+        self.assertIn("confidence", stats["research"])
+        self.assertIn("performanceBreakdown", stats["research"])
+
     def test_run_with_multiple_strategies_file_runs_simultaneously_with_parity_and_isolation(self):
         fd, csv_path = tempfile.mkstemp(suffix=".csv")
         os.close(fd)
@@ -309,6 +336,51 @@ class BacktestRegressionTests(unittest.TestCase):
             if os.path.exists(csv_path):
                 os.remove(csv_path)
 
+
+
+    def test_optimizer_runs_parameter_grid_and_ranks_results(self):
+        from backtest import run_optimizer_with_strategy_file
+
+        fd, csv_path = tempfile.mkstemp(suffix=".csv")
+        os.close(fd)
+        try:
+            with open(csv_path, "w", encoding="utf-8") as fh:
+                fh.write("datetime,open,high,low,close,volume\n")
+                for idx in range(100):
+                    price = 100.0 + (idx % 5)
+                    fh.write(f"2025-01-02 09:{idx % 60:02d}:00,{price},{price + 2},{price - 2},{price + 1},1\n")
+            code = (
+                "class GridStrategy(Strategy):\n"
+                "    def __init__(self):\n"
+                "        self.offset = 1\n"
+                "    def on_candle(self, i, candles):\n"
+                "        c = candles[i]\n"
+                "        return Signal('buy', c.close - self.offset, c.close + self.offset)\n"
+            )
+            payload = json.loads(run_optimizer_with_strategy_file(
+                csv_path, code, "GridStrategy",
+                json.dumps([{"name": "offset", "min": 1, "max": 3, "step": 1}])
+            ))
+            self.assertEqual(payload["combinationsTested"], 3)
+            self.assertEqual([row["rank"] for row in payload["results"]], [1, 2, 3])
+            self.assertTrue(all("offset" in row["parameters"] for row in payload["results"]))
+        finally:
+            if os.path.exists(csv_path):
+                os.remove(csv_path)
+            if os.path.exists(csv_path + ".btbin"):
+                os.remove(csv_path + ".btbin")
+
+    def test_optimizer_rejects_oversized_parameter_grid(self):
+        from backtest import run_optimizer_with_strategy_file
+
+        payload = json.loads(run_optimizer_with_strategy_file(
+            "missing.csv",
+            "class GridStrategy(Strategy):\n    def on_candle(self, i, candles):\n        return None\n",
+            "GridStrategy",
+            json.dumps([{"name": "offset", "min": 1, "max": 100, "step": 1}]),
+            max_combinations=10,
+        ))
+        self.assertIn("maximum is 10", payload["error"])
 
 if __name__ == "__main__":
     unittest.main()

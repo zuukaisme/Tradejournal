@@ -42,9 +42,16 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import org.json.JSONArray
+import org.json.JSONObject
+import com.example.backtest.PythonBacktestRunner
+
+data class BacktestQueueItem(val id: String, val strategyId: Long, val strategyName: String, val status: String = "Queued")
 
 data class BacktestUiState(
     val selectedTab: Int = 0, // 0 = Run, 1 = Replay, 2 = AI Builder, 3 = Compare
@@ -112,7 +119,18 @@ data class BacktestUiState(
     val savedRuns: List<SavedBacktestRun> = emptyList(),
     val compareRunAId: Long? = null,
     val compareRunBId: Long? = null,
-    val runSavedFeedback: String? = null
+    val runSavedFeedback: String? = null,
+    val optimizerParameterInput: String = "",
+    val optimizerMinInput: String = "1",
+    val optimizerMaxInput: String = "5",
+    val optimizerStepInput: String = "1",
+    val isOptimizing: Boolean = false,
+    val optimizerError: String? = null,
+    val optimizerResults: List<JSONObject> = emptyList(),
+    val optimizerCombinations: Int = 0,
+    val backtestQueue: List<BacktestQueueItem> = emptyList(),
+    val isQueueRunning: Boolean = false,
+    val isQueuePaused: Boolean = false
 )
 
 class BacktestViewModel(application: Application) : AndroidViewModel(application) {
@@ -124,6 +142,8 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
     private var lastRunBacktestFile: File? = null
     private var csvImportJob: Job? = null
     private var replayLoadJob: Job? = null
+    private var activeRunJob: Job? = null
+    private var queueJob: Job? = null
     private val resampledCache = mutableMapOf<Pair<String, BacktestTimeframe>, ResampledCsvFileResult>()
     private var latestSettings: UserSettings = UserSettings()
     private var hasHydratedAiPrefs = false
@@ -620,6 +640,172 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
         csvImportJob?.cancel()
     }
 
+    fun enqueueSelectedStrategies() {
+        val snapshot = _uiState.value
+        val selected = if (snapshot.isMultiStrategyMode) {
+            snapshot.availableStrategies.filter { it.id in snapshot.selectedStrategyIds }
+        } else listOfNotNull(snapshot.selectedStrategy)
+        if (selected.isEmpty()) {
+            _uiState.update { it.copy(backtestError = BacktestError("Select at least one strategy to add to the queue.")) }
+            return
+        }
+        _uiState.update { current ->
+            val existing = current.backtestQueue.map { it.strategyId }.toSet()
+            val additions = selected.filter { it.id !in existing }.map {
+                BacktestQueueItem("${it.id}-${System.nanoTime()}", it.id, it.name)
+            }
+            current.copy(backtestQueue = current.backtestQueue + additions, backtestError = null)
+        }
+    }
+
+    fun removeQueuedItem(id: String) {
+        val item = _uiState.value.backtestQueue.firstOrNull { it.id == id } ?: return
+        if (item.status == "Running") {
+            activeRunJob?.cancel()
+            _uiState.update { current ->
+                current.copy(backtestQueue = current.backtestQueue.map { if (it.id == id) it.copy(status = "Cancelled") else it })
+            }
+        } else {
+            _uiState.update { current ->
+                current.copy(backtestQueue = current.backtestQueue.filterNot { it.id == id })
+            }
+        }
+    }
+
+    fun pauseQueue() { _uiState.update { it.copy(isQueuePaused = true) } }
+    fun resumeQueue() { _uiState.update { it.copy(isQueuePaused = false) } }
+
+    fun startQueue() {
+        val snapshot = _uiState.value
+        if (snapshot.isQueueRunning || snapshot.isLoading || !snapshot.hasCsvBytes) return
+        if (snapshot.backtestQueue.none { it.status == "Queued" }) return
+        queueJob = viewModelScope.launch {
+            _uiState.update { it.copy(isQueueRunning = true, isQueuePaused = false) }
+            try {
+                while (true) {
+                    while (_uiState.value.isQueuePaused) delay(200)
+                    val next = _uiState.value.backtestQueue.firstOrNull { it.status == "Queued" } ?: break
+                    val strategy = _uiState.value.availableStrategies.firstOrNull { it.id == next.strategyId }
+                    if (strategy == null) {
+                        _uiState.update { state -> state.copy(backtestQueue = state.backtestQueue.map { if (it.id == next.id) it.copy(status = "Failed: strategy missing") else it }) }
+                        continue
+                    }
+                    _uiState.update { state ->
+                        state.copy(
+                            selectedStrategy = strategy,
+                            isMultiStrategyMode = false,
+                            selectedStrategyIds = setOf(strategy.id),
+                            result = null,
+                            backtestError = null,
+                            backtestQueue = state.backtestQueue.map { if (it.id == next.id) it.copy(status = "Running") else it }
+                        )
+                    }
+                    run()
+                    val started = uiState.first { it.isLoading || it.backtestError != null }
+                    if (started.isLoading) uiState.first { !it.isLoading }
+                    val finished = _uiState.value
+                    val existingStatus = finished.backtestQueue.firstOrNull { it.id == next.id }?.status
+                    val status = if (existingStatus == "Cancelled") "Cancelled" else if (finished.backtestError == null && finished.result != null) "Completed" else "Failed"
+                    _uiState.update { state ->
+                        state.copy(backtestQueue = state.backtestQueue.map { if (it.id == next.id) it.copy(status = status) else it })
+                    }
+                }
+            } finally {
+                _uiState.update { it.copy(isQueueRunning = false, isQueuePaused = false) }
+                queueJob = null
+            }
+        }
+    }
+
+    fun clearFinishedQueueItems() {
+        _uiState.update { current ->
+            current.copy(backtestQueue = current.backtestQueue.filter { it.status == "Queued" || it.status == "Running" })
+        }
+    }
+
+    fun updateOptimizerParameter(value: String) { _uiState.update { it.copy(optimizerParameterInput = value) } }
+    fun updateOptimizerMin(value: String) { _uiState.update { it.copy(optimizerMinInput = value) } }
+    fun updateOptimizerMax(value: String) { _uiState.update { it.copy(optimizerMaxInput = value) } }
+    fun updateOptimizerStep(value: String) { _uiState.update { it.copy(optimizerStepInput = value) } }
+
+    fun runOptimizer() {
+        val snapshot = _uiState.value
+        val csv = csvCacheFile
+        val strategy = snapshot.selectedStrategy
+        if (snapshot.isLoading || snapshot.isOptimizing) return
+        if (csv == null || !csv.exists() || strategy == null) {
+            _uiState.update { it.copy(optimizerError = "Select a CSV dataset and one Python strategy first.") }
+            return
+        }
+        if (snapshot.optimizerParameterInput.isBlank()) {
+            _uiState.update { it.copy(optimizerError = "Enter the exact public parameter name defined by the strategy.") }
+            return
+        }
+        val min = snapshot.optimizerMinInput.toDoubleOrNull()
+        val max = snapshot.optimizerMaxInput.toDoubleOrNull()
+        val step = snapshot.optimizerStepInput.toDoubleOrNull()
+        if (min == null || max == null || step == null || step <= 0.0 || max < min) {
+            _uiState.update { it.copy(optimizerError = "Enter valid minimum, maximum and positive step values.") }
+            return
+        }
+        val ranges = JSONArray().put(
+            JSONObject().put("name", snapshot.optimizerParameterInput.trim()).put("min", min).put("max", max).put("step", step)
+        ).toString()
+        _uiState.update { it.copy(isOptimizing = true, optimizerError = null, optimizerResults = emptyList(), optimizerCombinations = 0) }
+        viewModelScope.launch {
+            try {
+                val output = withContext(Dispatchers.IO) {
+                    val optimizerCsv = if (snapshot.selectedTimeframe == BacktestTimeframe.NATIVE) {
+                        csv
+                    } else {
+                        val activeDatasetKey = snapshot.activeSavedCsvId ?: csv.name
+                        val cacheKey = activeDatasetKey to snapshot.selectedTimeframe
+                        resampledCache[cacheKey]?.file?.takeIf { it.exists() } ?: run {
+                            val resampledDir = File(getApplication<Application>().cacheDir, "resampled_csvs").apply { mkdirs() }
+                            val outputFile = File(
+                                resampledDir,
+                                "resampled_${activeDatasetKey}_${snapshot.selectedTimeframe.shortLabel}.csv"
+                            )
+                            CandleTimeframeResampler.resampleCsvFile(
+                                sourceFile = csv,
+                                target = snapshot.selectedTimeframe,
+                                outputFile = outputFile
+                            ).also { resampledCache[cacheKey] = it }.file
+                        }
+                    }
+                    BinaryCandleCache.ensureCache(optimizerCsv)
+                    PythonBacktestRunner.runOptimizerWithStrategyFile(
+                        getApplication(),
+                        optimizerCsv.absolutePath,
+                        strategy.code,
+                        strategy.className,
+                        ranges,
+                        snapshot.maxStopPointsInput.toDoubleOrNull() ?: 0.0,
+                        snapshot.pointSizeInput.toDoubleOrNull() ?: 1.0
+                    )
+                }
+                val parsed = JSONObject(output)
+                if (parsed.has("error")) {
+                    _uiState.update { it.copy(optimizerError = parsed.optString("error")) }
+                } else {
+                    val rows = parsed.optJSONArray("results") ?: JSONArray()
+                    val results = (0 until rows.length()).mapNotNull { rows.optJSONObject(it) }
+                    _uiState.update {
+                        it.copy(
+                            optimizerResults = results,
+                            optimizerCombinations = parsed.optInt("combinationsTested"),
+                            optimizerError = null
+                        )
+                    }
+                }
+            } catch (error: Exception) {
+                _uiState.update { it.copy(optimizerError = error.message ?: "Optimizer failed.") }
+            } finally {
+                _uiState.update { it.copy(isOptimizing = false) }
+            }
+        }
+    }
+
     fun run() {
         val snapshot = _uiState.value
         val sourceFile = csvCacheFile
@@ -698,7 +884,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                 if (isBatchRun) selectedList.size else 1
             )
         }
-        viewModelScope.launch {
+        activeRunJob = viewModelScope.launch {
             _uiState.update {
                 it.copy(
                     isLoading = true,
@@ -951,6 +1137,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                 }
             }
         }
+        activeRunJob?.invokeOnCompletion { activeRunJob = null }
     }
 
     private fun buildCsvLabel(snapshot: BacktestUiState): String {
