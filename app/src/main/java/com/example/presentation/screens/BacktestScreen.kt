@@ -663,6 +663,41 @@ fun BacktestScreen(
 
                         Spacer(modifier = Modifier.height(10.dp))
 
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedTextField(
+                                value = state.workerCountInput,
+                                onValueChange = backtestViewModel::updateWorkerCount,
+                                label = { Text("Workers / strategy", fontSize = 12.sp) },
+                                placeholder = { Text("4") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("backtest_worker_count_input"),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                            Column(modifier = Modifier.weight(2f)) {
+                                Text(
+                                    text = if (state.isMultiStrategyMode && state.selectedStrategyIds.size > 1) {
+                                        "${state.selectedStrategyIds.size} strategies × ${state.workerCountInput.ifBlank { "4" }} = ${runCatching { (state.selectedStrategyIds.size * state.workerCountInput.toInt()).coerceAtMost(WorkerPoolBacktestCoordinator.MAX_WORKER_PROCESSES) }.getOrDefault(0)} worker processes"
+                                    } else {
+                                        "Choose how many isolated Python workers to use for large CSV time-split runs"
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = "Up to ${WorkerPoolBacktestCoordinator.MAX_WORKER_PROCESSES} concurrent worker processes",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
                         // Config inputs: maxStopPoints & pointSize
                         Row(
                             modifier = Modifier.fillMaxWidth(),
