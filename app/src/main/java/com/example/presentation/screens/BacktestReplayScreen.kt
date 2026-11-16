@@ -234,25 +234,6 @@ fun TradeReplayTabContent(
         else -> matchingIndices.firstOrNull { it > safeIndex }
     }
 
-    LaunchedEffect(isPlaying, safeIndex, totalCandles, isLoading) {
-        if (!isPlaying || isLoading || totalCandles <= 0) return@LaunchedEffect
-        if (revealedCount >= totalCandles) {
-            revealedCount = (window?.entryCandlePos ?: 0).coerceIn(1, totalCandles)
-        }
-        while (isPlaying && revealedCount < totalCandles) {
-            delay(140L)
-            revealedCount = (revealedCount + 1).coerceAtMost(totalCandles)
-        }
-        if (isPlaying && revealedCount >= totalCandles) {
-            if (nextMatchingIdx != null) {
-                delay(450L)
-                onSelectTradeIndex(nextMatchingIdx)
-            } else {
-                isPlaying = false
-            }
-        }
-    }
-
     LaunchedEffect(isPlaying, safeIndex, totalCandles) {
         if (!isPlaying || totalCandles <= 0) return@LaunchedEffect
         if (revealedCount >= totalCandles) {
@@ -985,6 +966,25 @@ fun BacktestReplayScreen(
         matchingIndices.isEmpty() -> null
         posInFiltered in 0 until (matchingIndices.size - 1) -> matchingIndices[posInFiltered + 1]
         else -> matchingIndices.firstOrNull { it > safeIndex }
+    }
+
+    LaunchedEffect(isPlaying, safeIndex, totalCandles, isLoading) {
+        if (!isPlaying || isLoading || totalCandles <= 0) return@LaunchedEffect
+        if (revealedCount >= totalCandles) {
+            revealedCount = (window?.entryCandlePos ?: 0).coerceIn(1, totalCandles)
+        }
+        while (isPlaying && revealedCount < totalCandles) {
+            delay(140L)
+            revealedCount = (revealedCount + 1).coerceAtMost(totalCandles)
+        }
+        if (isPlaying && revealedCount >= totalCandles) {
+            if (nextMatchingIdx != null) {
+                delay(450L)
+                onSelectTradeIndex(nextMatchingIdx)
+            } else {
+                isPlaying = false
+            }
+        }
     }
 
     Surface(
