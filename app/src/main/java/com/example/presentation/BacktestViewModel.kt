@@ -409,8 +409,8 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                                 lastRunTimeframeLabel = runTfLabel,
                                 lastRunCandleCount = candleCount
                             )
-                            saveCurrentResult()
-                    }
+                        }
+                        saveCurrentResult()
                     }
                     is BacktestParseOutcome.Failure -> {
                         _uiState.update {
