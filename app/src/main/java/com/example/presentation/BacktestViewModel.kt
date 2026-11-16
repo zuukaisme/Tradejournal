@@ -720,8 +720,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                             targetTf.minutes.toString(),
                             "resampler-v2"
                         ).joinToString("\n")
-                        val inMemory = resampledCache[cacheKey]?.takeIf { it.file.exists() }
-                        val diskCached = if (inMemory == null && outputFile.exists() && metadataFile.exists()) {
+                        val diskCached = if (outputFile.exists() && metadataFile.exists()) {
                             runCatching {
                                 val metadata = metadataFile.readLines()
                                 if (metadata.size == 2 && metadata[0] == sourceSignature) {
@@ -736,6 +735,10 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                                 } else null
                             }.getOrNull()
                         } else null
+                        val inMemory = resampledCache[cacheKey]?.takeIf {
+                            diskCached != null && it.file.absolutePath == diskCached.file.absolutePath &&
+                                it.outputCandleCount == diskCached.outputCandleCount
+                        }
                         val resampled = inMemory ?: diskCached ?: CandleTimeframeResampler.resampleCsvFile(
                             sourceFile = sourceFile,
                             target = targetTf,
