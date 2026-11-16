@@ -5,15 +5,32 @@ import com.squareup.moshi.Moshi
 import java.io.BufferedInputStream
 import java.io.BufferedReader
 import java.io.BufferedWriter
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.FilterInputStream
 import java.io.InputStream
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.io.PushbackInputStream
 import java.nio.charset.Charset
 import java.util.Locale
+
+private class CountingInputStream(input: InputStream) : FilterInputStream(input) {
+    var bytesRead: Long = 0L
+        private set
+
+    override fun read(): Int {
+        val value = super.read()
+        if (value >= 0) bytesRead++
+        return value
+    }
+
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+        val count = super.read(buffer, offset, length)
+        if (count > 0) bytesRead += count
+        return count
+    }
+}
 
 data class DecodedCsv(
     val text: String,
@@ -155,35 +172,52 @@ object BacktestCodec {
      * Reads text source files (.mq5, .mq4, .mqh, .txt, .py) on Dispatchers.IO with UTF-16/UTF-8 BOM
      * detection and a generous size cap so huge files fail gracefully instead of causing OOM.
      */
-    fun readTextStreamWithBom(inputStream: InputStream, maxBytes: Long = 12L * 1024L * 1024L): String {
-        val buffered = BufferedInputStream(inputStream, 16_384)
-        val out = ByteArrayOutputStream()
-        val buf = ByteArray(16_384)
-        var total = 0L
-        while (true) {
-            val read = buffered.read(buf)
-            if (read <= 0) break
-            total += read
-            if (total > maxBytes) {
-                val mb = maxBytes / (1024L * 1024L)
-                throw IllegalArgumentException("The selected file exceeds the $mb MB limit.")
-            }
-            out.write(buf, 0, read)
+    fun readTextStreamWithBom(inputStream: InputStream, maxBytes: Long = 64L * 1024L * 1024L): String {
+        val counted = CountingInputStream(BufferedInputStream(inputStream, 65_536))
+        val pushback = PushbackInputStream(counted, 4)
+        val prefix = ByteArray(3)
+        var prefixSize = 0
+        while (prefixSize < prefix.size) {
+            val count = pushback.read(prefix, prefixSize, prefix.size - prefixSize)
+            if (count <= 0) break
+            prefixSize += count
         }
-        val bytes = out.toByteArray()
-        val isUtf16Le = bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte()
-        val isUtf16Be = bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte()
-        val isUtf8Bom = bytes.size >= 3 &&
-            bytes[0] == 0xEF.toByte() &&
-            bytes[1] == 0xBB.toByte() &&
-            bytes[2] == 0xBF.toByte()
 
-        return when {
-            isUtf16Le -> String(bytes, Charsets.UTF_16).removePrefix("\uFEFF")
-            isUtf16Be -> String(bytes, Charsets.UTF_16).removePrefix("\uFEFF")
-            isUtf8Bom -> String(bytes, 3, bytes.size - 3, Charsets.UTF_8).removePrefix("\uFEFF")
-            else -> String(bytes, Charsets.UTF_8).removePrefix("\uFEFF")
+        val utf16Le = prefixSize >= 2 && prefix[0] == 0xFF.toByte() && prefix[1] == 0xFE.toByte()
+        val utf16Be = prefixSize >= 2 && prefix[0] == 0xFE.toByte() && prefix[1] == 0xFF.toByte()
+        val utf8Bom = prefixSize >= 3 &&
+            prefix[0] == 0xEF.toByte() &&
+            prefix[1] == 0xBB.toByte() &&
+            prefix[2] == 0xBF.toByte()
+        val bomSize = when {
+            utf16Le || utf16Be -> 2
+            utf8Bom -> 3
+            else -> 0
         }
+        if (prefixSize > bomSize) pushback.unread(prefix, bomSize, prefixSize - bomSize)
+        if (counted.bytesRead > maxBytes) {
+            val mb = maxBytes / (1024L * 1024L)
+            throw IllegalArgumentException("The selected file exceeds the $mb MB import limit.")
+        }
+
+        val charset = when {
+            utf16Le -> Charsets.UTF_16LE
+            utf16Be -> Charsets.UTF_16BE
+            else -> Charsets.UTF_8
+        }
+        val reader = InputStreamReader(pushback, charset)
+        val output = StringBuilder()
+        val buffer = CharArray(16_384)
+        while (true) {
+            val count = reader.read(buffer)
+            if (count < 0) break
+            if (counted.bytesRead > maxBytes) {
+                val mb = maxBytes / (1024L * 1024L)
+                throw IllegalArgumentException("The selected file exceeds the $mb MB import limit.")
+            }
+            output.append(buffer, 0, count)
+        }
+        return output.toString().removePrefix("\uFEFF")
     }
 
     private fun detectBomStream(inputStream: InputStream): Triple<PushbackInputStream, Charset, String> {

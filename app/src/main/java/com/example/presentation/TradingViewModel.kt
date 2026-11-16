@@ -401,6 +401,28 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun editPythonStrategy(strategy: PythonStrategy, newName: String, newClassName: String, newCode: String) {
+        viewModelScope.launch {
+            runCatching {
+                require(newCode.isNotBlank()) { "Strategy code cannot be empty." }
+                repository.updatePythonStrategy(
+                    strategy.copy(
+                        name = newName.trim(),
+                        className = newClassName.trim(),
+                        code = newCode,
+                        updatedAt = System.currentTimeMillis()
+                    )
+                )
+            }.onFailure { error ->
+                android.widget.Toast.makeText(
+                    getApplication(),
+                    error.message ?: "Could not update strategy.",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
     fun deletePythonStrategy(id: Long) {
         viewModelScope.launch {
             repository.deletePythonStrategy(id)
