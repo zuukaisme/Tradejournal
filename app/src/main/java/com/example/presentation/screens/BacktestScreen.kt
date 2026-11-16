@@ -732,7 +732,7 @@ fun BacktestScreen(
 
                         Spacer(modifier = Modifier.height(12.dp))
 
-                        val canRun = !state.isLoading && !state.isImportingCsv && state.hasCsvBytes &&
+                        val canRun = !state.isLoading && !state.isQueueRunning && !state.isImportingCsv && state.hasCsvBytes &&
                             (if (state.isMultiStrategyMode) state.selectedStrategyIds.isNotEmpty() else state.selectedStrategy != null)
                         val multiCount = state.selectedStrategyIds.size
                         val totalLiveStrategies = state.liveProgress?.totalStrategies ?: 0
@@ -820,7 +820,7 @@ fun BacktestScreen(
                         }
                         Button(
                             onClick = backtestViewModel::runOptimizer,
-                            enabled = state.hasCsvBytes && state.selectedStrategy != null && !state.isOptimizing && !state.isLoading,
+                            enabled = state.hasCsvBytes && state.selectedStrategy != null && !state.isOptimizing && !state.isLoading && !state.isQueueRunning,
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(12.dp)
                         ) {
