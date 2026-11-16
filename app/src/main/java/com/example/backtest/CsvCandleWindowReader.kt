@@ -18,11 +18,18 @@ data class ReplayCandle(
     val close: Double
 )
 
+data class TradeReplayMarker(
+    val trade: Trade,
+    val entryCandlePos: Int,
+    val exitCandlePos: Int
+)
+
 data class TradeReplayWindow(
     val candles: List<ReplayCandle>,
     val entryCandlePos: Int,
     val exitCandlePos: Int,
-    val truncatedMiddle: Boolean = false
+    val truncatedMiddle: Boolean = false,
+    val markers: List<TradeReplayMarker> = emptyList()
 )
 
 /**
@@ -91,6 +98,66 @@ object CsvCandleWindowReader {
                 return readByIndices(reader, cols, trade, paddingBefore, paddingAfter, maxWindowCandles)
             }
             return readByTimestamps(reader, cols, trade, paddingBefore, paddingAfter, maxWindowCandles)
+        }
+    }
+
+    fun readTradesWindow(
+        csvFile: File,
+        trades: List<Trade>,
+        maxChartCandles: Int = 140
+    ): TradeReplayWindow {
+        val indexedTrades = trades.filter { it.openIndex >= 0 && it.closeIndex >= it.openIndex }
+            .sortedBy { it.openIndex }
+        if (!csvFile.exists() || indexedTrades.isEmpty()) return TradeReplayWindow(emptyList(), -1, -1)
+        val startIndex = (indexedTrades.minOf { it.openIndex } - 20).coerceAtLeast(0)
+        val endIndex = indexedTrades.maxOf { it.closeIndex } + 15
+        val (pushback, charset) = openUtfAwareReader(csvFile)
+        return BufferedReader(InputStreamReader(pushback, charset), 65_536).use { reader ->
+            var headerLine: String? = null
+            var first = true
+            while (true) {
+                val raw = reader.readLine() ?: break
+                val cleaned = if (first) { first = false; raw.removePrefix("\uFEFF") } else raw
+                if (cleaned.isNotBlank()) { headerLine = cleaned.trim(); break }
+            }
+            val cols = headerLine?.let(::parseHeader) ?: return@use TradeReplayWindow(emptyList(), -1, -1)
+            val rawCandles = ArrayList<ReplayCandle>()
+            var currentIndex = 0
+            while (currentIndex <= endIndex) {
+                val raw = reader.readLine() ?: break
+                if (raw.isBlank()) continue
+                if (currentIndex >= startIndex) {
+                    parseCandleRow(currentIndex, raw.trim(), cols)?.let(rawCandles::add)
+                }
+                currentIndex++
+            }
+            if (rawCandles.isEmpty()) return@use TradeReplayWindow(emptyList(), -1, -1)
+            val bucketSize = ((rawCandles.size + maxChartCandles - 1) / maxChartCandles).coerceAtLeast(1)
+            val chartCandles = rawCandles.chunked(bucketSize).map { bucket ->
+                ReplayCandle(
+                    index = bucket.first().index,
+                    time = bucket.first().time,
+                    open = bucket.first().open,
+                    high = bucket.maxOf { it.high },
+                    low = bucket.minOf { it.low },
+                    close = bucket.last().close
+                )
+            }
+            fun positionFor(index: Int): Int {
+                val position = chartCandles.indexOfLast { it.index <= index }
+                return position.coerceIn(0, chartCandles.lastIndex)
+            }
+            val markers = indexedTrades.map { trade ->
+                TradeReplayMarker(trade, positionFor(trade.openIndex), positionFor(trade.closeIndex))
+            }
+            val selected = markers.firstOrNull()
+            TradeReplayWindow(
+                candles = chartCandles,
+                entryCandlePos = selected?.entryCandlePos ?: -1,
+                exitCandlePos = selected?.exitCandlePos ?: -1,
+                truncatedMiddle = bucketSize > 1,
+                markers = markers
+            )
         }
     }
 

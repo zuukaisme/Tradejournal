@@ -267,9 +267,9 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                     replayError = null
                 )
             }
-            loadReplayWindow(activeRes.trades[0])
+            loadReplayWindow(activeRes.trades)
         } else if (snapshot.replayWindow == null && !snapshot.isReplayLoading) {
-            loadReplayWindow(activeRes.trades[snapshot.replayTradeIndex])
+            loadReplayWindow(activeRes.trades)
         }
     }
 
@@ -455,7 +455,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
             )
         }
         if (newRes != null && newRes.trades.isNotEmpty()) {
-            loadReplayWindow(newRes.trades[0])
+            loadReplayWindow(newRes.trades)
         }
     }
 
@@ -846,7 +846,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                             )
                         }
                         if (initialTrades.isNotEmpty()) {
-                            loadReplayWindow(initialTrades[0])
+                            loadReplayWindow(initialTrades)
                         }
                         saveSingleResult(ranStrategy.name, rawOutcome.result, snapshot)
                     }
@@ -889,7 +889,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                             )
                         }
                         if (initialTrades.isNotEmpty()) {
-                            loadReplayWindow(initialTrades[0])
+                            loadReplayWindow(initialTrades)
                         }
                         saveBatchResults(rawOutcome.runs, snapshot)
                     }
@@ -1033,7 +1033,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                 replayError = null
             )
         }
-        loadReplayWindow(result.trades[clamped])
+        loadReplayWindow(result.trades)
     }
 
     fun setReplayFullscreen(open: Boolean) {
@@ -1064,7 +1064,6 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                 replayError = null
             )
         }
-        loadReplayWindow(trades[index])
     }
 
     fun closeTradeReplay() {
@@ -1075,7 +1074,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    private fun loadReplayWindow(trade: Trade) {
+    private fun loadReplayWindow(trades: List<Trade>) {
         replayLoadJob?.cancel()
         val csvFile = lastRunBacktestFile ?: csvCacheFile
         if (csvFile == null || !csvFile.exists()) {
@@ -1092,7 +1091,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
             _uiState.update { it.copy(isReplayLoading = true, replayError = null) }
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    CsvCandleWindowReader.readTradeWindow(csvFile, trade)
+                    CsvCandleWindowReader.readTradesWindow(csvFile, trades)
                 }
             }
             result.onSuccess { window ->
