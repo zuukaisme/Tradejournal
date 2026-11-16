@@ -121,4 +121,31 @@ object PythonBacktestRunner {
             )
             .toString()
     }
+
+    fun runOptimizerWithStrategyFile(
+        context: Context,
+        csvPath: String,
+        strategyCode: String,
+        className: String,
+        parameterRangesJson: String,
+        maxStopPoints: Double = 0.0,
+        pointSize: Double = 1.0,
+        maxCombinations: Int = 2500
+    ): String {
+        ensureStarted(context)
+        return Python.getInstance()
+            .getModule("backtest")
+            .callAttr(
+                "run_optimizer_with_strategy_file",
+                csvPath,
+                strategyCode,
+                className,
+                parameterRangesJson,
+                maxStopPoints,
+                pointSize,
+                maxCombinations
+            )
+            .toString()
+    }
+
 }
