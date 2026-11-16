@@ -576,7 +576,8 @@ object WorkerPoolBacktestCoordinator {
             specs = progressSpecs,
             defaultTotalCandles = totalCandles * specs.size,
             sumCandleProgress = true,
-            perSlotTotalCandles = shardTotals
+            perSlotTotalCandles = shardTotals,
+            workerPoolSize = boundWorkers.size
         )
         val ipcDir = File(appContext.cacheDir, "worker_ipc/${UUID.randomUUID()}").apply { mkdirs() }
         val replyThread = HandlerThread("BacktestMultiShardReplies").apply { start() }
