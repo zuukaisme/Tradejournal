@@ -115,6 +115,7 @@ fun StrategiesScreen(
     var uploadReadError by remember { mutableStateOf<String?>(null) }
     var strategyToView by remember { mutableStateOf<PythonStrategy?>(null) }
     var strategyToRename by remember { mutableStateOf<PythonStrategy?>(null) }
+    var strategyToEdit by remember { mutableStateOf<PythonStrategy?>(null) }
     var strategyToDelete by remember { mutableStateOf<PythonStrategy?>(null) }
 
     val pyFilePicker = rememberLauncherForActivityResult(
@@ -126,7 +127,7 @@ fun StrategiesScreen(
                     runCatching {
                         val fileName = resolveFileDisplayName(context, uri)
                         val text = context.contentResolver.openInputStream(uri)?.use { stream ->
-                            BacktestCodec.readTextStreamWithBom(stream, 12L * 1024L * 1024L)
+                            BacktestCodec.readTextStreamWithBom(stream, 64L * 1024L * 1024L)
                         } ?: error("Unable to open selected .py file.")
                         if (text.isBlank()) error("Selected .py file is empty.")
                         val baseName = fileName.removeSuffix(".py").ifBlank { "Custom Strategy" }
@@ -257,6 +258,7 @@ fun StrategiesScreen(
                                 strategy = strat,
                                 onView = { strategyToView = strat },
                                 onRename = { strategyToRename = strat },
+                                onEdit = { strategyToEdit = strat },
                                 onDelete = { strategyToDelete = strat }
                             )
                         }
@@ -365,6 +367,17 @@ fun StrategiesScreen(
         )
     }
 
+    strategyToEdit?.let { strat ->
+        EditPythonStrategyDialog(
+            strategy = strat,
+            onDismiss = { strategyToEdit = null },
+            onSave = { newName, newClassName, newCode ->
+                viewModel.editPythonStrategy(strat, newName, newClassName, newCode)
+                strategyToEdit = null
+            }
+        )
+    }
+
     // Dialog: Confirm Delete
     strategyToDelete?.let { strat ->
         AlertDialog(
@@ -417,6 +430,7 @@ private fun PythonStrategyCard(
     strategy: PythonStrategy,
     onView: () -> Unit,
     onRename: () -> Unit,
+    onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
     val lineCount = remember(strategy.code) { strategy.code.lineSequence().count() }
@@ -498,6 +512,14 @@ private fun PythonStrategyCard(
                 Icon(Icons.Default.DriveFileRenameOutline, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(4.dp))
                 Text("Rename", fontSize = 12.sp)
+            }
+            TextButton(
+                onClick = onEdit,
+                modifier = Modifier.testTag("edit_python_strategy_${strategy.id}")
+            ) {
+                Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Edit code", fontSize = 12.sp)
             }
             TextButton(
                 onClick = onDelete,
@@ -624,6 +646,76 @@ private fun RenamePythonStrategyDialog(
                 modifier = Modifier.testTag("confirm_rename_python_strategy")
             ) {
                 Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+private fun EditPythonStrategyDialog(
+    strategy: PythonStrategy,
+    onDismiss: () -> Unit,
+    onSave: (String, String, String) -> Unit
+) {
+    var name by remember(strategy.id) { mutableStateOf(strategy.name) }
+    var className by remember(strategy.id) { mutableStateOf(strategy.className) }
+    var code by remember(strategy.id) { mutableStateOf(strategy.code) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit Python Strategy", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(520.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Strategy Name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = className,
+                    onValueChange = { className = it },
+                    label = { Text("Class Name (optional)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    text = "${code.lineSequence().count()} lines",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    value = code,
+                    onValueChange = { code = it },
+                    label = { Text("Python source code") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(360.dp),
+                    minLines = 14,
+                    maxLines = 24,
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { if (name.isNotBlank() && code.isNotBlank()) onSave(name.trim(), className.trim(), code) },
+                enabled = name.isNotBlank() && code.isNotBlank(),
+                modifier = Modifier.testTag("save_edited_python_strategy")
+            ) {
+                Text("Save changes")
             }
         },
         dismissButton = {
