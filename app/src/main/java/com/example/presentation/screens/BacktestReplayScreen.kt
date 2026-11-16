@@ -87,6 +87,7 @@ import com.example.backtest.ReplayCandle
 import com.example.backtest.Side
 import com.example.backtest.Trade
 import com.example.backtest.TradeReplayWindow
+import com.example.backtest.TradeReplayMarker
 import com.example.presentation.components.LiquidGlassCard
 import com.example.ui.theme.AmberGold
 import com.example.ui.theme.SlateBreakEven
@@ -741,9 +742,7 @@ private fun InlineReplayPlayerCard(
                     CandlestickReplayCanvas(
                         visibleCandles = visibleCandles,
                         totalWindowCount = window.candles.size,
-                        trade = trade,
-                        entryPos = window.entryCandlePos,
-                        exitPos = window.exitCandlePos,
+                        markers = window.markers,
                         bullColor = Color(0xFF10B981),
                         bearColor = Color(0xFFEF4444),
                         tpColor = Color(0xFF22C55E),
@@ -1186,9 +1185,7 @@ fun BacktestReplayScreen(
                             CandlestickReplayCanvas(
                                 visibleCandles = visibleCandles,
                                 totalWindowCount = window.candles.size,
-                                trade = trade,
-                                entryPos = window.entryCandlePos,
-                                exitPos = window.exitCandlePos,
+                                markers = window.markers,
                                 bullColor = Color(0xFF10B981),
                                 bearColor = Color(0xFFEF4444),
                                 tpColor = Color(0xFF22C55E),
@@ -1401,9 +1398,7 @@ fun BacktestReplayScreen(
 private fun CandlestickReplayCanvas(
     visibleCandles: List<ReplayCandle>,
     totalWindowCount: Int,
-    trade: Trade,
-    entryPos: Int,
-    exitPos: Int,
+    markers: List<TradeReplayMarker>,
     bullColor: Color,
     bearColor: Color,
     tpColor: Color,
@@ -1419,51 +1414,28 @@ private fun CandlestickReplayCanvas(
         val padTop = 14.dp.toPx()
         val padBottom = 14.dp.toPx()
         val chartHeight = (size.height - padTop - padBottom).coerceAtLeast(40f)
-        val maxVisibleCandles = (chartRight / (8.dp.toPx())).toInt().coerceIn(16, 140)
+        val maxVisibleCandles = (chartRight / 8.dp.toPx()).toInt().coerceIn(16, 140)
         val candleOffset = (visibleCandles.size - maxVisibleCandles).coerceAtLeast(0)
         val chartCandles = visibleCandles.drop(candleOffset)
-        val adjustedEntryPos = entryPos - candleOffset
-        val adjustedExitPos = exitPos - candleOffset
+        val visibleMarkers = markers.filter { it.entryCandlePos < visibleCandles.size && it.exitCandlePos >= 0 }
 
         var minPrice = chartCandles.minOf { it.low }
         var maxPrice = chartCandles.maxOf { it.high }
-        minPrice = minOf(minPrice, trade.sl, trade.tp, trade.entry, trade.exit)
-        maxPrice = maxOf(maxPrice, trade.sl, trade.tp, trade.entry, trade.exit)
+        visibleMarkers.forEach { marker ->
+            minPrice = minOf(minPrice, marker.trade.sl, marker.trade.tp, marker.trade.entry, marker.trade.exit)
+            maxPrice = maxOf(maxPrice, marker.trade.sl, marker.trade.tp, marker.trade.entry, marker.trade.exit)
+        }
         val rawSpan = (maxPrice - minPrice).takeIf { it > 0.0 } ?: 1.0
         val paddedMin = minPrice - rawSpan * 0.08
         val paddedMax = maxPrice + rawSpan * 0.08
         val priceRange = (paddedMax - paddedMin).coerceAtLeast(1e-6)
 
         fun yForPrice(price: Double): Float {
-            val frac = ((price - paddedMin) / priceRange).toFloat()
-            return padTop + chartHeight * (1f - frac)
+            val fraction = ((price - paddedMin) / priceRange).toFloat()
+            return padTop + chartHeight * (1f - fraction)
         }
 
-        val yEntry = yForPrice(trade.entry)
-        val ySl = yForPrice(trade.sl)
-        val yTp = yForPrice(trade.tp)
-        val yExit = yForPrice(trade.exit)
-
-        // Risk (SL) & Reward (TP) shaded horizontal bands from entry onward
-        val slotCount = chartCandles.size.coerceAtLeast(1)
-        val slotWidth = chartRight / slotCount.toFloat()
-        val entryX = (if (adjustedEntryPos >= 0) (adjustedEntryPos + 0.5f) * slotWidth else 0f).coerceIn(0f, chartRight)
-        val zoneRight = chartRight
-
-        // TP reward zone
-        drawRect(
-            color = tpColor.copy(alpha = 0.13f),
-            topLeft = Offset(entryX, min(yEntry, yTp)),
-            size = Size((zoneRight - entryX).coerceAtLeast(0f), abs(yEntry - yTp))
-        )
-        // SL risk zone
-        drawRect(
-            color = slColor.copy(alpha = 0.15f),
-            topLeft = Offset(entryX, min(yEntry, ySl)),
-            size = Size((zoneRight - entryX).coerceAtLeast(0f), abs(yEntry - ySl))
-        )
-
-        // Horizontal grid lines + price labels on right axis
+        val slotWidth = chartRight / chartCandles.size.coerceAtLeast(1).toFloat()
         val textPaint = android.graphics.Paint().apply {
             isAntiAlias = true
             textSize = 10.sp.toPx()
@@ -1472,9 +1444,9 @@ private fun CandlestickReplayCanvas(
         }
 
         for (step in 0..4) {
-            val frac = step / 4f
-            val y = padTop + chartHeight * frac
-            val priceAtLine = paddedMax - priceRange * frac
+            val fraction = step / 4f
+            val y = padTop + chartHeight * fraction
+            val price = paddedMax - priceRange * fraction
             drawLine(
                 color = Color(0xFF1E293B),
                 start = Offset(0f, y),
@@ -1482,131 +1454,91 @@ private fun CandlestickReplayCanvas(
                 strokeWidth = 1.dp.toPx()
             )
             drawContext.canvas.nativeCanvas.drawText(
-                String.format(Locale.US, "%.2f", priceAtLine),
+                String.format(Locale.US, "%.2f", price),
                 chartRight + 4.dp.toPx(),
                 y + 3.dp.toPx(),
                 textPaint
             )
         }
 
-        val dashEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f), 0f)
-
-        // SL dashed line + tag
-        drawLine(
-            color = slColor,
-            start = Offset(0f, ySl),
-            end = Offset(chartRight, ySl),
-            strokeWidth = 1.6.dp.toPx(),
-            pathEffect = dashEffect
-        )
-        // TP dashed line
-        drawLine(
-            color = tpColor,
-            start = Offset(0f, yTp),
-            end = Offset(chartRight, yTp),
-            strokeWidth = 1.6.dp.toPx(),
-            pathEffect = dashEffect
-        )
-        // Entry line
-        drawLine(
-            color = entryLineColor,
-            start = Offset(0f, yEntry),
-            end = Offset(chartRight, yEntry),
-            strokeWidth = 1.4.dp.toPx(),
-            pathEffect = dashEffect
-        )
-
-        // Draw OHLC candlesticks up to visibleCandles.size
         val candleBodyWidth = (slotWidth * 0.72f).coerceIn(3.dp.toPx(), 14.dp.toPx())
         val wickWidth = (slotWidth * 0.16f).coerceIn(1.2.dp.toPx(), 2.2.dp.toPx())
-
-        chartCandles.forEachIndexed { idx, candle ->
-            val cx = (idx + 0.5f) * slotWidth
-            val isBull = candle.close >= candle.open
-            val color = if (isBull) bullColor else bearColor
-
-            val yHigh = yForPrice(candle.high)
-            val yLow = yForPrice(candle.low)
-            val yOpen = yForPrice(candle.open)
-            val yClose = yForPrice(candle.close)
-
+        chartCandles.forEachIndexed { index, candle ->
+            val centerX = (index + 0.5f) * slotWidth
+            val color = if (candle.close >= candle.open) bullColor else bearColor
             drawLine(
                 color = color,
-                start = Offset(cx, yHigh),
-                end = Offset(cx, yLow),
+                start = Offset(centerX, yForPrice(candle.high)),
+                end = Offset(centerX, yForPrice(candle.low)),
                 strokeWidth = wickWidth
             )
-
-            val topBody = min(yOpen, yClose)
-            val bodyHeight = max(abs(yClose - yOpen), 1.5.dp.toPx())
+            val openY = yForPrice(candle.open)
+            val closeY = yForPrice(candle.close)
             drawRect(
                 color = color,
-                topLeft = Offset(cx - candleBodyWidth / 2f, topBody),
-                size = Size(candleBodyWidth, bodyHeight)
+                topLeft = Offset(centerX - candleBodyWidth / 2f, min(openY, closeY)),
+                size = Size(candleBodyWidth, max(abs(closeY - openY), 1.5.dp.toPx()))
             )
         }
 
-        // Draw Entry & Exit markers once revealed
+        val dashEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 7f), 0f)
         val tagPaint = android.graphics.Paint().apply {
             isAntiAlias = true
-            textSize = 9.5.sp.toPx()
+            textSize = 8.5.sp.toPx()
             isFakeBoldText = true
             typeface = android.graphics.Typeface.MONOSPACE
         }
 
-        // SL & TP labels on left edge
-        tagPaint.color = android.graphics.Color.rgb(244, 63, 94)
-        drawContext.canvas.nativeCanvas.drawText("SL ${String.format(Locale.US, "%.2f", trade.sl)}", 4f, (ySl - 4f).coerceAtLeast(12f), tagPaint)
+        visibleMarkers.forEach { marker ->
+            val entryIndex = marker.entryCandlePos - candleOffset
+            val exitIndex = marker.exitCandlePos - candleOffset
+            if (entryIndex !in chartCandles.indices) return@forEach
 
-        tagPaint.color = android.graphics.Color.rgb(34, 197, 94)
-        drawContext.canvas.nativeCanvas.drawText("TP ${String.format(Locale.US, "%.2f", trade.tp)}", 4f, (yTp - 4f).coerceAtLeast(12f), tagPaint)
+            val trade = marker.trade
+            val entryX = (entryIndex + 0.5f) * slotWidth
+            val endIndex = if (exitIndex in chartCandles.indices) exitIndex else chartCandles.lastIndex
+            val exitX = ((endIndex + 0.5f) * slotWidth).coerceAtLeast(entryX)
+            val entryY = yForPrice(trade.entry)
+            val slY = yForPrice(trade.sl)
+            val tpY = yForPrice(trade.tp)
 
-        if (adjustedEntryPos in 0 until chartCandles.size) {
-            val ex = (adjustedEntryPos + 0.5f) * slotWidth
-            drawLine(
-                color = entryLineColor.copy(alpha = 0.45f),
-                start = Offset(ex, padTop),
-                end = Offset(ex, size.height - padBottom),
-                strokeWidth = 1.2.dp.toPx()
+            drawRect(
+                color = tpColor.copy(alpha = 0.10f),
+                topLeft = Offset(entryX, min(entryY, tpY)),
+                size = Size((exitX - entryX).coerceAtLeast(1f), abs(entryY - tpY))
             )
-            drawCircle(
-                color = entryLineColor,
-                radius = 5.dp.toPx(),
-                center = Offset(ex, yEntry)
+            drawRect(
+                color = slColor.copy(alpha = 0.10f),
+                topLeft = Offset(entryX, min(entryY, slY)),
+                size = Size((exitX - entryX).coerceAtLeast(1f), abs(entryY - slY))
             )
+            drawLine(tpColor, Offset(entryX, tpY), Offset(exitX, tpY), 1.2.dp.toPx(), dashEffect)
+            drawLine(slColor, Offset(entryX, slY), Offset(exitX, slY), 1.2.dp.toPx(), dashEffect)
+            drawLine(entryLineColor, Offset(entryX, entryY), Offset(exitX, entryY), 1.1.dp.toPx(), dashEffect)
+            drawCircle(entryLineColor, 4.dp.toPx(), Offset(entryX, entryY))
+
             tagPaint.color = android.graphics.Color.rgb(56, 189, 248)
-            drawContext.canvas.nativeCanvas.drawText("IN", (ex + 5.dp.toPx()).coerceAtMost(chartRight - 22f), yEntry - 6f, tagPaint)
-        }
+            drawContext.canvas.nativeCanvas.drawText("IN", (entryX + 4.dp.toPx()).coerceAtMost(chartRight - 20f), entryY - 5f, tagPaint)
+            tagPaint.color = android.graphics.Color.rgb(34, 197, 94)
+            drawContext.canvas.nativeCanvas.drawText("TP", (entryX + 4.dp.toPx()).coerceAtMost(chartRight - 20f), tpY - 3f, tagPaint)
+            tagPaint.color = android.graphics.Color.rgb(244, 63, 94)
+            drawContext.canvas.nativeCanvas.drawText("SL", (entryX + 4.dp.toPx()).coerceAtMost(chartRight - 20f), slY - 3f, tagPaint)
 
-        if (adjustedExitPos in 0 until chartCandles.size) {
-            val xx = (adjustedExitPos + 0.5f) * slotWidth
-            val exitMarkerColor = when (trade.reason) {
-                ExitReason.TP -> tpColor
-                ExitReason.SL -> slColor
-                else -> AmberGold
+            if (exitIndex in chartCandles.indices && marker.exitCandlePos < visibleCandles.size) {
+                val exitY = yForPrice(trade.exit)
+                val exitColor = when (trade.reason) {
+                    ExitReason.TP -> tpColor
+                    ExitReason.SL -> slColor
+                    else -> AmberGold
+                }
+                drawCircle(exitColor, 4.5.dp.toPx(), Offset(exitX, exitY))
+                tagPaint.color = when (trade.reason) {
+                    ExitReason.TP -> android.graphics.Color.rgb(34, 197, 94)
+                    ExitReason.SL -> android.graphics.Color.rgb(244, 63, 94)
+                    else -> android.graphics.Color.rgb(245, 158, 11)
+                }
+                drawContext.canvas.nativeCanvas.drawText(trade.reason.name, (exitX + 4.dp.toPx()).coerceAtMost(chartRight - 28f), exitY + 11f, tagPaint)
             }
-            drawLine(
-                color = exitMarkerColor.copy(alpha = 0.45f),
-                start = Offset(xx, padTop),
-                end = Offset(xx, size.height - padBottom),
-                strokeWidth = 1.2.dp.toPx()
-            )
-            drawCircle(
-                color = exitMarkerColor,
-                radius = 5.5.dp.toPx(),
-                center = Offset(xx, yExit)
-            )
-            tagPaint.color = when (trade.reason) {
-                ExitReason.TP -> android.graphics.Color.rgb(34, 197, 94)
-                ExitReason.SL -> android.graphics.Color.rgb(244, 63, 94)
-                else -> android.graphics.Color.rgb(245, 158, 11)
-            }
-            drawContext.canvas.nativeCanvas.drawText(
-                trade.reason.name,
-                (xx + 5.dp.toPx()).coerceAtMost(chartRight - 24f),
-                (yExit + 12f).coerceAtMost(size.height - 4f),
-                tagPaint
-            )
         }
     }
 }
