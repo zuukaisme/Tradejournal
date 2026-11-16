@@ -142,6 +142,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
     private var lastRunBacktestFile: File? = null
     private var csvImportJob: Job? = null
     private var replayLoadJob: Job? = null
+    private var activeRunJob: Job? = null
     private var queueJob: Job? = null
     private val resampledCache = mutableMapOf<Pair<String, BacktestTimeframe>, ResampledCsvFileResult>()
     private var latestSettings: UserSettings = UserSettings()
@@ -658,8 +659,16 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun removeQueuedItem(id: String) {
-        _uiState.update { current ->
-            current.copy(backtestQueue = current.backtestQueue.filterNot { it.id == id || (it.id == id && it.status == "Running") })
+        val item = _uiState.value.backtestQueue.firstOrNull { it.id == id } ?: return
+        if (item.status == "Running") {
+            activeRunJob?.cancel()
+            _uiState.update { current ->
+                current.copy(backtestQueue = current.backtestQueue.map { if (it.id == id) it.copy(status = "Cancelled") else it })
+            }
+        } else {
+            _uiState.update { current ->
+                current.copy(backtestQueue = current.backtestQueue.filterNot { it.id == id })
+            }
         }
     }
 
@@ -686,6 +695,8 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                             selectedStrategy = strategy,
                             isMultiStrategyMode = false,
                             selectedStrategyIds = setOf(strategy.id),
+                            result = null,
+                            backtestError = null,
                             backtestQueue = state.backtestQueue.map { if (it.id == next.id) it.copy(status = "Running") else it }
                         )
                     }
@@ -693,7 +704,8 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                     val started = uiState.first { it.isLoading || it.backtestError != null }
                     if (started.isLoading) uiState.first { !it.isLoading }
                     val finished = _uiState.value
-                    val status = if (finished.backtestError == null && finished.result != null) "Completed" else "Failed"
+                    val existingStatus = finished.backtestQueue.firstOrNull { it.id == next.id }?.status
+                    val status = if (existingStatus == "Cancelled") "Cancelled" else if (finished.backtestError == null && finished.result != null) "Completed" else "Failed"
                     _uiState.update { state ->
                         state.copy(backtestQueue = state.backtestQueue.map { if (it.id == next.id) it.copy(status = status) else it })
                     }
@@ -853,7 +865,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                 if (isBatchRun) selectedList.size else 1
             )
         }
-        viewModelScope.launch {
+        activeRunJob = viewModelScope.launch {
             _uiState.update {
                 it.copy(
                     isLoading = true,
@@ -1106,6 +1118,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                 }
             }
         }
+        activeRunJob?.invokeOnCompletion { activeRunJob = null }
     }
 
     private fun buildCsvLabel(snapshot: BacktestUiState): String {
