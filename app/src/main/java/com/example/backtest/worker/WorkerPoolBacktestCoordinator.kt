@@ -41,7 +41,8 @@ class BatchProgressAggregator(
     specs: List<BatchStrategySpec>,
     private val defaultTotalCandles: Int,
     private val sumCandleProgress: Boolean = false,
-    perSlotTotalCandles: List<Int>? = null
+    perSlotTotalCandles: List<Int>? = null,
+    private val workerPoolSize: Int? = null
 ) {
     private val orderedIds = specs.map { it.id }
     private val states = LinkedHashMap<Long, StrategyLiveProgress>(specs.size).apply {
@@ -149,6 +150,8 @@ class BatchProgressAggregator(
         val aggPts = list.sumOf { it.netPoints }
         val aggR = list.sumOf { it.netR }
         val activeCount = list.count { it.status == "running" }
+        val displayedWorkerCount = workerPoolSize ?: list.size
+        val displayedActiveWorkers = activeCount.coerceAtMost(displayedWorkerCount)
 
         return BacktestProgressSnapshot(
             candlesProcessed = combinedProcessed,
@@ -162,9 +165,9 @@ class BatchProgressAggregator(
             netPoints = aggPts,
             netR = aggR,
             currentTime = currentTimeHint,
-            strategyIndex = activeCount,
-            totalStrategies = list.size,
-            currentStrategyName = "$activeCount/${list.size} active",
+            strategyIndex = displayedActiveWorkers,
+            totalStrategies = displayedWorkerCount,
+            currentStrategyName = "$displayedActiveWorkers/$displayedWorkerCount workers active",
             strategyStatuses = list
         )
     }
@@ -401,7 +404,8 @@ object WorkerPoolBacktestCoordinator {
             specs = shardSpecs,
             defaultTotalCandles = totalCandles,
             sumCandleProgress = true,
-            perSlotTotalCandles = shardTotals
+            perSlotTotalCandles = shardTotals,
+            workerPoolSize = boundWorkers.size
         )
 
         fun emitAggregated(force: Boolean = false, timeHint: String = "") {
@@ -778,7 +782,11 @@ object WorkerPoolBacktestCoordinator {
         val ipcDir = File(appContext.cacheDir, "worker_ipc/${UUID.randomUUID()}").apply { mkdirs() }
         val replyThread = HandlerThread("BacktestBatchReplies").apply { start() }
         val inFlight = ConcurrentHashMap<String, InFlightRequest>()
-        val aggregator = BatchProgressAggregator(specs, estimatedRows)
+        val aggregator = BatchProgressAggregator(
+            specs = specs,
+            defaultTotalCandles = estimatedRows,
+            workerPoolSize = specs.size.coerceAtMost(MAX_WORKER_PROCESSES)
+        )
         val lastUiPushMs = AtomicInteger(0)
 
         fun emitAggregated(force: Boolean = false, timeHint: String = "") {
