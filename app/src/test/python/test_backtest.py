@@ -345,17 +345,17 @@ class BacktestRegressionTests(unittest.TestCase):
         os.close(fd)
         try:
             with open(csv_path, "w", encoding="utf-8") as fh:
-                fh.write("datetime,open,high,low,close,volume\\n")
+                fh.write("datetime,open,high,low,close,volume\n")
                 for idx in range(100):
                     price = 100.0 + (idx % 5)
-                    fh.write(f"2025-01-02 09:{idx % 60:02d}:00,{price},{price + 2},{price - 2},{price + 1},1\\n")
+                    fh.write(f"2025-01-02 09:{idx % 60:02d}:00,{price},{price + 2},{price - 2},{price + 1},1\n")
             code = (
-                "class GridStrategy(Strategy):\\n"
-                "    def __init__(self):\\n"
-                "        self.offset = 1\\n"
-                "    def on_candle(self, i, candles):\\n"
-                "        c = candles[i]\\n"
-                "        return Signal('buy', c.close - self.offset, c.close + self.offset)\\n"
+                "class GridStrategy(Strategy):\n"
+                "    def __init__(self):\n"
+                "        self.offset = 1\n"
+                "    def on_candle(self, i, candles):\n"
+                "        c = candles[i]\n"
+                "        return Signal('buy', c.close - self.offset, c.close + self.offset)\n"
             )
             payload = json.loads(run_optimizer_with_strategy_file(
                 csv_path, code, "GridStrategy",
@@ -375,7 +375,7 @@ class BacktestRegressionTests(unittest.TestCase):
 
         payload = json.loads(run_optimizer_with_strategy_file(
             "missing.csv",
-            "class GridStrategy(Strategy):\\n    def on_candle(self, i, candles):\\n        return None\\n",
+            "class GridStrategy(Strategy):\n    def on_candle(self, i, candles):\n        return None\n",
             "GridStrategy",
             json.dumps([{"name": "offset", "min": 1, "max": 100, "step": 1}]),
             max_combinations=10,
