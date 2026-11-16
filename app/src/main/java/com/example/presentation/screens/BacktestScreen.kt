@@ -106,6 +106,7 @@ import com.example.ui.theme.AmberGold
 import com.example.ui.theme.SlateBreakEven
 import java.util.Locale
 import kotlin.math.abs
+import org.json.JSONObject
 
 @Composable
 fun BacktestScreen(
@@ -856,6 +857,70 @@ fun BacktestScreen(
                                             Text("${result.optInt("totalTrades")} trades • PF ${result.optString("profitFactor")} • DD ${result.optString("maxDrawdownR")}R", style = MaterialTheme.typography.bodySmall)
                                         }
                                         Text("${result.optString("netR")}R", fontWeight = FontWeight.Bold, color = positiveColor)
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(18.dp))
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text("Backtest Queue", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text(
+                            "Queue strategies and process them one at a time. Pause prevents the next job from starting.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                            OutlinedButton(
+                                onClick = backtestViewModel::enqueueSelectedStrategies,
+                                enabled = state.hasCsvBytes && !state.isLoading,
+                                modifier = Modifier.weight(1f)
+                            ) { Text("Add selected") }
+                            Button(
+                                onClick = backtestViewModel::startQueue,
+                                enabled = state.backtestQueue.any { it.status == "Queued" } && !state.isQueueRunning && !state.isLoading,
+                                modifier = Modifier.weight(1f)
+                            ) { Text("Start queue") }
+                        }
+                        if (state.isQueueRunning) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = if (state.isQueuePaused) backtestViewModel::resumeQueue else backtestViewModel::pauseQueue,
+                                    modifier = Modifier.weight(1f)
+                                ) { Text(if (state.isQueuePaused) "Resume" else "Pause") }
+                                OutlinedButton(
+                                    onClick = backtestViewModel::clearFinishedQueueItems,
+                                    modifier = Modifier.weight(1f)
+                                ) { Text("Clear finished") }
+                            }
+                        } else if (state.backtestQueue.any { it.status != "Queued" }) {
+                            TextButton(onClick = backtestViewModel::clearFinishedQueueItems) { Text("Clear finished jobs") }
+                        }
+                        state.backtestQueue.forEach { queued ->
+                            Surface(
+                                modifier = Modifier.fillMaxWidth(),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(queued.strategyName, fontWeight = FontWeight.SemiBold)
+                                        Text(queued.status, style = MaterialTheme.typography.bodySmall, color = when {
+                                            queued.status == "Completed" -> positiveColor
+                                            queued.status == "Failed" -> negativeColor
+                                            queued.status == "Running" -> AmberGold
+                                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                        })
+                                    }
+                                    TextButton(onClick = { backtestViewModel.removeQueuedItem(queued.id) }) {
+                                        Text(if (queued.status == "Running") "Cancel" else "Remove")
                                     }
                                 }
                             }
