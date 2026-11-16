@@ -7,13 +7,30 @@ import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.File
 import java.io.FileOutputStream
+import java.io.FilterInputStream
 import java.io.InputStream
-import java.io.PushbackInputStream
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.io.PushbackInputStream
 import java.nio.charset.Charset
 import java.util.Locale
+
+private class CountingInputStream(input: InputStream) : FilterInputStream(input) {
+    var bytesRead: Long = 0L
+        private set
+
+    override fun read(): Int {
+        val value = super.read()
+        if (value >= 0) bytesRead++
+        return value
+    }
+
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+        val count = super.read(buffer, offset, length)
+        if (count > 0) bytesRead += count
+        return count
+    }
+}
 
 data class DecodedCsv(
     val text: String,
@@ -156,7 +173,8 @@ object BacktestCodec {
      * detection and a generous size cap so huge files fail gracefully instead of causing OOM.
      */
     fun readTextStreamWithBom(inputStream: InputStream, maxBytes: Long = 64L * 1024L * 1024L): String {
-        val pushback = PushbackInputStream(BufferedInputStream(inputStream, 65_536), 4)
+        val counted = CountingInputStream(BufferedInputStream(inputStream, 65_536))
+        val pushback = PushbackInputStream(counted, 4)
         val prefix = ByteArray(3)
         var prefixSize = 0
         while (prefixSize < prefix.size) {
@@ -186,12 +204,10 @@ object BacktestCodec {
         val reader = InputStreamReader(pushback, charset)
         val output = StringBuilder()
         val buffer = CharArray(16_384)
-        var totalChars = 0L
         while (true) {
             val count = reader.read(buffer)
             if (count < 0) break
-            totalChars += count
-            if (totalChars > maxBytes) {
+            if (counted.bytesRead > maxBytes) {
                 val mb = maxBytes / (1024L * 1024L)
                 throw IllegalArgumentException("The selected file exceeds the $mb MB import limit.")
             }
