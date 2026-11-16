@@ -501,10 +501,10 @@ object WorkerPoolBacktestCoordinator {
             totalCandles = totalCandles,
             workerCount = boundWorkers.size
         )
-        val tasks = specs.flatMap { strategy ->
+        val tasks = specs.flatMapIndexed { strategyIndex, strategy ->
             shards.map { shard ->
                 StrategyShardTask(
-                    taskId = 9_000_000_000_000L + (specs.indexOf(strategy) * shards.size) + shard.shardIndex,
+                    taskId = 9_000_000_000_000L + (strategyIndex * shards.size) + shard.shardIndex,
                     strategy = strategy,
                     shard = shard
                 )
