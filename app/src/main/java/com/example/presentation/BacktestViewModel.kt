@@ -45,6 +45,9 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import org.json.JSONArray
+import org.json.JSONObject
+import com.example.backtest.PythonBacktestRunner
 
 data class BacktestUiState(
     val selectedTab: Int = 0, // 0 = Run, 1 = Replay, 2 = AI Builder, 3 = Compare
@@ -112,7 +115,14 @@ data class BacktestUiState(
     val savedRuns: List<SavedBacktestRun> = emptyList(),
     val compareRunAId: Long? = null,
     val compareRunBId: Long? = null,
-    val runSavedFeedback: String? = null
+    val runSavedFeedback: String? = null,
+    val optimizerMinInput: String = "1",
+    val optimizerMaxInput: String = "5",
+    val optimizerStepInput: String = "1",
+    val isOptimizing: Boolean = false,
+    val optimizerError: String? = null,
+    val optimizerResults: List<JSONObject> = emptyList(),
+    val optimizerCombinations: Int = 0
 )
 
 class BacktestViewModel(application: Application) : AndroidViewModel(application) {
@@ -618,6 +628,65 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
 
     fun cancelCsvImport() {
         csvImportJob?.cancel()
+    }
+
+    fun updateOptimizerMin(value: String) { _uiState.update { it.copy(optimizerMinInput = value) } }
+    fun updateOptimizerMax(value: String) { _uiState.update { it.copy(optimizerMaxInput = value) } }
+    fun updateOptimizerStep(value: String) { _uiState.update { it.copy(optimizerStepInput = value) } }
+
+    fun runOptimizer() {
+        val snapshot = _uiState.value
+        val csv = csvCacheFile
+        val strategy = snapshot.selectedStrategy
+        if (snapshot.isLoading || snapshot.isOptimizing) return
+        if (csv == null || !csv.exists() || strategy == null) {
+            _uiState.update { it.copy(optimizerError = "Select a CSV dataset and one Python strategy first.") }
+            return
+        }
+        val min = snapshot.optimizerMinInput.toDoubleOrNull()
+        val max = snapshot.optimizerMaxInput.toDoubleOrNull()
+        val step = snapshot.optimizerStepInput.toDoubleOrNull()
+        if (min == null || max == null || step == null || step <= 0.0 || max < min) {
+            _uiState.update { it.copy(optimizerError = "Enter valid minimum, maximum and positive step values.") }
+            return
+        }
+        val ranges = JSONArray().put(
+            JSONObject().put("name", "offset").put("min", min).put("max", max).put("step", step)
+        ).toString()
+        _uiState.update { it.copy(isOptimizing = true, optimizerError = null, optimizerResults = emptyList(), optimizerCombinations = 0) }
+        viewModelScope.launch {
+            try {
+                val output = withContext(Dispatchers.IO) {
+                    PythonBacktestRunner.runOptimizerWithStrategyFile(
+                        getApplication(),
+                        csv.absolutePath,
+                        strategy.code,
+                        strategy.className,
+                        ranges,
+                        snapshot.maxStopPointsInput.toDoubleOrNull() ?: 0.0,
+                        snapshot.pointSizeInput.toDoubleOrNull() ?: 1.0
+                    )
+                }
+                val parsed = JSONObject(output)
+                if (parsed.has("error")) {
+                    _uiState.update { it.copy(optimizerError = parsed.optString("error")) }
+                } else {
+                    val rows = parsed.optJSONArray("results") ?: JSONArray()
+                    val results = (0 until rows.length()).mapNotNull { rows.optJSONObject(it) }
+                    _uiState.update {
+                        it.copy(
+                            optimizerResults = results,
+                            optimizerCombinations = parsed.optInt("combinationsTested"),
+                            optimizerError = null
+                        )
+                    }
+                }
+            } catch (error: Exception) {
+                _uiState.update { it.copy(optimizerError = error.message ?: "Optimizer failed.") }
+            } finally {
+                _uiState.update { it.copy(isOptimizing = false) }
+            }
+        }
     }
 
     fun run() {
