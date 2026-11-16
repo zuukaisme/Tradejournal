@@ -133,6 +133,47 @@ data class Trade(
     val closeIndex: Int = -1
 )
 
+data class ResearchBucket(
+    val label: String,
+    val trades: Int,
+    val netR: Double,
+    val avgR: Double,
+    val winRatePct: Double,
+    val wins: Int,
+    val losses: Int
+)
+
+data class MonteCarloResearch(
+    val simulations: Int = 0,
+    val tradeCountPerSimulation: Int = 0,
+    val endingNetR: Map<String, Double> = emptyMap(),
+    val maxDrawdownR: Map<String, Double> = emptyMap(),
+    val probabilityOfNegativeEndingPct: Double = 0.0
+)
+
+data class ConfidenceResearch(
+    val score: Int = 0,
+    val label: String = "Insufficient data",
+    val trades: Int = 0,
+    val averageR: Double = 0.0,
+    val standardErrorR: Double? = null,
+    val zScore: Double? = null,
+    val note: String = ""
+)
+
+data class PerformanceBreakdown(
+    val bySession: List<ResearchBucket> = emptyList(),
+    val byWeekday: List<ResearchBucket> = emptyList(),
+    val byMonth: List<ResearchBucket> = emptyList(),
+    val unclassifiedTrades: Int = 0
+)
+
+data class BacktestResearch(
+    val performanceBreakdown: PerformanceBreakdown = PerformanceBreakdown(),
+    val monteCarlo: MonteCarloResearch = MonteCarloResearch(),
+    val confidence: ConfidenceResearch = ConfidenceResearch()
+)
+
 data class BacktestResult(
     val summary: BacktestSummary,
     val points: BacktestPoints,
@@ -141,7 +182,8 @@ data class BacktestResult(
     val timing: BacktestTiming,
     val equityCurve: List<Double>,
     val trades: List<Trade>,
-    val warnings: List<String>
+    val warnings: List<String>,
+    val research: BacktestResearch = BacktestResearch()
 )
 
 data class BacktestError(
