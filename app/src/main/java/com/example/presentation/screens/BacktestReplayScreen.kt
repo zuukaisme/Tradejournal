@@ -1126,15 +1126,21 @@ fun BacktestReplayScreen(
 
             }
 
-            // Main scrollable body: Chart + Playback Controls + Telemetry
-            Column(
+            // Main replay area: chart and execution details beside the complete trade list
+            Row(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                    .padding(horizontal = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                Column(
+                    modifier = Modifier
+                        .weight(0.72f)
+                        .fillMaxHeight()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
                 // Candlestick Canvas Card
                 Surface(
                     color = Color(0xFF0A111A),
@@ -1302,6 +1308,16 @@ fun BacktestReplayScreen(
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
+                }
+
+                ReplayTradeListColumn(
+                    filteredIndexedTrades = trades.withIndex().toList(),
+                    activeIndex = safeIndex,
+                    onSelectTrade = onSelectTradeIndex,
+                    modifier = Modifier
+                        .weight(0.28f)
+                        .fillMaxHeight()
+                )
             }
 
             // Bottom Navigation & Play Controls Bar
