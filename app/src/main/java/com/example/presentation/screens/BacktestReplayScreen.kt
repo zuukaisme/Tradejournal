@@ -1,5 +1,12 @@
 package com.example.presentation.screens
 
+import android.app.Activity
+import android.content.pm.ActivityInfo
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalContext
+import android.content.res.Configuration
+import androidx.compose.ui.platform.LocalConfiguration
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -879,6 +886,20 @@ fun BacktestReplayScreen(
 ) {
     BackHandler(onBack = onClose)
 
+    val context = LocalContext.current
+    val activity = context as? Activity
+    DisposableEffect(activity) {
+        val previousOrientation = activity?.requestedOrientation
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        onDispose {
+            if (previousOrientation != null) {
+                activity?.requestedOrientation = previousOrientation
+            }
+        }
+    }
+
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
     val safeIndex = currentIndex.coerceIn(0, (trades.size - 1).coerceAtLeast(0))
     val trade = trades.getOrNull(safeIndex) ?: return
 
@@ -903,20 +924,7 @@ fun BacktestReplayScreen(
     var revealedCount by remember(safeIndex, totalCandles) {
         mutableIntStateOf(totalCandles.coerceAtLeast(1))
     }
-    var isPlaying by remember(safeIndex) { mutableStateOf(false) }
-
-    LaunchedEffect(isPlaying, safeIndex, totalCandles) {
-        if (!isPlaying || totalCandles <= 0) return@LaunchedEffect
-        if (revealedCount >= totalCandles) {
-            val startAt = (window?.entryCandlePos ?: 0).coerceAtLeast(1)
-            revealedCount = startAt
-        }
-        while (isPlaying && revealedCount < totalCandles) {
-            delay(140L)
-            revealedCount = (revealedCount + 1).coerceAtMost(totalCandles)
-        }
-        isPlaying = false
-    }
+    var isPlaying by remember { mutableStateOf(false) }
 
     val positiveColor = MaterialTheme.colorScheme.primary
     val negativeColor = MaterialTheme.colorScheme.error
@@ -939,6 +947,27 @@ fun BacktestReplayScreen(
         matchingIndices.isEmpty() -> null
         posInFiltered in 0 until (matchingIndices.size - 1) -> matchingIndices[posInFiltered + 1]
         else -> matchingIndices.firstOrNull { it > safeIndex }
+    }
+
+    LaunchedEffect(isPlaying, safeIndex, totalCandles, isLoading) {
+        if (!isPlaying || isLoading || totalCandles <= 0) return@LaunchedEffect
+        val playbackEnd = ((window?.exitCandlePos ?: (totalCandles - 1)) + 1).coerceIn(1, totalCandles)
+        val playbackStart = (window?.entryCandlePos ?: 0).coerceIn(1, playbackEnd)
+        if (revealedCount >= totalCandles || revealedCount > playbackEnd) {
+            revealedCount = playbackStart
+        }
+        while (isPlaying && revealedCount < playbackEnd) {
+            delay(140L)
+            revealedCount = (revealedCount + 1).coerceAtMost(playbackEnd)
+        }
+        if (isPlaying && revealedCount >= playbackEnd) {
+            if (nextMatchingIdx != null) {
+                delay(450L)
+                onSelectTradeIndex(nextMatchingIdx)
+            } else {
+                isPlaying = false
+            }
+        }
     }
 
     Surface(
@@ -1026,6 +1055,7 @@ fun BacktestReplayScreen(
                 }
             }
 
+            if (!isLandscape) {
             // Outcome filter strip (quickly jump between losses / wins)
             val totalWins = remember(trades) { trades.count { t -> val be = t.reason == ExitReason.BE || (abs(t.points) <= 1e-6 && abs(t.r) <= 1e-6); !be && (t.points > 1e-6 || t.r > 1e-6) } }
             val totalLosses = remember(trades) { trades.count { t -> val be = t.reason == ExitReason.BE || (abs(t.points) <= 1e-6 && abs(t.r) <= 1e-6); val w = !be && (t.points > 1e-6 || t.r > 1e-6); !be && !w } }
@@ -1077,22 +1107,30 @@ fun BacktestReplayScreen(
                 }
             }
 
-            // Main scrollable body: Chart + Playback Controls + Telemetry
-            Column(
+            }
+
+            // Main replay area: chart and execution details beside the complete trade list
+            Row(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                    .padding(horizontal = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                Column(
+                    modifier = Modifier
+                        .weight(0.72f)
+                        .fillMaxHeight()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
                 // Candlestick Canvas Card
                 Surface(
                     color = Color(0xFF0A111A),
                     shape = RoundedCornerShape(16.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(340.dp)
+                        .height(if (isLandscape) 250.dp else 340.dp)
                         .testTag("replay_chart_surface")
                 ) {
                     when {
@@ -1253,6 +1291,16 @@ fun BacktestReplayScreen(
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
+                }
+
+                ReplayTradeListColumn(
+                    filteredIndexedTrades = trades.withIndex().toList(),
+                    activeIndex = safeIndex,
+                    onSelectTrade = onSelectTradeIndex,
+                    modifier = Modifier
+                        .weight(0.28f)
+                        .fillMaxHeight()
+                )
             }
 
             // Bottom Navigation & Play Controls Bar
@@ -1360,9 +1408,14 @@ private fun CandlestickReplayCanvas(
         val padTop = 14.dp.toPx()
         val padBottom = 14.dp.toPx()
         val chartHeight = (size.height - padTop - padBottom).coerceAtLeast(40f)
+        val maxVisibleCandles = (chartRight / (12.dp.toPx())).toInt().coerceIn(24, 96)
+        val candleOffset = (visibleCandles.size - maxVisibleCandles).coerceAtLeast(0)
+        val chartCandles = visibleCandles.drop(candleOffset)
+        val adjustedEntryPos = entryPos - candleOffset
+        val adjustedExitPos = exitPos - candleOffset
 
-        var minPrice = visibleCandles.minOf { it.low }
-        var maxPrice = visibleCandles.maxOf { it.high }
+        var minPrice = chartCandles.minOf { it.low }
+        var maxPrice = chartCandles.maxOf { it.high }
         minPrice = minOf(minPrice, trade.sl, trade.tp, trade.entry, trade.exit)
         maxPrice = maxOf(maxPrice, trade.sl, trade.tp, trade.entry, trade.exit)
         val rawSpan = (maxPrice - minPrice).takeIf { it > 0.0 } ?: 1.0
@@ -1381,9 +1434,9 @@ private fun CandlestickReplayCanvas(
         val yExit = yForPrice(trade.exit)
 
         // Risk (SL) & Reward (TP) shaded horizontal bands from entry onward
-        val slotCount = totalWindowCount.coerceAtLeast(visibleCandles.size).coerceAtLeast(1)
+        val slotCount = chartCandles.size.coerceAtLeast(1)
         val slotWidth = chartRight / slotCount.toFloat()
-        val entryX = (if (entryPos >= 0) (entryPos + 0.5f) * slotWidth else 0f).coerceIn(0f, chartRight)
+        val entryX = (if (adjustedEntryPos >= 0) (adjustedEntryPos + 0.5f) * slotWidth else 0f).coerceIn(0f, chartRight)
         val zoneRight = chartRight
 
         // TP reward zone
@@ -1456,7 +1509,7 @@ private fun CandlestickReplayCanvas(
         val candleBodyWidth = (slotWidth * 0.62f).coerceIn(2f, 16.dp.toPx())
         val wickWidth = (slotWidth * 0.14f).coerceIn(1f, 2.5.dp.toPx())
 
-        visibleCandles.forEachIndexed { idx, candle ->
+        chartCandles.forEachIndexed { idx, candle ->
             val cx = (idx + 0.5f) * slotWidth
             val isBull = candle.close >= candle.open
             val color = if (isBull) bullColor else bearColor
@@ -1497,8 +1550,8 @@ private fun CandlestickReplayCanvas(
         tagPaint.color = android.graphics.Color.rgb(34, 197, 94)
         drawContext.canvas.nativeCanvas.drawText("TP ${String.format(Locale.US, "%.2f", trade.tp)}", 4f, (yTp - 4f).coerceAtLeast(12f), tagPaint)
 
-        if (entryPos in 0 until visibleCandles.size) {
-            val ex = (entryPos + 0.5f) * slotWidth
+        if (adjustedEntryPos in 0 until chartCandles.size) {
+            val ex = (adjustedEntryPos + 0.5f) * slotWidth
             drawLine(
                 color = entryLineColor.copy(alpha = 0.45f),
                 start = Offset(ex, padTop),
@@ -1514,8 +1567,8 @@ private fun CandlestickReplayCanvas(
             drawContext.canvas.nativeCanvas.drawText("IN", (ex + 5.dp.toPx()).coerceAtMost(chartRight - 22f), yEntry - 6f, tagPaint)
         }
 
-        if (exitPos in 0 until visibleCandles.size) {
-            val xx = (exitPos + 0.5f) * slotWidth
+        if (adjustedExitPos in 0 until chartCandles.size) {
+            val xx = (adjustedExitPos + 0.5f) * slotWidth
             val exitMarkerColor = when (trade.reason) {
                 ExitReason.TP -> tpColor
                 ExitReason.SL -> slColor
