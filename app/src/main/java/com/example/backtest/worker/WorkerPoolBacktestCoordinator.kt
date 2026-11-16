@@ -474,7 +474,244 @@ object WorkerPoolBacktestCoordinator {
         }
     }
 
-    suspend fun runBatchParallel(
+    private data class StrategyShardTask(
+        val taskId: Long,
+        val strategy: BatchStrategySpec,
+        val shard: TimeShardPlan
+    )
+
+    private suspend fun runBatchTimeShardedParallel(
+        context: Context,
+        csvFile: File,
+        specs: List<BatchStrategySpec>,
+        totalCandles: Int,
+        maxStopPoints: Double,
+        pointSize: Double,
+        onProgress: (BacktestProgressSnapshot) -> Unit
+    ): BatchBacktestParseOutcome? = coroutineScope {
+        val appContext = context.applicationContext
+        val desiredWorkers = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
+        val boundWorkers = bindWorkers(appContext, desiredWorkers)
+        if (boundWorkers.size < 2) {
+            boundWorkers.forEach { worker -> runCatching { appContext.unbindService(worker.connection) } }
+            return@coroutineScope null
+        }
+
+        val shards = BacktestShardStitcher.planTimeShards(
+            totalCandles = totalCandles,
+            workerCount = boundWorkers.size
+        )
+        val tasks = specs.flatMap { strategy ->
+            shards.map { shard ->
+                StrategyShardTask(
+                    taskId = 9_000_000_000_000L + (specs.indexOf(strategy) * shards.size) + shard.shardIndex,
+                    strategy = strategy,
+                    shard = shard
+                )
+            }
+        }
+        val progressSpecs = tasks.map { task ->
+            BatchStrategySpec(
+                id = task.taskId,
+                name = "${task.strategy.name} [${task.shard.shardIndex + 1}/${shards.size}]",
+                className = task.strategy.className,
+                code = task.strategy.code
+            )
+        }
+        val shardTotals = tasks.map { task ->
+            (task.shard.entryEnd - task.shard.entryStart).coerceAtLeast(1)
+        }
+        val aggregator = BatchProgressAggregator(
+            specs = progressSpecs,
+            defaultTotalCandles = totalCandles * specs.size,
+            sumCandleProgress = true,
+            perSlotTotalCandles = shardTotals
+        )
+        val ipcDir = File(appContext.cacheDir, "worker_ipc/${UUID.randomUUID()}").apply { mkdirs() }
+        val replyThread = HandlerThread("BacktestMultiShardReplies").apply { start() }
+        val inFlight = ConcurrentHashMap<String, InFlightRequest>()
+        val lastUiPushMs = AtomicInteger(0)
+        val queueLock = Any()
+        val queue = ArrayDeque(tasks)
+        val resultLock = Any()
+        val shardResults = HashMap<Long, MutableMap<Int, com.example.backtest.BacktestResult>>()
+        val strategyErrors = ConcurrentHashMap<Long, BacktestError>()
+        val codeFiles = specs.associate { strategy ->
+            strategy.id to File(ipcDir, "strat_${strategy.id}.py").apply {
+                writeText(strategy.code, Charsets.UTF_8)
+            }
+        }
+
+        fun emitAggregated(force: Boolean = false, timeHint: String = "") {
+            val nowMs = (System.currentTimeMillis() and 0x7FFFFFFF).toInt()
+            val previous = lastUiPushMs.get()
+            if (force || (nowMs - previous) >= 110) {
+                lastUiPushMs.set(nowMs)
+                onProgress(aggregator.snapshot(timeHint))
+            }
+        }
+
+        val replyMessenger = Messenger(
+            object : Handler(replyThread.looper) {
+                override fun handleMessage(msg: Message) {
+                    val data = msg.data ?: return
+                    val requestId = data.getString(BacktestWorkerService.EXTRA_REQUEST_ID) ?: return
+                    val request = inFlight[requestId] ?: return
+                    val workerLabel = data.getString(BacktestWorkerService.EXTRA_WORKER_LABEL).orEmpty()
+                    when (msg.what) {
+                        BacktestWorkerService.MSG_PROGRESS -> {
+                            val json = data.getString(BacktestWorkerService.EXTRA_PROGRESS_JSON).orEmpty()
+                            if (json.isNotEmpty()) request.onProgressJson(json)
+                        }
+                        BacktestWorkerService.MSG_RESULT -> {
+                            val resultPath = data.getString(BacktestWorkerService.EXTRA_RESULT_FILE_PATH).orEmpty()
+                            val errorMessage = data.getString(BacktestWorkerService.EXTRA_ERROR_MSG)
+                            val raw = runCatching { File(resultPath).readText(Charsets.UTF_8) }.getOrNull()
+                            inFlight.remove(requestId)
+                            request.deferred.complete(
+                                raw ?: """{"error":"${(errorMessage ?: "Worker $workerLabel returned no result").replace("\"", "'")}","details":""}"""
+                            )
+                        }
+                    }
+                }
+            }
+        )
+
+        suspend fun executeTask(task: StrategyShardTask, worker: BoundWorker?): BacktestParseOutcome {
+            val progressSpec = progressSpecs.first { it.id == task.taskId }
+            aggregator.markAssigned(task.taskId, worker?.label ?: "Main")
+            emitAggregated(force = true)
+            val resultFile = File(ipcDir, "result_${task.taskId}.json")
+            val rawJson = if (worker != null) {
+                executeOnWorker(
+                    worker = worker,
+                    replyMessenger = replyMessenger,
+                    inFlight = inFlight,
+                    csvFile = csvFile,
+                    spec = progressSpec,
+                    codeFile = codeFiles.getValue(task.strategy.id),
+                    resultFile = resultFile,
+                    maxStopPoints = maxStopPoints,
+                    pointSize = pointSize,
+                    shard = task.shard,
+                    onProgressJson = { json ->
+                        BacktestCodec.parseProgressJson(json)?.let { snapshot ->
+                            aggregator.onWorkerProgress(task.taskId, worker.label, snapshot)
+                            emitAggregated(force = false, timeHint = snapshot.currentTime)
+                        }
+                    }
+                )
+            } else {
+                null
+            }
+            val outcome = if (rawJson != null) {
+                BacktestCodec.parseBacktestJson(rawJson)
+            } else {
+                val fallbackJson = PythonBacktestRunner.runWithStrategyFileSlice(
+                    context = appContext,
+                    csvPath = csvFile.absolutePath,
+                    strategyCode = task.strategy.code,
+                    className = task.strategy.className,
+                    maxStopPoints = maxStopPoints,
+                    pointSize = pointSize,
+                    loadStart = task.shard.loadStart,
+                    loadEnd = task.shard.loadEnd,
+                    entryStart = task.shard.entryStart,
+                    entryEnd = task.shard.entryEnd
+                )
+                BacktestCodec.parseBacktestJson(fallbackJson)
+            }
+            aggregator.markFinished(task.taskId, outcome)
+            when (outcome) {
+                is BacktestParseOutcome.Success -> synchronized(resultLock) {
+                    shardResults.getOrPut(task.strategy.id) { HashMap() }[task.shard.shardIndex] = outcome.result
+                }
+                is BacktestParseOutcome.Failure -> strategyErrors.putIfAbsent(task.strategy.id, outcome.error)
+            }
+            emitAggregated(force = true)
+            return outcome
+        }
+
+        try {
+            emitAggregated(force = true, timeHint = "Splitting ${specs.size} strategies across ${shards.size} time ranges...")
+            val workerJobs = boundWorkers.map { worker ->
+                async(Dispatchers.IO) {
+                    while (!worker.disconnected.isCompleted) {
+                        val task = synchronized(queueLock) {
+                            if (queue.isEmpty()) null else queue.removeFirst()
+                        } ?: break
+                        executeTask(task, worker)
+                    }
+                }
+            }
+            workerJobs.awaitAll()
+
+            while (true) {
+                val remaining = synchronized(queueLock) {
+                    if (queue.isEmpty()) null else queue.removeFirst()
+                } ?: break
+                executeTask(remaining, null)
+            }
+
+            val runs = specs.map { strategy ->
+                val error = strategyErrors[strategy.id]
+                if (error != null) {
+                    BatchStrategyRunResult(
+                        strategyId = strategy.id,
+                        strategyName = strategy.name,
+                        className = strategy.className,
+                        error = error
+                    )
+                } else {
+                    val orderedResults = synchronized(resultLock) {
+                        shardResults[strategy.id]?.toSortedMap()?.values?.toList().orEmpty()
+                    }
+                    if (orderedResults.size != shards.size) {
+                        BatchStrategyRunResult(
+                            strategyId = strategy.id,
+                            strategyName = strategy.name,
+                            className = strategy.className,
+                            error = BacktestError("One or more time shards did not return a result for ${strategy.name}.")
+                        )
+                    } else {
+                        BatchStrategyRunResult(
+                            strategyId = strategy.id,
+                            strategyName = strategy.name,
+                            className = strategy.className,
+                            result = BacktestShardStitcher.stitch(orderedResults, totalCandles)
+                        )
+                    }
+                }
+            }
+            emitAggregated(force = true, timeHint = "Combining strategy results...")
+            BatchBacktestParseOutcome.Success(totalCandles = totalCandles, runs = runs)
+        } finally {
+            boundWorkers.forEach { worker -> runCatching { appContext.unbindService(worker.connection) } }
+            replyThread.quitSafely()
+            ipcDir.deleteRecursively()
+        }
+    }
+
+        val binaryCandleCount = BinaryCandleCache.readCandleCount(csvFile)
+        if (
+            csvFile.length() >= LARGE_DATASET_TIME_SPLIT_BYTES &&
+            binaryCandleCount != null &&
+            binaryCandleCount >= MIN_CANDLES_FOR_TIME_SPLIT
+        ) {
+            val sharded = runBatchTimeShardedParallel(
+                context = context,
+                csvFile = csvFile,
+                specs = specs,
+                totalCandles = binaryCandleCount,
+                maxStopPoints = maxStopPoints,
+                pointSize = pointSize,
+                onProgress = onProgress
+            )
+            if (sharded != null) return@coroutineScope sharded
+        }
+
+        val appContext = context.applicationContext
+        val ipcDir = File(appContext.cacheDir, "worker_ipc/${UUID.randomUUID()}").apply { mkdirs() }
         context: Context,
         csvFile: File,
         specs: List<BatchStrategySpec>,
