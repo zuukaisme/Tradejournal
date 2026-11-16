@@ -692,6 +692,21 @@ object WorkerPoolBacktestCoordinator {
         }
     }
 
+    suspend fun runBatchParallel(
+        context: Context,
+        csvFile: File,
+        specs: List<BatchStrategySpec>,
+        estimatedRows: Int,
+        maxStopPoints: Double,
+        pointSize: Double,
+        onProgress: (BacktestProgressSnapshot) -> Unit
+    ): BatchBacktestParseOutcome = coroutineScope {
+        if (specs.isEmpty()) {
+            return@coroutineScope BatchBacktestParseOutcome.Failure(
+                BacktestError("No strategies supplied for parallel batch backtest.")
+            )
+        }
+
         val binaryCandleCount = BinaryCandleCache.readCandleCount(csvFile)
         if (
             csvFile.length() >= LARGE_DATASET_TIME_SPLIT_BYTES &&
