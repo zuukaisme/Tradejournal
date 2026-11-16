@@ -592,7 +592,7 @@ fun BotEditorBottomSheet(
                     "Choose an MQL source file: .mq5, .mq4, .mqh or .txt."
                 }
                 val importedCode = context.contentResolver.openInputStream(uri)?.use { stream ->
-                    BacktestCodec.readTextStreamWithBom(stream, 12L * 1024L * 1024L)
+                    BacktestCodec.readTextStreamWithBom(stream, 64L * 1024L * 1024L)
                 } ?: error("The selected file could not be read.")
                 require(importedCode.isNotBlank()) { "The selected file is empty." }
                 code = importedCode
