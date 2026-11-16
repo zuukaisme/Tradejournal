@@ -3,6 +3,7 @@ package com.example.backtest
 import android.content.Context
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
+import java.io.RandomAccessFile
 
 fun interface BacktestProgressListener {
     fun onProgress(progressJson: String)
@@ -12,10 +13,16 @@ object PythonBacktestRunner {
     private val lock = Any()
 
     fun ensureStarted(context: Context) {
-        if (!Python.isStarted()) {
-            synchronized(lock) {
-                if (!Python.isStarted()) {
-                    Python.start(AndroidPlatform(context.applicationContext))
+        if (Python.isStarted()) return
+        synchronized(lock) {
+            if (Python.isStarted()) return
+            val appContext = context.applicationContext
+            val startupLock = java.io.File(appContext.filesDir, "backtest-python-start.lock")
+            RandomAccessFile(startupLock, "rw").use { lockFile ->
+                lockFile.channel.lock().use {
+                    if (!Python.isStarted()) {
+                        Python.start(AndroidPlatform(appContext))
+                    }
                 }
             }
         }

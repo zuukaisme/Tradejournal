@@ -1324,7 +1324,8 @@ private fun BacktestLiveProgressCard(progress: BacktestProgressSnapshot) {
             )
         }
 
-        if (progress.strategyStatuses.isNotEmpty()) {
+        val failedTasks = progress.strategyStatuses.filter { it.status == "error" }
+        if (failedTasks.isNotEmpty()) {
             Spacer(modifier = Modifier.height(10.dp))
             Column(
                 verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -1332,8 +1333,8 @@ private fun BacktestLiveProgressCard(progress: BacktestProgressSnapshot) {
                     .fillMaxWidth()
                     .testTag("live_strategy_statuses_list")
             ) {
-                progress.strategyStatuses.forEach { stratStatus ->
-                    LiveStrategyStatusRow(item = stratStatus)
+                failedTasks.forEach { failedTask ->
+                    LiveStrategyStatusRow(item = failedTask)
                 }
             }
         }
