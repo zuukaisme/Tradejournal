@@ -1512,9 +1512,9 @@ private fun CandlestickReplayCanvas(
                 topLeft = Offset(entryX, min(entryY, slY)),
                 size = Size((exitX - entryX).coerceAtLeast(1f), abs(entryY - slY))
             )
-            drawLine(tpColor, Offset(entryX, tpY), Offset(exitX, tpY), 1.2.dp.toPx(), dashEffect)
-            drawLine(slColor, Offset(entryX, slY), Offset(exitX, slY), 1.2.dp.toPx(), dashEffect)
-            drawLine(entryLineColor, Offset(entryX, entryY), Offset(exitX, entryY), 1.1.dp.toPx(), dashEffect)
+            drawLine(tpColor, Offset(entryX, tpY), Offset(exitX, tpY), 1.2.dp.toPx(), pathEffect = dashEffect)
+            drawLine(slColor, Offset(entryX, slY), Offset(exitX, slY), 1.2.dp.toPx(), pathEffect = dashEffect)
+            drawLine(entryLineColor, Offset(entryX, entryY), Offset(exitX, entryY), 1.1.dp.toPx(), pathEffect = dashEffect)
             drawCircle(entryLineColor, 4.dp.toPx(), Offset(entryX, entryY))
 
             tagPaint.color = android.graphics.Color.rgb(56, 189, 248)

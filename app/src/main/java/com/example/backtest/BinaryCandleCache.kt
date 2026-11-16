@@ -65,7 +65,11 @@ object BinaryCandleCache {
     )
 
     fun cacheDirectory(): File =
-        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Tradepulse/cache")
+        runCatching {
+            File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Tradepulse/cache")
+        }.getOrElse {
+            File(System.getProperty("java.io.tmpdir"), "Tradepulse/cache")
+        }
 
     fun hasCacheStorageAccess(): Boolean =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.R || Environment.isExternalStorageManager()

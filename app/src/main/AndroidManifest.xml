@@ -50,6 +50,118 @@
             android:name=".backtest.worker.BacktestWorkerService4"
             android:exported="false"
             android:process=":bt_worker_4" />
+        <service
+            android:name=".backtest.worker.BacktestWorkerService5"
+            android:exported="false"
+            android:process=":bt_worker_5" />
+        <service
+            android:name=".backtest.worker.BacktestWorkerService6"
+            android:exported="false"
+            android:process=":bt_worker_6" />
+        <service
+            android:name=".backtest.worker.BacktestWorkerService7"
+            android:exported="false"
+            android:process=":bt_worker_7" />
+        <service
+            android:name=".backtest.worker.BacktestWorkerService8"
+            android:exported="false"
+            android:process=":bt_worker_8" />
+        <service
+            android:name=".backtest.worker.BacktestWorkerService9"
+            android:exported="false"
+            android:process=":bt_worker_9" />
+        <service
+            android:name=".backtest.worker.BacktestWorkerService10"
+            android:exported="false"
+            android:process=":bt_worker_10" />
+        <service
+            android:name=".backtest.worker.BacktestWorkerService11"
+            android:exported="false"
+            android:process=":bt_worker_11" />
+        <service
+            android:name=".backtest.worker.BacktestWorkerService12"
+            android:exported="false"
+            android:process=":bt_worker_12" />
+        <service
+            android:name=".backtest.worker.BacktestWorkerService13"
+            android:exported="false"
+            android:process=":bt_worker_13" />
+        <service
+            android:name=".backtest.worker.BacktestWorkerService14"
+            android:exported="false"
+            android:process=":bt_worker_14" />
+        <service
+            android:name=".backtest.worker.BacktestWorkerService15"
+            android:exported="false"
+            android:process=":bt_worker_15" />
+        <service
+            android:name=".backtest.worker.BacktestWorkerService16"
+            android:exported="false"
+            android:process=":bt_worker_16" />
+        <service
+            android:name=".backtest.worker.BacktestWorkerService17"
+            android:exported="false"
+            android:process=":bt_worker_17" />
+        <service
+            android:name=".backtest.worker.BacktestWorkerService18"
+            android:exported="false"
+            android:process=":bt_worker_18" />
+        <service
+            android:name=".backtest.worker.BacktestWorkerService19"
+            android:exported="false"
+            android:process=":bt_worker_19" />
+        <service
+            android:name=".backtest.worker.BacktestWorkerService20"
+            android:exported="false"
+            android:process=":bt_worker_20" />
+        <service
+            android:name=".backtest.worker.BacktestWorkerService21"
+            android:exported="false"
+            android:process=":bt_worker_21" />
+        <service
+            android:name=".backtest.worker.BacktestWorkerService22"
+            android:exported="false"
+            android:process=":bt_worker_22" />
+        <service
+            android:name=".backtest.worker.BacktestWorkerService23"
+            android:exported="false"
+            android:process=":bt_worker_23" />
+        <service
+            android:name=".backtest.worker.BacktestWorkerService24"
+            android:exported="false"
+            android:process=":bt_worker_24" />
+        <service
+            android:name=".backtest.worker.BacktestWorkerService25"
+            android:exported="false"
+            android:process=":bt_worker_25" />
+        <service
+            android:name=".backtest.worker.BacktestWorkerService26"
+            android:exported="false"
+            android:process=":bt_worker_26" />
+        <service
+            android:name=".backtest.worker.BacktestWorkerService27"
+            android:exported="false"
+            android:process=":bt_worker_27" />
+        <service
+            android:name=".backtest.worker.BacktestWorkerService28"
+            android:exported="false"
+            android:process=":bt_worker_28" />
+        <service
+            android:name=".backtest.worker.BacktestWorkerService29"
+            android:exported="false"
+            android:process=":bt_worker_29" />
+        <service
+            android:name=".backtest.worker.BacktestWorkerService30"
+            android:exported="false"
+            android:process=":bt_worker_30" />
+        <service
+            android:name=".backtest.worker.BacktestWorkerService31"
+            android:exported="false"
+            android:process=":bt_worker_31" />
+        <service
+            android:name=".backtest.worker.BacktestWorkerService32"
+            android:exported="false"
+            android:process=":bt_worker_32" />
     </application>
 
 </manifest>
