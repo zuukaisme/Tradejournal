@@ -234,25 +234,6 @@ fun TradeReplayTabContent(
         else -> matchingIndices.firstOrNull { it > safeIndex }
     }
 
-    LaunchedEffect(isPlaying, safeIndex, totalCandles) {
-        if (!isPlaying || totalCandles <= 0) return@LaunchedEffect
-        if (revealedCount >= totalCandles) {
-            revealedCount = (window?.entryCandlePos ?: 0).coerceIn(1, totalCandles)
-        }
-        while (isPlaying && revealedCount < totalCandles) {
-            delay(140L)
-            revealedCount = (revealedCount + 1).coerceAtMost(totalCandles)
-        }
-        if (isPlaying && revealedCount >= totalCandles) {
-            if (nextMatchingIdx != null) {
-                delay(450L)
-                onSelectTradeIndex(nextMatchingIdx)
-            } else {
-                isPlaying = false
-            }
-        }
-    }
-
     val successfulBatchRuns = remember(batchResults) {
         batchResults.filter { it.result != null }
     }
