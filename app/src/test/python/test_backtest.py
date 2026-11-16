@@ -88,6 +88,33 @@ class BacktestRegressionTests(unittest.TestCase):
         self.assertEqual(first_trade["openIndex"], trades[0].open_i)
         self.assertEqual(first_trade["closeIndex"], trades[0].close_i)
 
+    def test_research_analytics_monte_carlo_breakdown_and_confidence(self):
+        from backtest import build_research_analytics
+
+        trades = [
+            {"r": 1.5, "openTime": "2025.01.06 09:00:00"},
+            {"r": -1.0, "openTime": "2025.01.06 14:00:00"},
+            {"r": 0.5, "openTime": "2025.01.07 10:00:00"},
+            {"r": -0.5, "openTime": "2025.02.03 15:00:00"},
+        ]
+        result = build_research_analytics(trades, simulations=500, seed=7)
+        self.assertEqual(result["monteCarlo"]["simulations"], 500)
+        self.assertEqual(result["monteCarlo"]["tradeCountPerSimulation"], 4)
+        self.assertEqual(result["confidence"]["trades"], 4)
+        self.assertEqual(result["confidence"]["label"], "Low")
+        self.assertEqual(sum(x["trades"] for x in result["performanceBreakdown"]["byWeekday"]), 4)
+        self.assertEqual(sum(x["trades"] for x in result["performanceBreakdown"]["bySession"]), 4)
+        self.assertEqual(result["monteCarlo"], build_research_analytics(trades, simulations=500, seed=7)["monteCarlo"])
+
+    def test_compute_stats_embeds_research_analytics(self):
+        candles = make_candles(80)
+        trades, skipped = run_backtest(candles, FrequentSignalStrategy())
+        stats = compute_stats(trades, skipped, total_candles=len(candles))
+        self.assertIn("research", stats)
+        self.assertIn("monteCarlo", stats["research"])
+        self.assertIn("confidence", stats["research"])
+        self.assertIn("performanceBreakdown", stats["research"])
+
     def test_run_with_multiple_strategies_file_runs_simultaneously_with_parity_and_isolation(self):
         fd, csv_path = tempfile.mkstemp(suffix=".csv")
         os.close(fd)
