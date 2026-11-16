@@ -116,6 +116,7 @@ data class BacktestUiState(
     val compareRunAId: Long? = null,
     val compareRunBId: Long? = null,
     val runSavedFeedback: String? = null,
+    val optimizerParameterInput: String = "offset",
     val optimizerMinInput: String = "1",
     val optimizerMaxInput: String = "5",
     val optimizerStepInput: String = "1",
@@ -630,6 +631,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
         csvImportJob?.cancel()
     }
 
+    fun updateOptimizerParameter(value: String) { _uiState.update { it.copy(optimizerParameterInput = value) } }
     fun updateOptimizerMin(value: String) { _uiState.update { it.copy(optimizerMinInput = value) } }
     fun updateOptimizerMax(value: String) { _uiState.update { it.copy(optimizerMaxInput = value) } }
     fun updateOptimizerStep(value: String) { _uiState.update { it.copy(optimizerStepInput = value) } }
@@ -643,6 +645,10 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
             _uiState.update { it.copy(optimizerError = "Select a CSV dataset and one Python strategy first.") }
             return
         }
+        if (snapshot.optimizerParameterInput.isBlank()) {
+            _uiState.update { it.copy(optimizerError = "Enter the exact public parameter name defined by the strategy.") }
+            return
+        }
         val min = snapshot.optimizerMinInput.toDoubleOrNull()
         val max = snapshot.optimizerMaxInput.toDoubleOrNull()
         val step = snapshot.optimizerStepInput.toDoubleOrNull()
@@ -651,7 +657,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
             return
         }
         val ranges = JSONArray().put(
-            JSONObject().put("name", "offset").put("min", min).put("max", max).put("step", step)
+            JSONObject().put("name", snapshot.optimizerParameterInput.trim()).put("min", min).put("max", max).put("step", step)
         ).toString()
         _uiState.update { it.copy(isOptimizing = true, optimizerError = null, optimizerResults = emptyList(), optimizerCombinations = 0) }
         viewModelScope.launch {
