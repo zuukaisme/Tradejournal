@@ -42,12 +42,16 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
 import com.example.backtest.PythonBacktestRunner
+
+data class BacktestQueueItem(val id: String, val strategyId: Long, val strategyName: String, val status: String = "Queued")
 
 data class BacktestUiState(
     val selectedTab: Int = 0, // 0 = Run, 1 = Replay, 2 = AI Builder, 3 = Compare
@@ -123,7 +127,10 @@ data class BacktestUiState(
     val isOptimizing: Boolean = false,
     val optimizerError: String? = null,
     val optimizerResults: List<JSONObject> = emptyList(),
-    val optimizerCombinations: Int = 0
+    val optimizerCombinations: Int = 0,
+    val backtestQueue: List<BacktestQueueItem> = emptyList(),
+    val isQueueRunning: Boolean = false,
+    val isQueuePaused: Boolean = false
 )
 
 class BacktestViewModel(application: Application) : AndroidViewModel(application) {
@@ -135,6 +142,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
     private var lastRunBacktestFile: File? = null
     private var csvImportJob: Job? = null
     private var replayLoadJob: Job? = null
+    private var queueJob: Job? = null
     private val resampledCache = mutableMapOf<Pair<String, BacktestTimeframe>, ResampledCsvFileResult>()
     private var latestSettings: UserSettings = UserSettings()
     private var hasHydratedAiPrefs = false
@@ -629,6 +637,78 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
 
     fun cancelCsvImport() {
         csvImportJob?.cancel()
+    }
+
+    fun enqueueSelectedStrategies() {
+        val snapshot = _uiState.value
+        val selected = if (snapshot.isMultiStrategyMode) {
+            snapshot.availableStrategies.filter { it.id in snapshot.selectedStrategyIds }
+        } else listOfNotNull(snapshot.selectedStrategy)
+        if (selected.isEmpty()) {
+            _uiState.update { it.copy(backtestError = BacktestError("Select at least one strategy to add to the queue.")) }
+            return
+        }
+        _uiState.update { current ->
+            val existing = current.backtestQueue.map { it.strategyId }.toSet()
+            val additions = selected.filter { it.id !in existing }.map {
+                BacktestQueueItem("${it.id}-${System.nanoTime()}", it.id, it.name)
+            }
+            current.copy(backtestQueue = current.backtestQueue + additions, backtestError = null)
+        }
+    }
+
+    fun removeQueuedItem(id: String) {
+        _uiState.update { current ->
+            current.copy(backtestQueue = current.backtestQueue.filterNot { it.id == id || (it.id == id && it.status == "Running") })
+        }
+    }
+
+    fun pauseQueue() { _uiState.update { it.copy(isQueuePaused = true) } }
+    fun resumeQueue() { _uiState.update { it.copy(isQueuePaused = false) } }
+
+    fun startQueue() {
+        val snapshot = _uiState.value
+        if (snapshot.isQueueRunning || snapshot.isLoading || !snapshot.hasCsvBytes) return
+        if (snapshot.backtestQueue.none { it.status == "Queued" }) return
+        queueJob = viewModelScope.launch {
+            _uiState.update { it.copy(isQueueRunning = true, isQueuePaused = false) }
+            try {
+                while (true) {
+                    while (_uiState.value.isQueuePaused) delay(200)
+                    val next = _uiState.value.backtestQueue.firstOrNull { it.status == "Queued" } ?: break
+                    val strategy = _uiState.value.availableStrategies.firstOrNull { it.id == next.strategyId }
+                    if (strategy == null) {
+                        _uiState.update { state -> state.copy(backtestQueue = state.backtestQueue.map { if (it.id == next.id) it.copy(status = "Failed: strategy missing") else it }) }
+                        continue
+                    }
+                    _uiState.update { state ->
+                        state.copy(
+                            selectedStrategy = strategy,
+                            isMultiStrategyMode = false,
+                            selectedStrategyIds = setOf(strategy.id),
+                            backtestQueue = state.backtestQueue.map { if (it.id == next.id) it.copy(status = "Running") else it }
+                        )
+                    }
+                    run()
+                    val started = uiState.first { it.isLoading || it.backtestError != null }
+                    if (started.isLoading) uiState.first { !it.isLoading }
+                    val finished = _uiState.value
+                    val status = if (finished.backtestError == null && finished.result != null) "Completed" else "Failed"
+                    _uiState.update { state ->
+                        state.copy(backtestQueue = state.backtestQueue.map { if (it.id == next.id) it.copy(status = status) else it })
+                    }
+                }
+            } finally {
+                _uiState.update { it.copy(isQueueRunning = false, isQueuePaused = false) }
+                queueJob = null
+            }
+        }
+    }
+
+    fun clearFinishedQueueItems() {
+        _uiState.update { current ->
+            current.copy(backtestQueue = current.backtestQueue.filter { it.status == "Queued" || it.status == "Running" })
+        }
     }
 
     fun updateOptimizerParameter(value: String) { _uiState.update { it.copy(optimizerParameterInput = value) } }
