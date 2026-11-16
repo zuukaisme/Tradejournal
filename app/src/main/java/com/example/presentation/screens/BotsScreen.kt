@@ -2,6 +2,7 @@ package com.example.presentation.screens
 
 import android.provider.OpenableColumns
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -47,13 +49,19 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -108,12 +116,13 @@ fun BotsScreen(
     }
 
     // If viewing a single bot's code & details
-    if (selectedBot != null && !isBotEditorOpen) {
+    val currentBot = selectedBot
+    if (currentBot != null && !isBotEditorOpen) {
         BotDetailScreen(
-            bot = selectedBot!!,
+            bot = currentBot,
             viewModel = viewModel,
             onBack = { viewModel.closeBotDetails() },
-            onEditCode = { viewModel.openEditBotCode(selectedBot!!) }
+            onEditCode = { viewModel.openEditBotCode(currentBot) }
         )
         return
     }
@@ -392,9 +401,11 @@ fun BotDetailScreen(
     onBack: () -> Unit,
     onEditCode: () -> Unit
 ) {
-    var selectedTab by remember { mutableStateOf(0) }
+    var selectedTab by remember(bot.id) { mutableStateOf(0) }
     val versions by viewModel.repository.getBotVersions(bot.id).collectAsState(initial = emptyList())
     val sdf = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US) }
+
+    BackHandler(onBack = onBack)
 
     Column(
         modifier = Modifier
@@ -561,54 +572,90 @@ fun BotEditorBottomSheet(
     val strategies by viewModel.strategies.collectAsState()
     val context = LocalContext.current
 
-    var name by remember { mutableStateOf(bot?.name ?: "") }
-    var description by remember { mutableStateOf(bot?.description ?: "") }
-    var version by remember { mutableStateOf(bot?.version ?: "1.0.0") }
-    var type by remember { mutableStateOf(bot?.type ?: BotType.EXPERT_ADVISOR) }
-    var instrument by remember { mutableStateOf(bot?.instrument ?: "XAUUSD") }
-    var timeframe by remember { mutableStateOf(bot?.timeframe ?: "H1") }
-    var status by remember { mutableStateOf(bot?.status ?: BotStatus.TESTING) }
-    var selectedStrategyId by remember { mutableStateOf(bot?.strategyId) }
-    var code by remember { mutableStateOf(bot?.code ?: "// Paste your MQL5 source code here\n") }
-    var backtestNotes by remember { mutableStateOf(bot?.backtestNotes ?: "") }
-    var changeNote by remember { mutableStateOf("") }
+    var name by remember(bot?.id) { mutableStateOf(bot?.name ?: "") }
+    var description by remember(bot?.id) { mutableStateOf(bot?.description ?: "") }
+    var version by remember(bot?.id) { mutableStateOf(bot?.version ?: "1.0.0") }
+    var type by remember(bot?.id) { mutableStateOf(bot?.type ?: BotType.EXPERT_ADVISOR) }
+    var instrument by remember(bot?.id) { mutableStateOf(bot?.instrument ?: "XAUUSD") }
+    var timeframe by remember(bot?.id) { mutableStateOf(bot?.timeframe ?: "H1") }
+    var status by remember(bot?.id) { mutableStateOf(bot?.status ?: BotStatus.TESTING) }
+    var selectedStrategyId by remember(bot?.id) { mutableStateOf(bot?.strategyId) }
+    var code by remember(bot?.id) { mutableStateOf(bot?.code ?: "// Paste your MQL5 source code here\n") }
+    var backtestNotes by remember(bot?.id) { mutableStateOf(bot?.backtestNotes ?: "") }
+    var changeNote by remember(bot?.id) { mutableStateOf("") }
+    var importGeneration by remember(bot?.id) { mutableIntStateOf(0) }
+    var isImportingFile by remember(bot?.id) { mutableStateOf(false) }
+    var formError by remember(bot?.id) { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null) {
-            try {
-                val fileName = context.contentResolver.query(
-                    uri,
-                    arrayOf(OpenableColumns.DISPLAY_NAME),
-                    null,
-                    null,
-                    null
-                )?.use { cursor ->
-                    if (cursor.moveToFirst()) cursor.getString(0) else null
-                } ?: "ImportedBot.mq5"
-                val extension = fileName.substringAfterLast('.', "").lowercase(Locale.US)
-                require(extension in setOf("mq5", "mq4", "mqh", "txt")) {
-                    "Choose an MQL source file: .mq5, .mq4, .mqh or .txt."
+            scope.launch {
+                isImportingFile = true
+                formError = null
+                val result = withContext(Dispatchers.IO) {
+                    runCatching {
+                        var fileName: String? = null
+                        var reportedSize = -1L
+                        context.contentResolver.query(
+                            uri,
+                            arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE),
+                            null,
+                            null,
+                            null
+                        )?.use { cursor ->
+                            if (cursor.moveToFirst()) {
+                                val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                                if (nameIdx >= 0 && !cursor.isNull(nameIdx)) {
+                                    fileName = cursor.getString(nameIdx)
+                                }
+                                val sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE)
+                                if (sizeIdx >= 0 && !cursor.isNull(sizeIdx)) {
+                                    reportedSize = cursor.getLong(sizeIdx)
+                                }
+                            }
+                        }
+                        val resolvedName = fileName?.takeIf { it.isNotBlank() }
+                            ?: uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+                            ?: "ImportedBot.mq5"
+                        val extension = resolvedName.substringAfterLast('.', "").lowercase(Locale.US)
+                        val allowedExtensions = setOf("mq5", "mq4", "mqh", "txt")
+                        if (extension.isNotEmpty() && extension !in allowedExtensions) {
+                            throw IllegalArgumentException(
+                                "Choose an MQL source file: .mq5, .mq4, .mqh or .txt (selected .$extension)."
+                            )
+                        }
+                        val maxSourceBytes = 16L * 1024L * 1024L
+                        if (reportedSize > maxSourceBytes) {
+                            throw IllegalArgumentException("The selected file exceeds the 16 MB import limit.")
+                        }
+                        val importedCode = context.contentResolver.openInputStream(uri)?.use { stream ->
+                            BacktestCodec.readTextStreamWithBom(stream, maxSourceBytes)
+                        } ?: error("The selected file could not be read.")
+                        require(importedCode.isNotBlank()) { "The selected file is empty." }
+                        Triple(resolvedName, extension.ifEmpty { "mq5" }, importedCode)
+                    }
                 }
-                val importedCode = context.contentResolver.openInputStream(uri)?.use { stream ->
-                    BacktestCodec.readTextStreamWithBom(stream, 64L * 1024L * 1024L)
-                } ?: error("The selected file could not be read.")
-                require(importedCode.isNotBlank()) { "The selected file is empty." }
-                code = importedCode
-                if (bot == null || name.isBlank()) {
-                    name = fileName.substringBeforeLast('.')
+                isImportingFile = false
+                result.onSuccess { (fileName, extension, importedCode) ->
+                    code = importedCode
+                    importGeneration++
+                    if (bot == null || name.isBlank()) {
+                        name = fileName.substringBeforeLast('.').ifBlank { "ImportedBot" }
+                    }
+                    if (bot == null) {
+                        type = if (extension == "mqh") BotType.LIBRARY else BotType.EXPERT_ADVISOR
+                    }
+                    Toast.makeText(
+                        context,
+                        "Imported $fileName (${importedCode.lineSequence().count()} lines)",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }.onFailure { error ->
+                    formError = error.message ?: "Unable to import this file."
                 }
-                if (bot == null) {
-                    type = if (extension == "mqh") BotType.LIBRARY else BotType.EXPERT_ADVISOR
-                }
-                Toast.makeText(context, "Imported $fileName", Toast.LENGTH_SHORT).show()
-            } catch (error: Exception) {
-                Toast.makeText(
-                    context,
-                    error.message ?: "Unable to import this file.",
-                    Toast.LENGTH_LONG
-                ).show()
             }
         }
     }
@@ -624,7 +671,7 @@ fun BotEditorBottomSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp, vertical = 8.dp)
-                .height(640.dp)
+                .heightIn(min = 420.dp, max = 640.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -732,12 +779,27 @@ fun BotEditorBottomSheet(
             Spacer(modifier = Modifier.height(4.dp))
             OutlinedButton(
                 onClick = { filePickerLauncher.launch(arrayOf("*/*")) },
+                enabled = !isImportingFile,
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(10.dp)
             ) {
-                Icon(Icons.Default.Code, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("Import .mq5, .mq4, .mqh or .txt")
+                if (isImportingFile) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Importing large file...")
+                } else {
+                    Icon(Icons.Default.Code, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Import .mq5, .mq4, .mqh or .txt")
+                }
+            }
+            if (formError != null) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = formError!!,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
             Spacer(modifier = Modifier.height(4.dp))
 
@@ -755,7 +817,8 @@ fun BotEditorBottomSheet(
                     botName = name.ifBlank { "Expert" },
                     isDarkTheme = isDark,
                     isEditable = true,
-                    onCodeChange = { code = it }
+                    onCodeChange = { code = it },
+                    sourceKey = importGeneration
                 )
             }
 
@@ -775,34 +838,43 @@ fun BotEditorBottomSheet(
 
             Button(
                 onClick = {
-                    if (name.isNotBlank()) {
-                        val strategy = strategies.firstOrNull { it.id == selectedStrategyId }
-                        val toSave = Bot(
-                            id = bot?.id ?: 0L,
-                            name = name.trim(),
-                            description = description.trim(),
-                            version = version.trim(),
-                            type = type,
-                            instrument = instrument.trim(),
-                            timeframe = timeframe.trim(),
-                            strategyId = selectedStrategyId,
-                            strategyName = strategy?.name ?: "",
-                            status = status,
-                            tags = listOf(type.name, instrument),
-                            notes = "",
-                            code = code,
-                            backtestNotes = backtestNotes,
-                            createdAt = bot?.createdAt ?: System.currentTimeMillis(),
-                            updatedAt = System.currentTimeMillis()
-                        )
+                    val trimmedName = name.trim()
+                    if (trimmedName.isEmpty()) {
+                        formError = "Enter a bot or script name."
+                        return@Button
+                    }
+                    if (code.isBlank()) {
+                        formError = "Bot source code cannot be empty."
+                        return@Button
+                    }
+                    formError = null
+                    val strategy = strategies.firstOrNull { it.id == selectedStrategyId }
+                    val toSave = Bot(
+                        id = bot?.id ?: 0L,
+                        name = trimmedName,
+                        description = description.trim(),
+                        version = version.trim(),
+                        type = type,
+                        instrument = instrument.trim(),
+                        timeframe = timeframe.trim(),
+                        strategyId = selectedStrategyId,
+                        strategyName = strategy?.name ?: "",
+                        status = status,
+                        tags = listOf(type.name, instrument),
+                        notes = "",
+                        code = code,
+                        backtestNotes = backtestNotes,
+                        createdAt = bot?.createdAt ?: System.currentTimeMillis(),
+                        updatedAt = System.currentTimeMillis()
+                    )
 
-                        if (bot != null) {
-                            viewModel.saveBotCodeUpdate(bot.id, code, changeNote, version)
-                        } else {
-                            viewModel.saveBot(toSave)
-                        }
+                    if (bot != null) {
+                        viewModel.saveBotWithVersion(toSave, changeNote)
+                    } else {
+                        viewModel.saveBot(toSave)
                     }
                 },
+                enabled = !isImportingFile,
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("save_bot_code_button"),

@@ -84,7 +84,7 @@ enum class AppScreen {
 
 class TradingViewModel(application: Application) : AndroidViewModel(application) {
     private val database = TradingDatabase.getDatabase(application, viewModelScope)
-    val repository = TradingRepository(database)
+    val repository = TradingRepository(database, application.filesDir)
     private val economicCalendarRepository = EconomicCalendarRepository()
 
     // Current screen navigation
@@ -454,43 +454,92 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
 
     fun saveBot(bot: Bot) {
         viewModelScope.launch {
-            if (bot.id == 0L) {
-                val newId = repository.insertBot(bot)
+            runCatching {
+                if (bot.id == 0L) {
+                    val newId = repository.insertBot(bot)
+                    val savedBot = bot.copy(id = newId)
+                    repository.addBotVersion(
+                        BotVersion(
+                            botId = newId,
+                            version = savedBot.version,
+                            code = savedBot.code,
+                            changeNote = "Initial release ${savedBot.version}"
+                        )
+                    )
+                    savedBot
+                } else {
+                    repository.updateBot(bot)
+                    bot
+                }
+            }.onSuccess { savedBot ->
+                closeBotEditor()
+                _selectedBotForView.value = savedBot
+            }.onFailure { error ->
+                android.widget.Toast.makeText(
+                    getApplication(),
+                    error.message ?: "Failed to save bot.",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
+    fun saveBotWithVersion(updatedBot: Bot, changeNote: String) {
+        viewModelScope.launch {
+            runCatching {
+                val timestamped = updatedBot.copy(updatedAt = System.currentTimeMillis())
+                repository.updateBot(timestamped)
                 repository.addBotVersion(
                     BotVersion(
-                        botId = newId,
-                        version = bot.version,
-                        code = bot.code,
-                        changeNote = "Initial release ${bot.version}"
+                        botId = timestamped.id,
+                        version = timestamped.version,
+                        code = timestamped.code,
+                        changeNote = changeNote.ifBlank { "Code update" }
                     )
                 )
-            } else {
-                repository.updateBot(bot)
+                timestamped
+            }.onSuccess { savedBot ->
+                _selectedBotForView.value = savedBot
+                closeBotEditor()
+            }.onFailure { error ->
+                android.widget.Toast.makeText(
+                    getApplication(),
+                    error.message ?: "Failed to update bot.",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
             }
-            closeBotEditor()
-            _selectedBotForView.value = bot
         }
     }
 
     fun saveBotCodeUpdate(botId: Long, newCode: String, changeNote: String, newVersionStr: String? = null) {
         viewModelScope.launch {
-            val currentBot = repository.getBotById(botId) ?: return@launch
-            val updatedBot = currentBot.copy(
-                code = newCode,
-                version = newVersionStr ?: currentBot.version,
-                updatedAt = System.currentTimeMillis()
-            )
-            repository.updateBot(updatedBot)
-            repository.addBotVersion(
-                BotVersion(
-                    botId = botId,
-                    version = updatedBot.version,
+            runCatching {
+                val currentBot = repository.getBotById(botId) ?: return@launch
+                val updatedBot = currentBot.copy(
                     code = newCode,
-                    changeNote = changeNote.ifBlank { "Code update" }
+                    version = newVersionStr ?: currentBot.version,
+                    updatedAt = System.currentTimeMillis()
                 )
-            )
-            _selectedBotForView.value = updatedBot
-            closeBotEditor()
+                repository.updateBot(updatedBot)
+                repository.addBotVersion(
+                    BotVersion(
+                        botId = botId,
+                        version = updatedBot.version,
+                        code = newCode,
+                        changeNote = changeNote.ifBlank { "Code update" }
+                    )
+                )
+                updatedBot
+            }.onSuccess { updatedBot ->
+                _selectedBotForView.value = updatedBot
+                closeBotEditor()
+            }.onFailure { error ->
+                android.widget.Toast.makeText(
+                    getApplication(),
+                    error.message ?: "Failed to update bot code.",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
         }
     }
 
@@ -504,14 +553,24 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
 
     fun restoreBotVersion(botId: Long, version: BotVersion) {
         viewModelScope.launch {
-            val bot = repository.getBotById(botId) ?: return@launch
-            val updatedBot = bot.copy(
-                code = version.code,
-                version = version.version,
-                updatedAt = System.currentTimeMillis()
-            )
-            repository.updateBot(updatedBot)
-            _selectedBotForView.value = updatedBot
+            runCatching {
+                val bot = repository.getBotById(botId) ?: return@launch
+                val updatedBot = bot.copy(
+                    code = version.code,
+                    version = version.version,
+                    updatedAt = System.currentTimeMillis()
+                )
+                repository.updateBot(updatedBot)
+                updatedBot
+            }.onSuccess { updatedBot ->
+                _selectedBotForView.value = updatedBot
+            }.onFailure { error ->
+                android.widget.Toast.makeText(
+                    getApplication(),
+                    error.message ?: "Failed to restore bot version.",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
         }
     }
 
@@ -623,8 +682,20 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                        ?: return@runCatching Mt5ImportResult(emptyList(), 0, "Unreadable file")
+                    val maxBytes = 32 * 1024 * 1024
+                    val bytes = context.contentResolver.openInputStream(uri)?.use { stream ->
+                        val buffer = ByteArray(16_384)
+                        val out = java.io.ByteArrayOutputStream()
+                        var total = 0
+                        while (true) {
+                            val read = stream.read(buffer)
+                            if (read < 0) break
+                            total += read
+                            require(total <= maxBytes) { "MT5 report exceeds 32 MB import limit." }
+                            out.write(buffer, 0, read)
+                        }
+                        out.toByteArray()
+                    } ?: return@runCatching Mt5ImportResult(emptyList(), 0, "Unreadable file")
                     Mt5TradeHistoryImporter.parseCsv(bytes)
                 }.getOrElse {
                     Mt5ImportResult(emptyList(), 0, it.message ?: "Import failed")
@@ -1105,20 +1176,24 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
     private fun startLocalVaultLifecycle() {
         val app = getApplication<Application>()
         viewModelScope.launch {
-            val initialSnap = repository.captureVaultSnapshot()
-            var hasDataAfterStartup = VaultJsonCodec.hasMeaningfulData(initialSnap)
+            var hasDataAfterStartup = runCatching {
+                val initialSnap = repository.captureVaultSnapshot()
+                VaultJsonCodec.hasMeaningfulData(initialSnap)
+            }.getOrDefault(false)
 
             if (!hasDataAfterStartup) {
-                val readableJson = withContext(Dispatchers.IO) {
-                    LocalVaultStorage.tryFindReadableVaultJson(app)
-                }
-                if (!readableJson.isNullOrBlank()) {
-                    val summary = repository.restoreCompleteVaultJson(readableJson)
-                    if (summary.success) {
-                        val updatedSnap = repository.captureVaultSnapshot()
-                        hasDataAfterStartup = VaultJsonCodec.hasMeaningfulData(updatedSnap)
-                        if (hasDataAfterStartup) {
-                            _vaultNoticeMessage.value = "Auto-restored Vault: ${summary.toUserMessage()}"
+                runCatching {
+                    val readableJson = withContext(Dispatchers.IO) {
+                        LocalVaultStorage.tryFindReadableVaultJson(app)
+                    }
+                    if (!readableJson.isNullOrBlank()) {
+                        val summary = repository.restoreCompleteVaultJson(readableJson)
+                        if (summary.success) {
+                            val updatedSnap = repository.captureVaultSnapshot()
+                            hasDataAfterStartup = VaultJsonCodec.hasMeaningfulData(updatedSnap)
+                            if (hasDataAfterStartup) {
+                                _vaultNoticeMessage.value = "Auto-restored Vault: ${summary.toUserMessage()}"
+                            }
                         }
                     }
                 }
@@ -1139,11 +1214,13 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
                 .drop(1)
                 .debounce(1500L)
                 .collect {
-                    val snap = repository.captureVaultSnapshot()
-                    if (VaultJsonCodec.hasMeaningfulData(snap)) {
-                        _showFreshInstallRestorePrompt.value = false
-                        if (_autoVaultEnabled.value) {
-                            persistVaultSnapshotInternal(app)
+                    runCatching {
+                        val snap = repository.captureVaultSnapshot()
+                        if (VaultJsonCodec.hasMeaningfulData(snap)) {
+                            _showFreshInstallRestorePrompt.value = false
+                            if (_autoVaultEnabled.value) {
+                                persistVaultSnapshotInternal(app)
+                            }
                         }
                     }
                 }
@@ -1151,17 +1228,19 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private suspend fun persistVaultSnapshotInternal(app: Application): Result<String> {
-        val snap = repository.captureVaultSnapshot()
-        if (!VaultJsonCodec.hasMeaningfulData(snap)) {
-            return Result.failure(IllegalStateException("Add a trade, strategy, bot, or API key first before saving a Vault."))
+        return runCatching {
+            val snap = repository.captureVaultSnapshot()
+            if (!VaultJsonCodec.hasMeaningfulData(snap)) {
+                error("Add a trade, strategy, bot, or API key first before saving a Vault.")
+            }
+            val json = withContext(Dispatchers.Default) { VaultJsonCodec.encode(snap) }
+            val result = withContext(Dispatchers.IO) { LocalVaultStorage.saveVaultSnapshot(app, json) }
+            result.onSuccess {
+                _lastVaultSavedAt.value = LocalVaultStorage.getLastSavedAt(app)
+                _lastVaultLocation.value = LocalVaultStorage.getLastLocation(app)
+            }
+            result.getOrThrow()
         }
-        val json = withContext(Dispatchers.Default) { VaultJsonCodec.encode(snap) }
-        val result = withContext(Dispatchers.IO) { LocalVaultStorage.saveVaultSnapshot(app, json) }
-        result.onSuccess {
-            _lastVaultSavedAt.value = LocalVaultStorage.getLastSavedAt(app)
-            _lastVaultLocation.value = LocalVaultStorage.getLastLocation(app)
-        }
-        return result
     }
 
     fun toggleAutoVault(enabled: Boolean) {

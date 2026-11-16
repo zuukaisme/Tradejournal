@@ -68,4 +68,26 @@ object PythonBacktestRunner {
             )
             .toString()
     }
+
+    fun runWithMultipleStrategiesFile(
+        context: Context,
+        csvPath: String,
+        strategiesJson: String,
+        maxStopPoints: Double = 0.0,
+        pointSize: Double = 1.0,
+        progressListener: BacktestProgressListener? = null
+    ): String {
+        ensureStarted(context)
+        return Python.getInstance()
+            .getModule("backtest")
+            .callAttr(
+                "run_with_multiple_strategies_file",
+                csvPath,
+                strategiesJson,
+                maxStopPoints,
+                pointSize,
+                progressListener
+            )
+            .toString()
+    }
 }

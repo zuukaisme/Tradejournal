@@ -33,8 +33,13 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
+import java.util.UUID
 
-class TradingRepository(private val database: TradingDatabase) {
+class TradingRepository(
+    private val database: TradingDatabase,
+    private val filesDir: File? = null
+) {
     private val tradeDao = database.tradeDao()
     private val strategyDao = database.strategyDao()
     private val botDao = database.botDao()
@@ -44,6 +49,44 @@ class TradingRepository(private val database: TradingDatabase) {
     private val outlookDao = database.outlookDao()
     private val pythonStrategyDao = database.pythonStrategyDao()
     private val backtestRunDao = database.backtestRunDao()
+
+    companion object {
+        private const val INLINE_CODE_CHAR_LIMIT = 12_000
+        private const val CODE_FILE_REF_PREFIX = "__FILE_REF__:"
+    }
+
+    private fun codeBlobsDir(): File? = filesDir?.let { root ->
+        File(root, "code_blobs").apply { mkdirs() }
+    }
+
+    private fun externalizeCode(kind: String, rawCode: String): String {
+        if (rawCode.startsWith(CODE_FILE_REF_PREFIX)) return rawCode
+        val dir = codeBlobsDir()
+        if (dir == null || rawCode.length <= INLINE_CODE_CHAR_LIMIT) return rawCode
+        val file = File(dir, "${kind}_${UUID.randomUUID()}.txt")
+        file.writeText(rawCode, Charsets.UTF_8)
+        return "$CODE_FILE_REF_PREFIX${file.name}"
+    }
+
+    private fun resolveCode(stored: String): String {
+        if (!stored.startsWith(CODE_FILE_REF_PREFIX)) return stored
+        val dir = codeBlobsDir() ?: return ""
+        val fileName = File(stored.removePrefix(CODE_FILE_REF_PREFIX)).name
+        if (fileName.isBlank()) return ""
+        val file = File(dir, fileName)
+        return runCatching {
+            if (file.exists() && file.isFile) file.readText(Charsets.UTF_8) else ""
+        }.getOrDefault("")
+    }
+
+    private fun deleteCodeBlobIfRef(stored: String?) {
+        if (stored == null || !stored.startsWith(CODE_FILE_REF_PREFIX)) return
+        val dir = codeBlobsDir() ?: return
+        val fileName = File(stored.removePrefix(CODE_FILE_REF_PREFIX)).name
+        if (fileName.isNotBlank()) {
+            runCatching { File(dir, fileName).delete() }
+        }
+    }
 
     // --- News Outlook ---
     fun getAllReleases(): Flow<List<com.example.domain.model.NewsRelease>> = outlookDao.getAllReleases().map { list ->
@@ -146,7 +189,10 @@ class TradingRepository(private val database: TradingDatabase) {
         require(pythonStrategyDao.getPythonStrategyByName(normalizedName) == null) {
             "A strategy named \"$normalizedName\" already exists. Choose a different name."
         }
-        pythonStrategyDao.insertPythonStrategy(strategy.copy(name = normalizedName).toEntity())
+        val storedCode = externalizeCode("py", strategy.code)
+        pythonStrategyDao.insertPythonStrategy(
+            strategy.copy(name = normalizedName, code = storedCode).toEntity()
+        )
     }
 
     suspend fun updatePythonStrategy(strategy: PythonStrategy) = withContext(Dispatchers.IO) {
@@ -155,11 +201,18 @@ class TradingRepository(private val database: TradingDatabase) {
         require(pythonStrategyDao.getPythonStrategyByNameExcludingId(normalizedName, strategy.id) == null) {
             "A strategy named \"$normalizedName\" already exists. Choose a different name."
         }
-        pythonStrategyDao.updatePythonStrategy(strategy.copy(name = normalizedName).toEntity())
+        val oldRef = pythonStrategyDao.getPythonStrategyById(strategy.id)?.code
+        val storedCode = externalizeCode("py", strategy.code)
+        pythonStrategyDao.updatePythonStrategy(
+            strategy.copy(name = normalizedName, code = storedCode).toEntity()
+        )
+        if (oldRef != storedCode) deleteCodeBlobIfRef(oldRef)
     }
 
     suspend fun deletePythonStrategy(id: Long) = withContext(Dispatchers.IO) {
+        val existing = pythonStrategyDao.getPythonStrategyById(id)
         pythonStrategyDao.deletePythonStrategyById(id)
+        deleteCodeBlobIfRef(existing?.code)
     }
 
     // --- Saved Backtest Runs ---
@@ -185,16 +238,24 @@ class TradingRepository(private val database: TradingDatabase) {
     }
 
     suspend fun insertBot(bot: Bot): Long = withContext(Dispatchers.IO) {
-        botDao.insertBot(bot.toEntity())
+        val storedCode = externalizeCode("bot", bot.code)
+        botDao.insertBot(bot.copy(code = storedCode).toEntity())
     }
 
     suspend fun updateBot(bot: Bot) = withContext(Dispatchers.IO) {
-        botDao.updateBot(bot.toEntity())
+        val oldRef = botDao.getBotById(bot.id)?.code
+        val storedCode = externalizeCode("bot", bot.code)
+        botDao.updateBot(bot.copy(code = storedCode).toEntity())
+        if (oldRef != storedCode) deleteCodeBlobIfRef(oldRef)
     }
 
     suspend fun deleteBot(id: Long) = withContext(Dispatchers.IO) {
+        val existingBot = botDao.getBotById(id)
+        val versions = botVersionDao.getVersionsByBotId(id).first()
         botDao.deleteBotById(id)
         botVersionDao.deleteVersionsByBotId(id)
+        deleteCodeBlobIfRef(existingBot?.code)
+        versions.forEach { deleteCodeBlobIfRef(it.code) }
     }
 
     fun getBotVersions(botId: Long): Flow<List<BotVersion>> = botVersionDao.getVersionsByBotId(botId).map { list ->
@@ -202,7 +263,8 @@ class TradingRepository(private val database: TradingDatabase) {
     }
 
     suspend fun addBotVersion(version: BotVersion): Long = withContext(Dispatchers.IO) {
-        botVersionDao.insertVersion(version.toEntity())
+        val storedCode = externalizeCode("botver", version.code)
+        botVersionDao.insertVersion(version.copy(code = storedCode).toEntity())
     }
 
     // --- Daily Reviews ---
@@ -249,12 +311,18 @@ class TradingRepository(private val database: TradingDatabase) {
     // --- Complete Local Vault JSON Backup & Restore (V2 + V1 compatible) ---
     suspend fun captureVaultSnapshot(): VaultSnapshot = withContext(Dispatchers.IO) {
         val currentSettings = settingsDao.getSettingsOnce() ?: UserSettings().toEntity()
+        val resolvedPy = pythonStrategyDao.getAllPythonStrategies().first().map {
+            it.copy(code = resolveCode(it.code))
+        }
+        val resolvedBots = botDao.getAllBots().first().map {
+            it.copy(code = resolveCode(it.code))
+        }
         VaultSnapshot(
             settings = currentSettings,
             trades = tradeDao.getAllTrades().first(),
             strategies = strategyDao.getAllStrategies().first(),
-            pythonStrategies = pythonStrategyDao.getAllPythonStrategies().first(),
-            bots = botDao.getAllBots().first(),
+            pythonStrategies = resolvedPy,
+            bots = resolvedBots,
             dailyReviews = reviewDao.getAllReviews().first(),
             backtestRuns = backtestRunDao.getAllRuns().first()
         )
@@ -297,13 +365,18 @@ class TradingRepository(private val database: TradingDatabase) {
             }
 
             val existingPyKeys = pythonStrategyDao.getAllPythonStrategies().first()
-                .map { "${it.name.trim()}::${it.code.trim()}" }
+                .map { "${it.name.trim().lowercase(java.util.Locale.US)}::${resolveCode(it.code).trim()}" }
+                .toHashSet()
+            val existingPyNames = pythonStrategyDao.getAllPythonStrategies().first()
+                .map { it.name.trim().lowercase(java.util.Locale.US) }
                 .toHashSet()
             var pyRestored = 0
             for (py in payload.pythonStrategies) {
-                val key = "${py.name.trim()}::${py.code.trim()}"
-                if (existingPyKeys.add(key)) {
-                    pythonStrategyDao.insertPythonStrategy(py)
+                val normName = py.name.trim().lowercase(java.util.Locale.US)
+                val key = "$normName::${py.code.trim()}"
+                if (normName.isNotEmpty() && existingPyKeys.add(key) && existingPyNames.add(normName)) {
+                    val stored = py.copy(code = externalizeCode("py", py.code))
+                    pythonStrategyDao.insertPythonStrategy(stored)
                     pyRestored++
                 }
             }
@@ -315,7 +388,8 @@ class TradingRepository(private val database: TradingDatabase) {
             for (b in payload.bots) {
                 val key = b.name.trim().lowercase(java.util.Locale.US)
                 if (key.isNotEmpty() && existingBotNames.add(key)) {
-                    botDao.insertBot(b)
+                    val stored = b.copy(code = externalizeCode("bot", b.code))
+                    botDao.insertBot(stored)
                     botsRestored++
                 }
             }
@@ -389,6 +463,7 @@ class TradingRepository(private val database: TradingDatabase) {
         reviewDao.deleteAllReviews()
         outlookDao.deleteAllReleases()
         outlookDao.deleteAllPredictions()
+        codeBlobsDir()?.deleteRecursively()
     }
 
     suspend fun fetchFredMacroIndicators(apiKey: String): Result<List<com.example.domain.model.MacroIndicator>> =
@@ -654,7 +729,7 @@ class TradingRepository(private val database: TradingDatabase) {
         status = status,
         tags = tags,
         notes = notes,
-        code = code,
+        code = resolveCode(code),
         backtestNotes = backtestNotes,
         createdAt = createdAt,
         updatedAt = updatedAt
@@ -683,7 +758,7 @@ class TradingRepository(private val database: TradingDatabase) {
         id = id,
         botId = botId,
         version = version,
-        code = code,
+        code = resolveCode(code),
         changeNote = changeNote,
         timestamp = timestamp
     )
@@ -832,7 +907,7 @@ class TradingRepository(private val database: TradingDatabase) {
         id = id,
         name = name,
         className = className,
-        code = code,
+        code = resolveCode(code),
         updatedAt = updatedAt
     )
 

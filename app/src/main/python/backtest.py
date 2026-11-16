@@ -806,6 +806,8 @@ def compute_stats(
             "exit": t.exit,
             "openTime": t.open_time,
             "closeTime": t.close_time,
+            "openIndex": t.open_i,
+            "closeIndex": t.close_i,
             "reason": t.reason,
             "points": round(p, 2),
             "r": round(r_val, 2),
@@ -991,6 +993,97 @@ def run_with_strategy_file(csv_path: str, strategy_code: str, class_name: str = 
     except Exception as e:
         return json.dumps({"error": f"{type(e).__name__}: {e}",
                            "details": traceback.format_exc(limit=3)})
+
+
+def run_with_multiple_strategies_file(
+    csv_path: str,
+    strategies_json: str,
+    max_stop_points: float = 0.0,
+    point_size: float = 1.0,
+    progress_callback=None,
+) -> str:
+    """Loads candles once from csv_path and runs multiple strategies sequentially,
+    returning a JSON batch payload with per-strategy stats or isolated errors."""
+    try:
+        strategy_specs = json.loads(strategies_json)
+        if not isinstance(strategy_specs, list) or not strategy_specs:
+            return json.dumps({"error": "No strategies supplied for batch backtest.", "details": ""})
+
+        candles = load_candles(csv_path)
+        total_candles = len(candles)
+        total_strategies = len(strategy_specs)
+        max_stop = max_stop_points * point_size if max_stop_points > 0 else None
+        results = []
+
+        for idx, spec in enumerate(strategy_specs):
+            strat_id = spec.get("id", idx)
+            strat_name = str(spec.get("name", f"Strategy {idx + 1}"))
+            class_name = str(spec.get("className", "") or "")
+            code = str(spec.get("code", "") or "")
+
+            def wrapped_progress(encoded_json: str, s_idx=idx, s_name=strat_name) -> None:
+                if progress_callback is None:
+                    return
+                try:
+                    payload = json.loads(encoded_json)
+                    payload["strategyIndex"] = s_idx + 1
+                    payload["totalStrategies"] = total_strategies
+                    payload["currentStrategyName"] = s_name
+                    _emit_progress(progress_callback, payload)
+                except Exception:
+                    pass
+
+            cb = wrapped_progress if progress_callback is not None else None
+            try:
+                strategy_cls, err_msg = _compile_and_find_strategy(code, class_name)
+                if err_msg or strategy_cls is None:
+                    results.append({
+                        "id": strat_id,
+                        "name": strat_name,
+                        "className": class_name,
+                        "error": err_msg or "Missing Strategy class",
+                        "details": "",
+                    })
+                    continue
+
+                trades, skipped, open_trades, _ = _run_backtest_detailed(
+                    candles,
+                    strategy_cls(),
+                    max_stop=max_stop,
+                    point_size=point_size,
+                    progress_callback=cb,
+                )
+                stats = compute_stats(
+                    trades,
+                    skipped,
+                    point_size,
+                    open_trades=open_trades,
+                    total_candles=total_candles,
+                )
+                results.append({
+                    "id": strat_id,
+                    "name": strat_name,
+                    "className": class_name or strategy_cls.__name__,
+                    "result": stats,
+                })
+            except Exception as strat_err:
+                results.append({
+                    "id": strat_id,
+                    "name": strat_name,
+                    "className": class_name,
+                    "error": f"{type(strat_err).__name__}: {strat_err}",
+                    "details": traceback.format_exc(limit=3),
+                })
+
+        return json.dumps({
+            "totalCandles": total_candles,
+            "results": results,
+        })
+    except Exception as e:
+        return json.dumps({
+            "error": f"{type(e).__name__}: {e}",
+            "details": traceback.format_exc(limit=3),
+        })
 
 
 def main():

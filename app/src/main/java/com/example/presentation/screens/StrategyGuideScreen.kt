@@ -79,17 +79,18 @@ OBJECTS & RETURN TYPE (`from backtest import Strategy, Signal`):
 - Input `Candle` object fields: `.time` (str), `.open` (float), `.high` (float), `.low` (float), `.close` (float), `.volume` (float).
 - Returned `Signal` object: `Signal(side, sl, tp)` where `side` is `"buy"` or `"sell"` (lowercase), `sl` is stop-loss price (float), and `tp` is take-profit price (float).
 - `on_candle(self, i: int, candles: List[Candle]) -> Optional[Signal]` MUST return a `Signal(...)` object or `None`.
+- Do not implement `manage_trade`; the current engine does not call it.
 
-ENGINE CONTRACT (9 RULES):
+ENGINE CONTRACT (11 RULES):
 1. Start with `from backtest import Strategy, Signal` and subclass `Strategy`.
-2. Implement `def on_candle(self, i: int, candles: List[Candle]) -> Optional[Signal]:`.
+2. Implement `def on_candle(self, i: int, candles: List[Candle]) -> Optional[Signal]:` only.
 3. Only read `candles[0..i]`. NEVER look ahead at `candles[i + 1:]`.
 4. Assume default `warmup = 50` candles before signals are taken; also guard custom lookback indices and zero risk/ATR before dividing.
-5. `Candle` provides `.time`, `.open`, `.high`, `.low`, `.close`, `.volume`.
-6. Return `Signal(side, sl, tp)` or `None`.
-7. `side` must be `"buy"` or `"sell"` (lowercase).
-8. Entry happens at `candles[i + 1].open`. Ensure for `"buy"`: `sl < entry < tp`, and for `"sell"`: `tp < entry < sl`. (If both SL and TP hit in one candle, SL hits first.)
-9. Keep per-candle calculations efficient. Prefer precomputed indicators or rolling state when they produce exactly the same values as the requested indicator and lookback. Never shorten or cap required historical lookbacks, indicator periods, entry/exit conditions, stop/target rules, or cooldowns to make a strategy faster. Preserve the same signal on every candle; optimize calculations, not trading logic.
+5. MT5 time parsing: Candle times may use MT5 dotted format `YYYY.MM.DD HH:MM:SS` (e.g. `2024.03.05 10:15:00`) as well as dashed dates. Parse both and define `SERVER_GMT_OFFSET` near the top (default `2`, or `0` for GMT).
+6. Return `Signal(side, sl, tp)` or `None` (`side` must be `"buy"` or `"sell"`).
+7. Entry happens at `candles[i + 1].open`. Ensure for `"buy"`: `sl < entry < tp`, and for `"sell"`: `tp < entry < sl`. (If both SL and TP hit in one candle, SL hits first.)
+8. Skipped candles while trade open: the engine only calls `on_candle` when no trade is open. Keep `last_processed_index` and catch up all missed candles in chronological order on each callback before evaluating signals.
+9. Performance without changing logic: update EMAs, sessions, and ranges incrementally per candle; never rescan thousands of bars on every callback. Preserve exact strategy rules and lookbacks.
 10. Output ONLY valid raw Python code with docstrings and comments explaining every entry, stop loss, and take profit rule.
 
 My strategy idea:
@@ -120,16 +121,17 @@ fun StrategyGuideScreen(
 
     val contractRules = remember {
         listOf(
-            "Subclass Strategy (`class MyStrategy(Strategy):`). `Strategy`, `Signal`, `Candle`, `List`, and `Optional` are pre-injected.",
-            "Implement `def on_candle(self, i: int, candles: List[Candle]) -> Optional[Signal]:`.",
+            "Subclass `Strategy` (`class MyStrategy(Strategy):`). `Strategy`, `Signal`, `Candle`, `Trade`, `List`, and `Optional` are pre-injected.",
+            "Implement `def on_candle(self, i: int, candles: List[Candle]) -> Optional[Signal]:` (do not implement `manage_trade`; the engine does not call it).",
             "Strict no-lookahead: read only `candles[0..i]` — never inspect `candles[i + 1:]`.",
             "Warmup: the engine skips the first 50 candles (`i >= 50`), and opens one trade at a time.",
+            "MT5 timestamps: `Candle.time` uses `YYYY.MM.DD HH:MM:SS` (e.g. `2024.03.05 10:15:00`) as well as dashed dates. Parse both and expose `SERVER_GMT_OFFSET` near the top.",
             "Candle attributes: `.time` (str), `.open` (float), `.high` (float), `.low` (float), `.close` (float), `.volume` (float).",
-            "Return `Signal(side, sl, tp)` to request an entry, or `None` to stay flat.",
-            "`side` must be lowercase `\"buy\"` or `\"sell\"`.",
+            "Return `Signal(side, sl, tp)` (`side` lowercase `\"buy\"` or `\"sell\"`) or `None`.",
             "Next-open fill: a signal on candle `i` enters at `candles[i + 1].open`. For `\"buy\"`, ensure `sl < entry < tp`; for `\"sell\"`, ensure `tp < entry < sl`. If SL and TP both fall inside one candle, SL hits first.",
-            "Performance without changing results: precompute or incrementally update indicators only when mathematically equivalent; never shorten required lookbacks or change entry, exit, SL, TP, or cooldown rules.",
-            "Python standard library only (no `pandas`, `numpy`, or pip installs) so execution stays 100% offline inside the APK."
+            "Skipped-candle catch-up: `on_candle` is only called when no trade is open. Track `last_processed_index` and update all missed candles first.",
+            "Incremental speed without changing rules: maintain incremental EMAs and bounded state instead of rescanning history; never shorten lookbacks.",
+            "Python 3.11 standard library only (no `pandas`, `numpy`, or pip installs) so execution stays 100% offline inside the APK."
         )
     }
 
@@ -184,7 +186,7 @@ fun StrategyGuideScreen(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "B. 9-Rule Strategy Contract",
+                        text = "B. 11-Rule Strategy Contract",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold
                     )

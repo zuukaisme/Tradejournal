@@ -1,17 +1,23 @@
 package com.example
 
+import com.example.backtest.BacktestCodec
 import com.example.data.repository.formatUtcIsoDate
 import com.example.data.repository.parseIso8601EpochMillis
 import com.example.domain.model.AppThemePreset
 import com.example.domain.model.Trade
 import com.example.domain.model.TradeDirection
 import com.example.domain.model.TradeResult
+import com.example.domain.usecase.Mql5SyntaxHighlighter
 import com.example.domain.usecase.Mt5TradeHistoryImporter
 import com.example.domain.usecase.RiskCalculator
+import com.example.presentation.components.isLargeMql5Code
+import com.example.presentation.components.spliceMql5Lines
 import com.example.presentation.screens.computeTrailingDrawdown
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.charset.StandardCharsets
@@ -108,5 +114,63 @@ class NewFeaturesUnitTest {
 
         val crossedDay = parseIso8601EpochMillis("2025-02-10T21:00:00-05:00")!!
         assertEquals("2025-02-11", formatUtcIsoDate(crossedDay))
+    }
+
+    @Test
+    fun largeMql5Code_triggersVirtualizedModeForFourThousandShortLines() {
+        val lines = (1..4_200).map { "int v$it = $it;" }
+        val code = lines.joinToString("\n")
+        assertTrue("4,200 lines under 80KB must trigger large-file mode", isLargeMql5Code(code, lines.size))
+        assertFalse(isLargeMql5Code("void OnTick() {}\n", 2))
+
+        val spliced = spliceMql5Lines(
+            lines = lines,
+            startIndex = 100,
+            endExclusive = 102,
+            replacementChunk = "int v101 = 999;\nint v102 = 888;"
+        )
+        val resultLines = spliced.lines()
+        assertEquals(lines.size, resultLines.size)
+        assertEquals("int v1 = 1;", resultLines[0])
+        assertEquals("int v101 = 999;", resultLines[100])
+        assertEquals("int v102 = 888;", resultLines[101])
+        assertEquals("int v4200 = 4200;", resultLines.last())
+    }
+
+    @Test
+    fun readTextStreamWithBom_decodesLargeMql5Utf16LeWithAndWithoutBom() {
+        val mql5Source = buildString {
+            appendLine("//+------------------------------------------------------------------+")
+            appendLine("#property strict")
+            for (i in 1..4_500) {
+                appendLine("void Helper_$i() { int x = $i; }")
+            }
+        }
+
+        // 1. UTF-16LE with BOM (MetaEditor default)
+        val body = mql5Source.toByteArray(StandardCharsets.UTF_16LE)
+        val withBom = ByteBuffer.allocate(2 + body.size)
+            .put(0xFF.toByte())
+            .put(0xFE.toByte())
+            .put(body)
+            .array()
+        val decodedBom = BacktestCodec.readTextStreamWithBom(ByteArrayInputStream(withBom))
+        assertFalse(decodedBom.contains('\u0000'))
+        assertTrue(decodedBom.lineSequence().count() >= 4_500)
+        assertTrue(decodedBom.contains("void Helper_4500()"))
+
+        // 2. BOM-less UTF-16LE
+        val decodedBomless = BacktestCodec.readTextStreamWithBom(ByteArrayInputStream(body))
+        assertFalse(decodedBomless.contains('\u0000'))
+        assertTrue(decodedBomless.contains("#property strict"))
+        assertTrue(decodedBomless.contains("void Helper_4500()"))
+    }
+
+    @Test
+    fun mql5SyntaxHighlighter_highlightsKeywordsAndSearchWithoutCrashing() {
+        val sample = "input double RiskPct = 1.5; // \"ignored comment\" OnTick()"
+        val highlighted = Mql5SyntaxHighlighter.highlight(sample, isDark = true, searchQuery = "RiskPct")
+        assertEquals(sample, highlighted.text)
+        assertTrue(highlighted.spanStyles.isNotEmpty())
     }
 }

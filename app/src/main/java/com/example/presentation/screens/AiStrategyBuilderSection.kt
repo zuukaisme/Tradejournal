@@ -454,6 +454,47 @@ fun AiStrategyBuilderContent(
             }
         }
 
+        // Contract Validation Warnings Banner
+        if (state.aiContractWarnings.isNotEmpty() && state.generatedCode != null) {
+            item {
+                Surface(
+                    color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.72f),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("ai_contract_warnings_banner")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Icon(
+                            Icons.Default.Warning,
+                            contentDescription = "Contract Warning",
+                            tint = MaterialTheme.colorScheme.tertiary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text(
+                                text = "Contract Check (${state.aiContractWarnings.size})",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                            state.aiContractWarnings.forEach { warning ->
+                                Text(
+                                    text = "• $warning",
+                                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Generated Strategy Code & Save Actions
         state.generatedCode?.let { generatedCode ->
             item {

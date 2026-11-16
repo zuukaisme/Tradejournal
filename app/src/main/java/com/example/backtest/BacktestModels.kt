@@ -24,7 +24,10 @@ data class BacktestProgressSnapshot(
     val skippedByStopCap: Int = 0,
     val netPoints: Double = 0.0,
     val netR: Double = 0.0,
-    val currentTime: String = ""
+    val currentTime: String = "",
+    val strategyIndex: Int = 0,
+    val totalStrategies: Int = 0,
+    val currentStrategyName: String = ""
 ) {
     val candleProgressFraction: Float
         get() = if (totalCandles > 0) (candlesProcessed.toFloat() / totalCandles).coerceIn(0f, 1f) else 0f
@@ -104,7 +107,9 @@ data class Trade(
     val reason: ExitReason,
     val points: Double,
     val r: Double,
-    val durationCandles: Int
+    val durationCandles: Int,
+    val openIndex: Int = -1,
+    val closeIndex: Int = -1
 )
 
 data class BacktestResult(
@@ -147,3 +152,23 @@ data class SavedBacktestRun(
     val equityCurve: List<Double>,
     val createdAt: Long = System.currentTimeMillis()
 )
+
+data class BatchStrategySpec(
+    val id: Long,
+    val name: String,
+    val className: String,
+    val code: String
+)
+
+data class BatchStrategyRunResult(
+    val strategyId: Long,
+    val strategyName: String,
+    val className: String,
+    val result: BacktestResult? = null,
+    val error: BacktestError? = null
+)
+
+sealed interface BatchBacktestParseOutcome {
+    data class Success(val totalCandles: Int, val runs: List<BatchStrategyRunResult>) : BatchBacktestParseOutcome
+    data class Failure(val error: BacktestError) : BatchBacktestParseOutcome
+}

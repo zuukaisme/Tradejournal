@@ -4,30 +4,40 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BookmarkAdd
+import androidx.compose.material.icons.filled.CandlestickChart
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CompareArrows
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.PlayArrow
@@ -36,6 +46,7 @@ import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -43,6 +54,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -79,7 +91,9 @@ import com.example.backtest.BacktestError
 import com.example.backtest.BacktestProgressSnapshot
 import com.example.backtest.BacktestResult
 import com.example.backtest.BacktestTimeframe
+import com.example.backtest.BatchStrategyRunResult
 import com.example.backtest.ExitReason
+import com.example.backtest.SavedCsvDataset
 import com.example.backtest.Side
 import com.example.backtest.Trade
 import com.example.presentation.BacktestViewModel
@@ -122,8 +136,9 @@ fun BacktestScreen(
     val negativeColor = MaterialTheme.colorScheme.error
     val onPrimaryColor = MaterialTheme.colorScheme.onPrimary
 
+    Box(modifier = modifier.fillMaxSize()) {
     Column(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .padding(horizontal = 16.dp, vertical = 8.dp)
@@ -244,6 +259,20 @@ fun BacktestScreen(
                                 color = positiveColor,
                                 modifier = Modifier.testTag("detected_timeframe_label")
                             )
+                        }
+
+                        if (state.savedCsvs.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            SavedCsvLibraryStrip(
+                                datasets = state.savedCsvs,
+                                activeId = state.activeSavedCsvId,
+                                enabled = !state.isLoading && !state.isImportingCsv,
+                                onSelect = backtestViewModel::selectSavedCsv,
+                                onDelete = backtestViewModel::deleteSavedCsv
+                            )
+                        }
+
+                        if (state.fileName != null) {
 
                             if (state.hasCsvBytes && state.availableTimeframes.size > 1) {
                                 Spacer(modifier = Modifier.height(10.dp))
@@ -360,143 +389,292 @@ fun BacktestScreen(
                                 }
                             }
                         } else {
-                    Box(modifier = Modifier.fillMaxWidth()) {
-                        OutlinedButton(
-                            onClick = { strategyMenuExpanded = true },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(48.dp)
-                                .testTag("strategy_dropdown_button"),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = state.selectedStrategy?.name ?: "Select Strategy",
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    text = "Strategy Mode",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-                                Icon(Icons.Default.ArrowDropDown, contentDescription = "Select strategy")
-                            }
-                        }
-
-                        DropdownMenu(
-                            expanded = strategyMenuExpanded,
-                            onDismissRequest = { strategyMenuExpanded = false }
-                        ) {
-                            state.availableStrategies.forEach { strat ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Column {
-                                            Text(strat.name, fontWeight = FontWeight.Bold)
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    FilterChip(
+                                        selected = !state.isMultiStrategyMode,
+                                        onClick = { backtestViewModel.toggleMultiStrategyMode(false) },
+                                        label = {
                                             Text(
-                                                text = if (strat.className.isBlank()) {
-                                                    "Auto-detect Strategy subclass"
-                                                } else {
-                                                    "Class: ${strat.className}"
+                                                text = "Single",
+                                                fontSize = 11.sp,
+                                                fontWeight = if (!state.isMultiStrategyMode) FontWeight.Bold else FontWeight.Medium
+                                            )
+                                        },
+                                        colors = FilterChipDefaults.filterChipColors(
+                                            selectedContainerColor = positiveColor,
+                                            selectedLabelColor = onPrimaryColor
+                                        ),
+                                        modifier = Modifier.testTag("strategy_mode_single")
+                                    )
+                                    FilterChip(
+                                        selected = state.isMultiStrategyMode,
+                                        onClick = { backtestViewModel.toggleMultiStrategyMode(true) },
+                                        label = {
+                                            Text(
+                                                text = "Multi (${state.selectedStrategyIds.size})",
+                                                fontSize = 11.sp,
+                                                fontWeight = if (state.isMultiStrategyMode) FontWeight.Bold else FontWeight.Medium
+                                            )
+                                        },
+                                        colors = FilterChipDefaults.filterChipColors(
+                                            selectedContainerColor = positiveColor,
+                                            selectedLabelColor = onPrimaryColor
+                                        ),
+                                        modifier = Modifier.testTag("strategy_mode_multi")
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            if (!state.isMultiStrategyMode) {
+                                Box(modifier = Modifier.fillMaxWidth()) {
+                                    OutlinedButton(
+                                        onClick = { strategyMenuExpanded = true },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(48.dp)
+                                            .testTag("strategy_dropdown_button"),
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = state.selectedStrategy?.name ?: "Select Strategy",
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Icon(Icons.Default.ArrowDropDown, contentDescription = "Select strategy")
+                                        }
+                                    }
+
+                                    DropdownMenu(
+                                        expanded = strategyMenuExpanded,
+                                        onDismissRequest = { strategyMenuExpanded = false }
+                                    ) {
+                                        state.availableStrategies.forEach { strat ->
+                                            DropdownMenuItem(
+                                                text = {
+                                                    Column {
+                                                        Text(strat.name, fontWeight = FontWeight.Bold)
+                                                        Text(
+                                                            text = if (strat.className.isBlank()) {
+                                                                "Auto-detect Strategy subclass"
+                                                            } else {
+                                                                "Class: ${strat.className}"
+                                                            },
+                                                            style = MaterialTheme.typography.bodySmall,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                        )
+                                                    }
                                                 },
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                onClick = {
+                                                    backtestViewModel.selectStrategy(strat)
+                                                    strategyMenuExpanded = false
+                                                }
                                             )
                                         }
-                                    },
-                                    onClick = {
-                                        backtestViewModel.selectStrategy(strat)
-                                        strategyMenuExpanded = false
                                     }
+                                }
+                            } else {
+                                Surface(
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(modifier = Modifier.padding(10.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = "${state.selectedStrategyIds.size} of ${state.availableStrategies.size} selected",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = positiveColor,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                TextButton(
+                                                    onClick = backtestViewModel::selectAllStrategies,
+                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                                    modifier = Modifier.testTag("multi_strategy_select_all")
+                                                ) {
+                                                    Text("All", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                }
+                                                TextButton(
+                                                    onClick = backtestViewModel::clearStrategySelection,
+                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                                    modifier = Modifier.testTag("multi_strategy_clear")
+                                                ) {
+                                                    Text("Clear", fontSize = 11.sp)
+                                                }
+                                            }
+                                        }
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .heightIn(max = 200.dp)
+                                                .verticalScroll(rememberScrollState())
+                                        ) {
+                                            state.availableStrategies.forEach { strat ->
+                                                val checked = strat.id in state.selectedStrategyIds
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .heightIn(min = 48.dp)
+                                                        .clickable { backtestViewModel.toggleStrategySelection(strat.id) }
+                                                        .padding(vertical = 2.dp)
+                                                        .testTag("multi_strategy_checkbox_${strat.id}"),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Checkbox(
+                                                        checked = checked,
+                                                        onCheckedChange = { backtestViewModel.toggleStrategySelection(strat.id) }
+                                                    )
+                                                    Column(modifier = Modifier.weight(1f)) {
+                                                        Text(
+                                                            text = strat.name,
+                                                            style = MaterialTheme.typography.bodySmall,
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                        Text(
+                                                            text = strat.className.ifBlank { "Auto-detect Strategy subclass" },
+                                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Config inputs: maxStopPoints & pointSize
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = state.maxStopPointsInput,
+                                onValueChange = { backtestViewModel.updateMaxStopPoints(it) },
+                                label = { Text("Max Stop (pts)", fontSize = 12.sp) },
+                                placeholder = { Text("0 = No cap") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("max_stop_points_input"),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                            OutlinedTextField(
+                                value = state.pointSizeInput,
+                                onValueChange = { backtestViewModel.updatePointSize(it) },
+                                label = { Text("Point Size", fontSize = 12.sp) },
+                                placeholder = { Text("1.0") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("point_size_input"),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        val canRun = !state.isLoading && !state.isImportingCsv && state.hasCsvBytes &&
+                            (if (state.isMultiStrategyMode) state.selectedStrategyIds.isNotEmpty() else state.selectedStrategy != null)
+                        val multiCount = state.selectedStrategyIds.size
+                        val runButtonText = when {
+                            state.isLoading && (state.liveProgress?.totalStrategies ?: 0) > 1 ->
+                                "Running ${state.liveProgress?.strategyIndex ?: 1}/${state.liveProgress?.totalStrategies}..."
+                            state.isLoading -> "Running Python Engine..."
+                            state.isMultiStrategyMode && multiCount > 1 -> "Run $multiCount Strategies"
+                            else -> "Run Backtest"
+                        }
+
+                        // Run Button + Loading state
+                        Button(
+                            onClick = { backtestViewModel.run() },
+                            enabled = canRun,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = positiveColor,
+                                contentColor = onPrimaryColor
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("run_backtest_button"),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            if (state.isLoading) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
+                                    color = onPrimaryColor
                                 )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(runButtonText, fontWeight = FontWeight.Bold)
+                            } else {
+                                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(runButtonText, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(10.dp))
-
-                // Config inputs: maxStopPoints & pointSize
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    OutlinedTextField(
-                        value = state.maxStopPointsInput,
-                        onValueChange = { backtestViewModel.updateMaxStopPoints(it) },
-                        label = { Text("Max Stop (pts)", fontSize = 12.sp) },
-                        placeholder = { Text("0 = No cap") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("max_stop_points_input"),
-                        shape = RoundedCornerShape(12.dp)
-                    )
-                    OutlinedTextField(
-                        value = state.pointSizeInput,
-                        onValueChange = { backtestViewModel.updatePointSize(it) },
-                        label = { Text("Point Size", fontSize = 12.sp) },
-                        placeholder = { Text("1.0") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("point_size_input"),
-                        shape = RoundedCornerShape(12.dp)
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Run Button + Loading state
-                Button(
-                    onClick = { backtestViewModel.run() },
-                    enabled = !state.isLoading && !state.isImportingCsv && state.hasCsvBytes && state.selectedStrategy != null,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = positiveColor,
-                        contentColor = onPrimaryColor
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .testTag("run_backtest_button"),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    if (state.isLoading) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            strokeWidth = 2.dp,
-                            color = onPrimaryColor
+                // Live Running Progress Card
+                if (state.isLoading) {
+                    item {
+                        BacktestLiveProgressCard(
+                            progress = state.liveProgress ?: BacktestProgressSnapshot(totalCandles = state.estimatedRows)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Running Python Engine...", fontWeight = FontWeight.Bold)
-                    } else {
-                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Run Backtest", fontWeight = FontWeight.Bold)
                     }
                 }
-            }
-        }
 
-        // Live Running Progress Card
-        if (state.isLoading) {
-            item {
-                BacktestLiveProgressCard(
-                    progress = state.liveProgress ?: BacktestProgressSnapshot(totalCandles = state.estimatedRows)
-                )
-            }
-        }
+                // Expandable Python / CSV Error Card
+                state.backtestError?.let { err ->
+                    item {
+                        BacktestErrorCard(error = err)
+                    }
+                }
 
-        // Expandable Python / CSV Error Card
-        state.backtestError?.let { err ->
-            item {
-                BacktestErrorCard(error = err)
-            }
-        }
+                if (state.batchResults.isNotEmpty()) {
+                    item {
+                        BatchLeaderboardCard(
+                            batchResults = state.batchResults,
+                            activeStrategyId = state.activeBatchStrategyId,
+                            onSelectStrategy = backtestViewModel::selectBatchResult
+                        )
+                    }
+                }
 
-        val result = state.result
-        if (result != null) {
+                val result = state.result
+                if (result != null) {
             // Warnings Banner
             if (result.warnings.isNotEmpty()) {
                 item {
@@ -710,12 +888,40 @@ fun BacktestScreen(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(
-                        text = "Trades (${result.trades.size})",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Trades (${result.trades.size})",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        if (result.trades.isNotEmpty()) {
+                            OutlinedButton(
+                                onClick = {
+                                    val firstIdx = filteredTrades.firstOrNull()?.index ?: 0
+                                    backtestViewModel.openTradeReplay(firstIdx)
+                                },
+                                modifier = Modifier
+                                    .height(48.dp)
+                                    .testTag("open_trade_replay_button"),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CandlestickChart,
+                                    contentDescription = "Replay trades on chart",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Replay Trades", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
                     if (result.trades.isNotEmpty()) {
                         val filterOptions = listOf(
                             "All (${result.trades.size})",
@@ -769,11 +975,12 @@ fun BacktestScreen(
                 Column(modifier = Modifier.padding(bottom = 10.dp)) {
                     BacktestTradeCard(
                         index = indexedTrade.index + 1,
-                        trade = indexedTrade.value
+                        trade = indexedTrade.value,
+                        onReplay = { backtestViewModel.openTradeReplay(indexedTrade.index) }
                     )
                 }
             }
-        } else if (!state.isLoading && state.backtestError == null) {
+        } else if (!state.isLoading && state.backtestError == null && state.batchResults.isEmpty()) {
             item {
                 LiquidGlassCard {
                     Text(
@@ -783,7 +990,7 @@ fun BacktestScreen(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Pick an MT5 tab-separated export or standard comma/semicolon CSV, choose a saved Python (.py) strategy, optionally set maxStopPoints and pointSize, and tap Run Backtest.",
+                        text = "Pick an MT5 tab-separated export or standard comma/semicolon CSV, choose one or more Python (.py) strategies, optionally set maxStopPoints and pointSize, and tap Run Backtest.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -796,7 +1003,21 @@ fun BacktestScreen(
             }
         }
     }
-}
+    }
+
+    if (state.isReplayOpen && state.replaySourceTrades.isNotEmpty()) {
+        BacktestReplayScreen(
+            strategyName = state.replayStrategyName,
+            trades = state.replaySourceTrades,
+            currentIndex = state.replayTradeIndex,
+            window = state.replayWindow,
+            isLoading = state.isReplayLoading,
+            error = state.replayError,
+            onSelectTradeIndex = backtestViewModel::selectReplayTradeAt,
+            onClose = backtestViewModel::closeTradeReplay
+        )
+    }
+    }
 }
 
 @Composable
@@ -891,6 +1112,16 @@ private fun BacktestLiveProgressCard(progress: BacktestProgressSnapshot) {
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold
                 )
+                if (progress.totalStrategies > 1) {
+                    Text(
+                        text = "Strategy ${progress.strategyIndex}/${progress.totalStrategies}: ${progress.currentStrategyName}",
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                        color = positiveColor,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
                 val barLabel = if (progress.totalCandles > 0) {
                     "${progress.candlesProcessed} / ${progress.totalCandles} candles"
                 } else {
@@ -1582,7 +1813,241 @@ private fun BacktestEquityCurveCanvas(
 }
 
 @Composable
-private fun BacktestTradeCard(index: Int, trade: Trade) {
+private fun SavedCsvLibraryStrip(
+    datasets: List<SavedCsvDataset>,
+    activeId: String?,
+    enabled: Boolean,
+    onSelect: (String) -> Unit,
+    onDelete: (String) -> Unit
+) {
+    val positiveColor = MaterialTheme.colorScheme.primary
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            text = "Saved CSV Library (${datasets.size})",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            items(datasets, key = { it.id }) { dataset ->
+                val isSelected = dataset.id == activeId
+                val tfShort = dataset.detectedTimeframeLabel.substringBefore(" ").ifBlank { "?" }
+                Surface(
+                    color = if (isSelected) {
+                        positiveColor.copy(alpha = 0.14f)
+                    } else {
+                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    border = if (isSelected) BorderStroke(1.dp, positiveColor) else null,
+                    modifier = Modifier
+                        .widthIn(min = 165.dp, max = 225.dp)
+                        .clickable(enabled = enabled) { onSelect(dataset.id) }
+                        .testTag("saved_csv_item_${dataset.id}")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(start = 10.dp, end = 2.dp, top = 6.dp, bottom = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                if (isSelected) {
+                                    Icon(
+                                        imageVector = Icons.Default.CheckCircle,
+                                        contentDescription = "Active CSV",
+                                        tint = positiveColor,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                }
+                                Text(
+                                    text = dataset.displayName,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Text(
+                                text = "${formatBytesCompact(dataset.fileSizeBytes)} • ${dataset.estimatedRows} rows • $tfShort",
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        IconButton(
+                            onClick = { onDelete(dataset.id) },
+                            enabled = enabled,
+                            modifier = Modifier.testTag("delete_saved_csv_${dataset.id}")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.DeleteOutline,
+                                contentDescription = "Delete saved CSV ${dataset.displayName}",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BatchLeaderboardCard(
+    batchResults: List<BatchStrategyRunResult>,
+    activeStrategyId: Long?,
+    onSelectStrategy: (Long) -> Unit
+) {
+    val positiveColor = MaterialTheme.colorScheme.primary
+    val negativeColor = MaterialTheme.colorScheme.error
+    val sorted = remember(batchResults) {
+        batchResults.sortedWith(
+            compareByDescending<BatchStrategyRunResult> { it.result != null }
+                .thenByDescending { it.result?.summary?.netR ?: Double.NEGATIVE_INFINITY }
+        )
+    }
+
+    LiquidGlassCard(testTag = "batch_leaderboard_card") {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Multi-Strategy Comparison (${batchResults.size})",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "Tap to inspect",
+                style = MaterialTheme.typography.labelSmall,
+                color = positiveColor
+            )
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            sorted.forEachIndexed { rankIdx, item ->
+                val isSelected = item.strategyId == activeStrategyId
+                val res = item.result
+                Surface(
+                    color = if (isSelected) {
+                        positiveColor.copy(alpha = 0.14f)
+                    } else {
+                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    border = if (isSelected) BorderStroke(1.dp, positiveColor) else null,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = res != null) { onSelectStrategy(item.strategyId) }
+                        .testTag("batch_result_row_${item.strategyId}")
+                ) {
+                    if (res != null) {
+                        val netPts = res.summary.netPoints
+                        val pnlColor = if (netPts >= 0.0) positiveColor else negativeColor
+                        val pfText = res.summary.profitFactor?.let { formatTwoDec(it) }
+                            ?: if (res.summary.wins > 0) "INF" else "--"
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "#${rankIdx + 1} ${item.strategyName}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "${res.summary.totalTrades}t • WR ${formatOneDec(res.summary.winRatePct)}% • PF $pfText • DD ${formatTwoDec(res.risk.maxDrawdownR)}R",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(
+                                    text = formatSignedR(res.summary.netR),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = pnlColor,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                                Text(
+                                    text = "${formatSignedPoints(netPts)}p",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                    color = pnlColor,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
+                    } else {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = "Strategy failed",
+                                tint = negativeColor,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = item.strategyName,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = item.error?.error ?: "Strategy error",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                    color = negativeColor,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun formatBytesCompact(bytes: Long): String {
+    if (bytes <= 0L) return "0 KB"
+    val mb = bytes / (1024.0 * 1024.0)
+    return if (mb >= 1.0) {
+        String.format(Locale.US, "%.1f MB", mb)
+    } else {
+        val kb = (bytes / 1024.0).coerceAtLeast(1.0)
+        String.format(Locale.US, "%.0f KB", kb)
+    }
+}
+
+@Composable
+private fun BacktestTradeCard(
+    index: Int,
+    trade: Trade,
+    onReplay: () -> Unit
+) {
     val isBreakEven = trade.reason == ExitReason.BE || (abs(trade.points) <= 1e-6 && abs(trade.r) <= 1e-6)
     val isWin = !isBreakEven && (trade.points > 1e-6 || trade.r > 1e-6)
     val positiveColor = MaterialTheme.colorScheme.primary
@@ -1677,17 +2142,30 @@ private fun BacktestTradeCard(index: Int, trade: Trade) {
 
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
                 text = "SL: ${formatPrice(trade.sl)} | TP: ${formatPrice(trade.tp)}",
                 style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontFamily = FontFamily.Monospace
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier.weight(1f)
             )
+            TextButton(
+                onClick = onReplay,
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                modifier = Modifier.testTag("replay_trade_button_${index - 1}")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.CandlestickChart,
+                    contentDescription = "Replay trade #$index",
+                    modifier = Modifier.size(15.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Replay", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
         }
-
-        Spacer(modifier = Modifier.height(2.dp))
 
         Text(
             text = "${trade.openTime} -> ${trade.closeTime}",

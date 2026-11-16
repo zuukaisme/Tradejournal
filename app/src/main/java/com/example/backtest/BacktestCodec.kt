@@ -54,6 +54,7 @@ object BacktestCodec {
     private val errorAdapter = moshi.adapter(ErrorCheckDto::class.java)
     private val resultAdapter = moshi.adapter(BacktestResultDto::class.java)
     private val progressAdapter = moshi.adapter(BacktestProgressDto::class.java)
+    private val batchAdapter = moshi.adapter(BatchBacktestResponseDto::class.java)
 
     fun decodeCsvBytes(rawBytes: ByteArray): DecodedCsv {
         val isUtf16LeBom = rawBytes.size >= 2 &&
@@ -170,12 +171,12 @@ object BacktestCodec {
 
     /**
      * Reads text source files (.mq5, .mq4, .mqh, .txt, .py) on Dispatchers.IO with UTF-16/UTF-8 BOM
-     * detection and a generous size cap so huge files fail gracefully instead of causing OOM.
+     * or alternating-NUL UTF-16 auto-detection and a size cap so huge files fail gracefully.
      */
-    fun readTextStreamWithBom(inputStream: InputStream, maxBytes: Long = 64L * 1024L * 1024L): String {
+    fun readTextStreamWithBom(inputStream: InputStream, maxBytes: Long = 16L * 1024L * 1024L): String {
         val counted = CountingInputStream(BufferedInputStream(inputStream, 65_536))
-        val pushback = PushbackInputStream(counted, 4)
-        val prefix = ByteArray(3)
+        val pushback = PushbackInputStream(counted, 64)
+        val prefix = ByteArray(64)
         var prefixSize = 0
         while (prefixSize < prefix.size) {
             val count = pushback.read(prefix, prefixSize, prefix.size - prefixSize)
@@ -183,28 +184,45 @@ object BacktestCodec {
             prefixSize += count
         }
 
-        val utf16Le = prefixSize >= 2 && prefix[0] == 0xFF.toByte() && prefix[1] == 0xFE.toByte()
-        val utf16Be = prefixSize >= 2 && prefix[0] == 0xFE.toByte() && prefix[1] == 0xFF.toByte()
+        val utf16LeBom = prefixSize >= 2 && prefix[0] == 0xFF.toByte() && prefix[1] == 0xFE.toByte()
+        val utf16BeBom = prefixSize >= 2 && prefix[0] == 0xFE.toByte() && prefix[1] == 0xFF.toByte()
         val utf8Bom = prefixSize >= 3 &&
             prefix[0] == 0xEF.toByte() &&
             prefix[1] == 0xBB.toByte() &&
             prefix[2] == 0xBF.toByte()
         val bomSize = when {
-            utf16Le || utf16Be -> 2
+            utf16LeBom || utf16BeBom -> 2
             utf8Bom -> 3
             else -> 0
         }
+
+        val charset = when {
+            utf16LeBom -> Charsets.UTF_16LE
+            utf16BeBom -> Charsets.UTF_16BE
+            utf8Bom -> Charsets.UTF_8
+            prefixSize >= 4 -> {
+                var evenZeros = 0
+                var oddZeros = 0
+                val pairs = prefixSize / 2
+                for (i in 0 until pairs) {
+                    if (prefix[i * 2] == 0.toByte()) evenZeros++
+                    if (prefix[i * 2 + 1] == 0.toByte()) oddZeros++
+                }
+                when {
+                    oddZeros >= pairs / 2 && evenZeros == 0 -> Charsets.UTF_16LE
+                    evenZeros >= pairs / 2 && oddZeros == 0 -> Charsets.UTF_16BE
+                    else -> Charsets.UTF_8
+                }
+            }
+            else -> Charsets.UTF_8
+        }
+
         if (prefixSize > bomSize) pushback.unread(prefix, bomSize, prefixSize - bomSize)
         if (counted.bytesRead > maxBytes) {
-            val mb = maxBytes / (1024L * 1024L)
+            val mb = (maxBytes / (1024L * 1024L)).coerceAtLeast(1L)
             throw IllegalArgumentException("The selected file exceeds the $mb MB import limit.")
         }
 
-        val charset = when {
-            utf16Le -> Charsets.UTF_16LE
-            utf16Be -> Charsets.UTF_16BE
-            else -> Charsets.UTF_8
-        }
         val reader = InputStreamReader(pushback, charset)
         val output = StringBuilder()
         val buffer = CharArray(16_384)
@@ -212,10 +230,24 @@ object BacktestCodec {
             val count = reader.read(buffer)
             if (count < 0) break
             if (counted.bytesRead > maxBytes) {
-                val mb = maxBytes / (1024L * 1024L)
+                val mb = (maxBytes / (1024L * 1024L)).coerceAtLeast(1L)
                 throw IllegalArgumentException("The selected file exceeds the $mb MB import limit.")
             }
-            output.append(buffer, 0, count)
+            var hasNull = false
+            for (i in 0 until count) {
+                if (buffer[i] == '\u0000') {
+                    hasNull = true
+                    break
+                }
+            }
+            if (!hasNull) {
+                output.append(buffer, 0, count)
+            } else {
+                for (i in 0 until count) {
+                    val ch = buffer[i]
+                    if (ch != '\u0000') output.append(ch)
+                }
+            }
         }
         return output.toString().removePrefix("\uFEFF")
     }
@@ -299,6 +331,57 @@ object BacktestCodec {
             null
         }
     }
+
+    private val batchSpecsAdapter = moshi.adapter<List<BatchStrategySpecDto>>(
+        com.squareup.moshi.Types.newParameterizedType(List::class.java, BatchStrategySpecDto::class.java)
+    )
+
+    fun encodeBatchStrategySpecs(specs: List<BatchStrategySpec>): String {
+        val dtos = specs.map {
+            BatchStrategySpecDto(id = it.id, name = it.name, className = it.className, code = it.code)
+        }
+        return batchSpecsAdapter.toJson(dtos)
+    }
+
+    fun parseBatchBacktestJson(json: String): BatchBacktestParseOutcome {
+        return try {
+            val trimmed = json.trim()
+            if (trimmed.isEmpty()) {
+                return BatchBacktestParseOutcome.Failure(
+                    BacktestError("Batch backtester returned an empty response.")
+                )
+            }
+            val errDto = errorAdapter.fromJson(trimmed)
+            if (errDto?.error != null) {
+                return BatchBacktestParseOutcome.Failure(
+                    BacktestError(errDto.error, errDto.details.orEmpty())
+                )
+            }
+            val dto = batchAdapter.fromJson(trimmed)
+                ?: return BatchBacktestParseOutcome.Failure(
+                    BacktestError("Failed to parse batch backtest JSON.", trimmed.take(500))
+                )
+            val runs = dto.results.map { item ->
+                val itemError = item.error?.let { BacktestError(it, item.details.orEmpty()) }
+                val itemResult = item.result?.toDomain()
+                BatchStrategyRunResult(
+                    strategyId = item.id,
+                    strategyName = item.name,
+                    className = item.className,
+                    result = itemResult,
+                    error = itemError ?: if (itemResult == null) BacktestError("No result returned for ${item.name}.") else null
+                )
+            }
+            BatchBacktestParseOutcome.Success(totalCandles = dto.totalCandles, runs = runs)
+        } catch (e: Exception) {
+            BatchBacktestParseOutcome.Failure(
+                BacktestError(
+                    error = "Malformed batch JSON response: ${e.message ?: e::class.simpleName}",
+                    details = json.take(1000)
+                )
+            )
+        }
+    }
 }
 
 @JsonClass(generateAdapter = true)
@@ -320,7 +403,10 @@ internal data class BacktestProgressDto(
     val skippedByStopCap: Int = 0,
     val netPoints: Double = 0.0,
     val netR: Double = 0.0,
-    val currentTime: String = ""
+    val currentTime: String = "",
+    val strategyIndex: Int = 0,
+    val totalStrategies: Int = 0,
+    val currentStrategyName: String = ""
 ) {
     fun toDomain() = BacktestProgressSnapshot(
         candlesProcessed = candlesProcessed,
@@ -334,7 +420,10 @@ internal data class BacktestProgressDto(
         skippedByStopCap = skippedByStopCap,
         netPoints = netPoints,
         netR = netR,
-        currentTime = currentTime
+        currentTime = currentTime,
+        strategyIndex = strategyIndex,
+        totalStrategies = totalStrategies,
+        currentStrategyName = currentStrategyName
     )
 }
 
@@ -500,7 +589,9 @@ internal data class TradeDto(
     val reason: String,
     val points: Double,
     val r: Double,
-    val durationCandles: Int
+    val durationCandles: Int,
+    val openIndex: Int = -1,
+    val closeIndex: Int = -1
 ) {
     fun toDomain() = Trade(
         side = when (side.trim().lowercase(Locale.US)) {
@@ -521,6 +612,32 @@ internal data class TradeDto(
         },
         points = points,
         r = r,
-        durationCandles = durationCandles
+        durationCandles = durationCandles,
+        openIndex = openIndex,
+        closeIndex = closeIndex
     )
 }
+
+@JsonClass(generateAdapter = true)
+internal data class BatchBacktestResponseDto(
+    val totalCandles: Int = 0,
+    val results: List<BatchBacktestItemDto> = emptyList()
+)
+
+@JsonClass(generateAdapter = true)
+internal data class BatchBacktestItemDto(
+    val id: Long = 0L,
+    val name: String = "",
+    val className: String = "",
+    val result: BacktestResultDto? = null,
+    val error: String? = null,
+    val details: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+internal data class BatchStrategySpecDto(
+    val id: Long,
+    val name: String,
+    val className: String,
+    val code: String
+)

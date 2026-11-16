@@ -469,4 +469,172 @@ class BacktestUnitTest {
         assertEquals(ExitReason.BE, parsed.trades.first().reason)
         assertTrue(com.example.backtest.AiStrategyGenerator.SYSTEM_PROMPT.contains("manage_trade"))
     }
+
+    @Test
+    fun aiStrategyGenerator_validateStrategyContractFlagsMissingObjectsAndAntiPatterns() {
+        val broken = """
+            import pandas as pd
+            class MyStrat:
+                def on_candle(self, i, candles):
+                    future = candles[i + 1]
+                    ema_prev = 0.0
+                    return None
+                def manage_trade(self, trade, i, candles):
+                    return None
+        """.trimIndent()
+        val warnings = AiStrategyGenerator.validateStrategyContract(broken)
+        assertTrue(warnings.any { it.contains("Strategy") })
+        assertTrue(warnings.any { it.contains("Signal") })
+        assertTrue(warnings.any { it.contains("pandas") })
+        assertTrue(warnings.any { it.contains("candles[i +") })
+        assertTrue(warnings.any { it.contains("manage_trade") })
+        assertTrue(warnings.any { it.contains("catch-up") })
+
+        val clean = """
+            class CleanStrat(Strategy):
+                def __init__(self):
+                    self.last_processed_index = -1
+                    self.ema = None
+                def on_candle(self, i, candles):
+                    self.last_processed_index = i
+                    return Signal("buy", candles[i].close - 1.0, candles[i].close + 1.5)
+        """.trimIndent()
+        val cleanWarnings = AiStrategyGenerator.validateStrategyContract(clean)
+        assertTrue(cleanWarnings.isEmpty())
+    }
+
+    @Test
+    fun savedCsvStore_persistsListsAndDeletesCsvDatasets() {
+        val root = java.nio.file.Files.createTempDirectory("tradepulse-csv-store-").toFile()
+        val tempCsv = File.createTempFile("tradepulse-temp-", ".csv")
+        try {
+            tempCsv.writeText("<DATE>\t<TIME>\t<OPEN>\t<HIGH>\t<LOW>\t<CLOSE>\n2025.02.07\t10:00:00\t100\t102\t99\t101\n")
+            val inspection = com.example.backtest.CsvStreamInspection(
+                file = tempCsv,
+                estimatedRows = 1,
+                fileSizeBytes = tempCsv.length(),
+                detectedEncoding = "UTF-8",
+                detectedDelimiter = "Tab (MT5)",
+                sampleLines = listOf("2025.02.07\t10:00:00\t100\t102\t99\t101")
+            )
+            val tf = com.example.backtest.DetectedTimeframe(label = "1m (M1)", minutes = 1)
+            val saved = com.example.backtest.SavedCsvStore.saveImportedFile(
+                rootDir = root,
+                tempCsvFile = tempCsv,
+                displayName = "XAUUSD_M1.csv",
+                inspection = inspection,
+                detectedTimeframe = tf
+            )
+            val listed = com.example.backtest.SavedCsvStore.listDatasets(root)
+            assertEquals(1, listed.size)
+            assertEquals("XAUUSD_M1.csv", listed.first().displayName)
+            assertTrue(com.example.backtest.SavedCsvStore.resolveFile(root, saved).exists())
+
+            val afterDelete = com.example.backtest.SavedCsvStore.deleteDataset(root, saved.id)
+            assertEquals(0, afterDelete.size)
+            assertTrue(!com.example.backtest.SavedCsvStore.resolveFile(root, saved).exists())
+        } finally {
+            tempCsv.delete()
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun csvCandleWindowReader_readsWindowAroundOpenAndCloseIndices() {
+        val csvFile = File.createTempFile("tradepulse-replay-", ".csv")
+        try {
+            val content = buildString {
+                appendLine("<DATE>\t<TIME>\t<OPEN>\t<HIGH>\t<LOW>\t<CLOSE>\t<TICKVOL>")
+                for (i in 0 until 60) {
+                    val price = 2800.0 + i * 0.5
+                    appendLine("2025.02.07\t10:${String.format(java.util.Locale.US, "%02d", i)}:00\t$price\t${price + 2.0}\t${price - 1.5}\t${price + 1.0}\t100")
+                }
+            }
+            csvFile.writeText(content)
+            val trade = com.example.backtest.Trade(
+                side = Side.BUY,
+                entry = 2812.5,
+                sl = 2808.0,
+                tp = 2820.0,
+                exit = 2820.0,
+                openTime = "2025.02.07 10:25:00",
+                closeTime = "2025.02.07 10:32:00",
+                reason = ExitReason.TP,
+                points = 7.5,
+                r = 1.67,
+                durationCandles = 8,
+                openIndex = 25,
+                closeIndex = 32
+            )
+            val window = com.example.backtest.CsvCandleWindowReader.readTradeWindow(
+                csvFile = csvFile,
+                trade = trade,
+                paddingBefore = 5,
+                paddingAfter = 4
+            )
+            assertEquals(17, window.candles.size) // indices 20..36 inclusive
+            assertEquals(5, window.entryCandlePos)
+            assertEquals(12, window.exitCandlePos)
+            assertEquals("2025.02.07 10:25:00", window.candles[window.entryCandlePos].time)
+            assertEquals("2025.02.07 10:32:00", window.candles[window.exitCandlePos].time)
+        } finally {
+            csvFile.delete()
+        }
+    }
+
+    @Test
+    fun batchCodec_encodesSpecsAndParsesMixedSuccessAndFailure() {
+        val specs = listOf(
+            com.example.backtest.BatchStrategySpec(id = 11L, name = "Alpha", className = "AlphaStrat", code = "pass"),
+            com.example.backtest.BatchStrategySpec(id = 12L, name = "Beta", className = "BetaStrat", code = "pass")
+        )
+        val encoded = BacktestCodec.encodeBatchStrategySpecs(specs)
+        assertTrue(encoded.contains("\"AlphaStrat\""))
+
+        val batchJson = """
+            {
+              "totalCandles": 250,
+              "results": [
+                {
+                  "id": 11,
+                  "name": "Alpha",
+                  "className": "AlphaStrat",
+                  "result": {
+                    "summary": {"totalTrades": 1, "wins": 1, "losses": 0, "winRatePct": 100.0, "netPoints": 12.0, "netR": 1.5, "avgR": 1.5, "profitFactor": null, "skippedByStopCap": 0},
+                    "points": {"avgWinPoints": 12.0, "avgLossPoints": 0.0, "largestWinPoints": 12.0, "largestLossPoints": 0.0, "avgStopDistancePoints": 8.0, "maxStopDistancePoints": 8.0, "avgTargetDistancePoints": 12.0},
+                    "risk": {"maxDrawdownPoints": 0.0, "maxDrawdownR": 0.0, "maxConsecutiveWins": 1, "maxConsecutiveLosses": 0},
+                    "bySide": {"buy": {"trades": 1, "winRatePct": 100.0, "netPoints": 12.0}, "sell": {"trades": 0, "winRatePct": 0.0, "netPoints": 0.0}},
+                    "timing": {"avgTradeDurationCandles": 4.0},
+                    "equityCurve": [12.0],
+                    "trades": [
+                      {
+                        "side": "buy", "entry": 2800.0, "sl": 2792.0, "tp": 2812.0, "exit": 2812.0,
+                        "openTime": "2025.02.07 10:00:00", "closeTime": "2025.02.07 10:04:00",
+                        "reason": "tp", "points": 12.0, "r": 1.5, "durationCandles": 4,
+                        "openIndex": 10, "closeIndex": 14
+                      }
+                    ],
+                    "warnings": []
+                  }
+                },
+                {
+                  "id": 12,
+                  "name": "Beta",
+                  "className": "BetaStrat",
+                  "error": "NameError: missing helper",
+                  "details": "Trace"
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val outcome = BacktestCodec.parseBatchBacktestJson(batchJson)
+        assertTrue(outcome is com.example.backtest.BatchBacktestParseOutcome.Success)
+        val ok = outcome as com.example.backtest.BatchBacktestParseOutcome.Success
+        assertEquals(250, ok.totalCandles)
+        assertEquals(2, ok.runs.size)
+        assertEquals(10, ok.runs[0].result!!.trades[0].openIndex)
+        assertEquals(14, ok.runs[0].result!!.trades[0].closeIndex)
+        assertEquals("NameError: missing helper", ok.runs[1].error!!.error)
+    }
 }

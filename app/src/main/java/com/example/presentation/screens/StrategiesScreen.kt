@@ -241,7 +241,7 @@ fun StrategiesScreen(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Tap Upload .py Strategy to pick any Python strategy file from your device, or read the Strategy Guide for the 9-rule contract and an AI prompt.",
+                            text = "Tap Upload .py Strategy to pick any Python strategy file from your device, or read the Strategy Guide for the 11-rule contract and an AI prompt.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -347,6 +347,7 @@ fun StrategiesScreen(
         SavePythonStrategyDialog(
             suggestedName = upload.suggestedName,
             code = upload.code,
+            existingNames = pythonStrategies.map { it.name },
             onDismiss = { pendingUpload = null },
             onSave = { name, className ->
                 viewModel.savePythonStrategy(name = name, className = className, code = upload.code)
@@ -359,6 +360,7 @@ fun StrategiesScreen(
     strategyToRename?.let { strat ->
         RenamePythonStrategyDialog(
             strategy = strat,
+            existingOtherNames = pythonStrategies.filter { it.id != strat.id }.map { it.name },
             onDismiss = { strategyToRename = null },
             onSave = { newName, newClassName ->
                 viewModel.renamePythonStrategy(strat, newName, newClassName)
@@ -370,6 +372,7 @@ fun StrategiesScreen(
     strategyToEdit?.let { strat ->
         EditPythonStrategyDialog(
             strategy = strat,
+            existingOtherNames = pythonStrategies.filter { it.id != strat.id }.map { it.name },
             onDismiss = { strategyToEdit = null },
             onSave = { newName, newClassName, newCode ->
                 viewModel.editPythonStrategy(strat, newName, newClassName, newCode)
@@ -538,12 +541,17 @@ private fun PythonStrategyCard(
 private fun SavePythonStrategyDialog(
     suggestedName: String,
     code: String,
+    existingNames: List<String>,
     onDismiss: () -> Unit,
     onSave: (String, String) -> Unit
 ) {
     var name by remember { mutableStateOf(suggestedName) }
     var className by remember { mutableStateOf("") }
     val lineCount = remember(code) { code.lineSequence().count() }
+    val trimmed = name.trim()
+    val isDuplicate = remember(trimmed, existingNames) {
+        trimmed.isNotEmpty() && existingNames.any { it.trim().equals(trimmed, ignoreCase = true) }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -551,7 +559,7 @@ private fun SavePythonStrategyDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    text = "Loaded $lineCount lines from .py file.",
+                    text = "Loaded $lineCount lines (${code.length / 1024} KB) from .py file.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.primary
                 )
@@ -561,6 +569,10 @@ private fun SavePythonStrategyDialog(
                     label = { Text("Strategy Name") },
                     placeholder = { Text("e.g. Opening Range Breakout") },
                     singleLine = true,
+                    isError = isDuplicate,
+                    supportingText = if (isDuplicate) {
+                        { Text("Name already taken — choose a unique strategy name.") }
+                    } else null,
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("python_strategy_name_input"),
@@ -582,11 +594,11 @@ private fun SavePythonStrategyDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    if (name.isNotBlank()) {
-                        onSave(name.trim(), className.trim())
+                    if (trimmed.isNotEmpty() && !isDuplicate) {
+                        onSave(trimmed, className.trim())
                     }
                 },
-                enabled = name.isNotBlank(),
+                enabled = trimmed.isNotEmpty() && !isDuplicate,
                 modifier = Modifier.testTag("confirm_save_python_strategy")
             ) {
                 Text("Save")
@@ -603,11 +615,16 @@ private fun SavePythonStrategyDialog(
 @Composable
 private fun RenamePythonStrategyDialog(
     strategy: PythonStrategy,
+    existingOtherNames: List<String>,
     onDismiss: () -> Unit,
     onSave: (String, String) -> Unit
 ) {
     var name by remember { mutableStateOf(strategy.name) }
     var className by remember { mutableStateOf(strategy.className) }
+    val trimmed = name.trim()
+    val isDuplicate = remember(trimmed, existingOtherNames) {
+        trimmed.isNotEmpty() && existingOtherNames.any { it.trim().equals(trimmed, ignoreCase = true) }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -619,6 +636,10 @@ private fun RenamePythonStrategyDialog(
                     onValueChange = { name = it },
                     label = { Text("Strategy Name") },
                     singleLine = true,
+                    isError = isDuplicate,
+                    supportingText = if (isDuplicate) {
+                        { Text("Name already taken — choose a unique strategy name.") }
+                    } else null,
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("rename_python_strategy_input"),
@@ -638,11 +659,11 @@ private fun RenamePythonStrategyDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    if (name.isNotBlank()) {
-                        onSave(name.trim(), className.trim())
+                    if (trimmed.isNotEmpty() && !isDuplicate) {
+                        onSave(trimmed, className.trim())
                     }
                 },
-                enabled = name.isNotBlank(),
+                enabled = trimmed.isNotEmpty() && !isDuplicate,
                 modifier = Modifier.testTag("confirm_rename_python_strategy")
             ) {
                 Text("Save")
@@ -659,12 +680,25 @@ private fun RenamePythonStrategyDialog(
 @Composable
 private fun EditPythonStrategyDialog(
     strategy: PythonStrategy,
+    existingOtherNames: List<String>,
     onDismiss: () -> Unit,
     onSave: (String, String, String) -> Unit
 ) {
     var name by remember(strategy.id) { mutableStateOf(strategy.name) }
     var className by remember(strategy.id) { mutableStateOf(strategy.className) }
     var code by remember(strategy.id) { mutableStateOf(strategy.code) }
+    var unlockLargeEditor by remember(strategy.id) { mutableStateOf(false) }
+
+    val trimmed = name.trim()
+    val isDuplicate = remember(trimmed, existingOtherNames) {
+        trimmed.isNotEmpty() && existingOtherNames.any { it.trim().equals(trimmed, ignoreCase = true) }
+    }
+    val lineCount = remember(code) { code.lineSequence().count() }
+    val isLargeCode = code.length > 24_000 || lineCount > 350
+    val lines = remember(code, isLargeCode, unlockLargeEditor) {
+        if (isLargeCode && !unlockLargeEditor) code.lines() else emptyList()
+    }
+    val horizontalScroll = rememberScrollState()
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -673,8 +707,7 @@ private fun EditPythonStrategyDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(520.dp)
-                    .verticalScroll(rememberScrollState()),
+                    .height(520.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 OutlinedTextField(
@@ -682,6 +715,10 @@ private fun EditPythonStrategyDialog(
                     onValueChange = { name = it },
                     label = { Text("Strategy Name") },
                     singleLine = true,
+                    isError = isDuplicate,
+                    supportingText = if (isDuplicate) {
+                        { Text("Name already taken — choose a unique strategy name.") }
+                    } else null,
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
@@ -691,28 +728,82 @@ private fun EditPythonStrategyDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-                Text(
-                    text = "${code.lineSequence().count()} lines",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                OutlinedTextField(
-                    value = code,
-                    onValueChange = { code = it },
-                    label = { Text("Python source code") },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(360.dp),
-                    minLines = 14,
-                    maxLines = 24,
-                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "$lineCount lines • ${code.length / 1024} KB",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (isLargeCode && !unlockLargeEditor) {
+                        TextButton(onClick = { unlockLargeEditor = true }) {
+                            Text("Unlock Editor", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+                if (isLargeCode && !unlockLargeEditor) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                    ) {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(8.dp)
+                        ) {
+                            items(count = lines.size, key = { it }) { idx ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(horizontalScroll)
+                                        .padding(vertical = 1.dp)
+                                ) {
+                                    Text(
+                                        text = "${idx + 1}  ",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 10.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = lines[idx],
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 11.sp,
+                                        softWrap = false,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    OutlinedTextField(
+                        value = code,
+                        onValueChange = { code = it },
+                        label = { Text("Python source code") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        minLines = 12,
+                        maxLines = 24,
+                        textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
+                    )
+                }
             }
         },
         confirmButton = {
             Button(
-                onClick = { if (name.isNotBlank() && code.isNotBlank()) onSave(name.trim(), className.trim(), code) },
-                enabled = name.isNotBlank() && code.isNotBlank(),
+                onClick = {
+                    if (trimmed.isNotEmpty() && !isDuplicate && code.isNotBlank()) {
+                        onSave(trimmed, className.trim(), code)
+                    }
+                },
+                enabled = trimmed.isNotEmpty() && !isDuplicate && code.isNotBlank(),
                 modifier = Modifier.testTag("save_edited_python_strategy")
             ) {
                 Text("Save changes")
@@ -735,6 +826,8 @@ private fun PythonCodeViewerSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val clipboardManager = LocalClipboardManager.current
     var copied by remember { mutableStateOf(false) }
+    val lines = remember(strategy.code) { strategy.code.lines() }
+    val horizontalScroll = rememberScrollState()
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -757,15 +850,33 @@ private fun PythonCodeViewerSheet(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = if (strategy.className.isBlank()) "Class: Auto-detect" else "Class: ${strategy.className}",
+                        text = (if (strategy.className.isBlank()) "Class: Auto-detect" else "Class: ${strategy.className}") +
+                            " • ${lines.size} lines",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                val context = LocalContext.current
                 OutlinedButton(
                     onClick = {
-                        clipboardManager.setText(AnnotatedString(strategy.code))
-                        copied = true
+                        if (strategy.code.length > 250_000) {
+                            android.widget.Toast.makeText(
+                                context,
+                                "Strategy file exceeds Android clipboard limit (>250 KB).",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        } else {
+                            runCatching {
+                                clipboardManager.setText(AnnotatedString(strategy.code))
+                                copied = true
+                            }.onFailure {
+                                android.widget.Toast.makeText(
+                                    context,
+                                    "Could not copy full file to clipboard.",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
                     }
                 ) {
                     Icon(
@@ -791,20 +902,35 @@ private fun PythonCodeViewerSheet(
                     .fillMaxWidth()
                     .height(420.dp)
             ) {
-                Box(
+                LazyColumn(
                     modifier = Modifier
                         .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
-                        .horizontalScroll(rememberScrollState())
-                        .padding(12.dp)
+                        .padding(10.dp)
                 ) {
-                    Text(
-                        text = strategy.code,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 11.sp,
-                        lineHeight = 16.sp,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
+                    items(count = lines.size, key = { it }) { idx ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(horizontalScroll)
+                                .padding(vertical = 1.dp)
+                        ) {
+                            Text(
+                                text = "${idx + 1}  ",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp,
+                                lineHeight = 16.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = lines[idx],
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                lineHeight = 16.sp,
+                                softWrap = false,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
                 }
             }
 

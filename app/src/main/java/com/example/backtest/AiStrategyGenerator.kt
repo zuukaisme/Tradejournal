@@ -442,6 +442,63 @@ object AiStrategyGenerator {
         return regex.find(code)?.groupValues?.getOrNull(1).orEmpty()
     }
 
+    /**
+     * Audits Python strategy source against the backtest.py contract so missing objects,
+     * forbidden imports, or known engine pitfalls are flagged immediately in the UI.
+     */
+    fun validateStrategyContract(code: String): List<String> {
+        val trimmed = code.trim()
+        if (trimmed.isEmpty()) {
+            return listOf("Strategy code is empty.")
+        }
+        val warnings = mutableListOf<String>()
+
+        if (detectStrategyClassName(trimmed).isBlank()) {
+            warnings.add("Missing Strategy subclass (expected `class MyStrategy(Strategy):`).")
+        }
+        if (!Regex("""def\s+on_candle\s*\(""").containsMatchIn(trimmed)) {
+            warnings.add("Missing `def on_candle(self, i, candles):` method.")
+        }
+        if (!trimmed.contains("Signal(")) {
+            warnings.add("Missing `Signal(side, sl, tp)` return object.")
+        }
+        val forbiddenLibs = listOf("pandas", "numpy", "scipy", "talib", "yfinance")
+        for (lib in forbiddenLibs) {
+            val libRegex = Regex("""(?m)^\s*(?:import|from)\s+$lib\b""")
+            if (libRegex.containsMatchIn(trimmed)) {
+                warnings.add("Uses forbidden library `$lib`. Only Python 3.11 standard library is bundled.")
+            }
+        }
+        if (Regex("""candles\s*\[\s*i\s*\+""").containsMatchIn(trimmed)) {
+            warnings.add("Possible lookahead indexing (`candles[i + ...]`). Only read `candles[0..i]`.")
+        }
+        if (Regex("""def\s+manage_trade\s*\(""").containsMatchIn(trimmed)) {
+            warnings.add("Defines `manage_trade`, which is not called by the current engine.")
+        }
+        val usesTime = trimmed.contains(".time")
+        val handlesDottedDate = trimmed.contains("%Y.%m.%d") ||
+            trimmed.contains("""replace("." """) ||
+            trimmed.contains("""replace(".", "-")""") ||
+            trimmed.contains("""replace('.', '-')""") ||
+            trimmed.contains("""split(".")""") ||
+            trimmed.contains("""split('.')""") ||
+            trimmed.contains("""'%Y.%m.%d'""")
+        if (usesTime && !handlesDottedDate) {
+            warnings.add("Reads `candle.time` without apparent MT5 dotted-date (`YYYY.MM.DD HH:MM:SS`) parsing.")
+        }
+        val usesStatefulIndicators = Regex(
+            """\b(ema[a-z0-9_]*|asian_range[a-z0-9_]*|prev_day[a-z0-9_]*|previous_day[a-z0-9_]*)\b""",
+            RegexOption.IGNORE_CASE
+        ).containsMatchIn(trimmed)
+        val hasCatchUpTracker = trimmed.contains("last_processed", ignoreCase = true) ||
+            trimmed.contains("last_idx", ignoreCase = true) ||
+            trimmed.contains("last_i", ignoreCase = true)
+        if (usesStatefulIndicators && !hasCatchUpTracker) {
+            warnings.add("Uses EMA/session/range state without apparent skipped-candle catch-up tracking (`last_processed_index`).")
+        }
+        return warnings
+    }
+
     private fun formatDisplayName(className: String): String {
         if (className.isBlank()) return "AI Strategy"
         return className

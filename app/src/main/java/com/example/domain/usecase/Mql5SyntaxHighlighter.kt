@@ -32,11 +32,17 @@ object Mql5SyntaxHighlighter {
         "IndicatorRelease", "SetIndexBuffer", "PlotIndexSetInteger", "iTime"
     )
 
+    private val COMMENT_REGEX = Regex("(//.*$)|(/\\*[\\s\\S]*?\\*/)", RegexOption.MULTILINE)
+    private val STRING_REGEX = Regex("\"([^\"\\\\]|\\\\.)*\"")
+    private val WORD_REGEX = Regex("(#?[a-zA-Z_][a-zA-Z0-9_]*)|(\\b\\d+(\\.\\d+)?f?\\b)")
+
     fun highlight(
         code: String,
         isDark: Boolean = true,
         searchQuery: String = ""
     ): AnnotatedString {
+        if (code.isEmpty()) return AnnotatedString("")
+
         val keywordColor = if (isDark) Color(0xFFC678DD) else Color(0xFF7C3AED)
         val preprocessorColor = if (isDark) Color(0xFFE5C07B) else Color(0xFFD97706)
         val builtinColor = if (isDark) Color(0xFF61AFEF) else Color(0xFF2563EB)
@@ -45,7 +51,7 @@ object Mql5SyntaxHighlighter {
         val numberColor = if (isDark) Color(0xFFE06C75) else Color(0xFFDC2626)
         val defaultColor = if (isDark) Color(0xFFE5E7EB) else Color(0xFF1F2937)
 
-        val builder = AnnotatedString.Builder()
+        val builder = AnnotatedString.Builder(code.length)
         builder.append(code)
 
         // 1. Default style
@@ -55,9 +61,10 @@ object Mql5SyntaxHighlighter {
             code.length
         )
 
-        // 2. Multi-line and single-line comments
-        val commentRegex = Regex("(//.*$)|(/\\*[\\s\\S]*?\\*/)", RegexOption.MULTILINE)
-        commentRegex.findAll(code).forEach { match ->
+        // 2. Multi-line and single-line comments (collected once per line)
+        val excludedRanges = mutableListOf<IntRange>()
+        COMMENT_REGEX.findAll(code).forEach { match ->
+            excludedRanges.add(match.range)
             builder.addStyle(
                 SpanStyle(color = commentColor, fontStyle = FontStyle.Italic),
                 match.range.first,
@@ -66,8 +73,8 @@ object Mql5SyntaxHighlighter {
         }
 
         // 3. String literals ("...")
-        val stringRegex = Regex("\"([^\"\\\\]|\\\\.)*\"")
-        stringRegex.findAll(code).forEach { match ->
+        STRING_REGEX.findAll(code).forEach { match ->
+            excludedRanges.add(match.range)
             builder.addStyle(
                 SpanStyle(color = stringColor),
                 match.range.first,
@@ -76,15 +83,12 @@ object Mql5SyntaxHighlighter {
         }
 
         // 4. Words (preprocessors, keywords, builtins, numbers)
-        val wordRegex = Regex("(#?[a-zA-Z_][a-zA-Z0-9_]*)|(\\b\\d+(\\.\\d+)?f?\\b)")
-        wordRegex.findAll(code).forEach { match ->
+        WORD_REGEX.findAll(code).forEach { match ->
             val word = match.value
             val start = match.range.first
             val end = match.range.last + 1
 
-            // Skip if this word is inside a comment or string
-            val isInsideCommentOrString = commentRegex.findAll(code).any { it.range.contains(start) } ||
-                    stringRegex.findAll(code).any { it.range.contains(start) }
+            val isInsideCommentOrString = excludedRanges.any { start in it }
 
             if (!isInsideCommentOrString) {
                 when {
@@ -105,10 +109,11 @@ object Mql5SyntaxHighlighter {
         }
 
         // 5. Highlight search matches
-        if (searchQuery.isNotBlank() && searchQuery.length >= 2) {
+        val trimmedQuery = searchQuery.trim()
+        if (trimmedQuery.length >= 2) {
             var searchIndex = 0
             while (searchIndex < code.length) {
-                val found = code.indexOf(searchQuery, searchIndex, ignoreCase = true)
+                val found = code.indexOf(trimmedQuery, searchIndex, ignoreCase = true)
                 if (found == -1) break
                 builder.addStyle(
                     SpanStyle(
@@ -117,9 +122,9 @@ object Mql5SyntaxHighlighter {
                         fontWeight = FontWeight.Bold
                     ),
                     found,
-                    found + searchQuery.length
+                    found + trimmedQuery.length
                 )
-                searchIndex = found + searchQuery.length
+                searchIndex = found + trimmedQuery.length
             }
         }
 
