@@ -234,6 +234,25 @@ fun TradeReplayTabContent(
         else -> matchingIndices.firstOrNull { it > safeIndex }
     }
 
+    LaunchedEffect(isPlaying, safeIndex, totalCandles, isLoading) {
+        if (!isPlaying || isLoading || totalCandles <= 0) return@LaunchedEffect
+        if (revealedCount >= totalCandles) {
+            revealedCount = (window?.entryCandlePos ?: 0).coerceIn(1, totalCandles)
+        }
+        while (isPlaying && revealedCount < totalCandles) {
+            delay(140L)
+            revealedCount = (revealedCount + 1).coerceAtMost(totalCandles)
+        }
+        if (isPlaying && revealedCount >= totalCandles) {
+            if (nextMatchingIdx != null) {
+                delay(450L)
+                onSelectTradeIndex(nextMatchingIdx)
+            } else {
+                isPlaying = false
+            }
+        }
+    }
+
     LaunchedEffect(isPlaying, safeIndex, totalCandles) {
         if (!isPlaying || totalCandles <= 0) return@LaunchedEffect
         if (revealedCount >= totalCandles) {
@@ -943,7 +962,7 @@ fun BacktestReplayScreen(
     var revealedCount by remember(safeIndex, totalCandles) {
         mutableIntStateOf(totalCandles.coerceAtLeast(1))
     }
-    var isPlaying by remember(safeIndex) { mutableStateOf(false) }
+    var isPlaying by remember { mutableStateOf(false) }
 
     val positiveColor = MaterialTheme.colorScheme.primary
     val negativeColor = MaterialTheme.colorScheme.error
