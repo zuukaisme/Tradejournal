@@ -1,6 +1,7 @@
 package com.example
 
 import com.example.backtest.BacktestCodec
+import com.example.backtest.AiStrategyGenerator
 import com.example.backtest.BacktestTimeframe
 import com.example.backtest.CandleTimeframeResampler
 import com.example.backtest.BacktestParseOutcome
@@ -14,6 +15,30 @@ import java.io.ByteArrayInputStream
 import java.io.File
 
 class BacktestUnitTest {
+
+    @Test
+    fun aiStrategyPromptCoversMt5TimeAndSkippedCandleState() {
+        val prompt = AiStrategyGenerator.SYSTEM_PROMPT
+        assertTrue(prompt.contains("YYYY.MM.DD HH:MM:SS"))
+        assertTrue(prompt.contains("SERVER_GMT_OFFSET"))
+        assertTrue(prompt.contains("last_processed_index"))
+        assertTrue(prompt.contains("process every unseen candle"))
+        assertTrue(prompt.contains("does not call it"))
+    }
+
+    @Test
+    fun readTextStreamWithBom_decodesUtf16AndEnforcesByteLimit() {
+        val text = "class ImportedStrategy:\n    pass\n"
+        val bytes = byteArrayOf(0xFF.toByte(), 0xFE.toByte()) + text.toByteArray(Charsets.UTF_16LE)
+        val decoded = BacktestCodec.readTextStreamWithBom(ByteArrayInputStream(bytes))
+        assertEquals(text, decoded)
+
+        val rejected = runCatching {
+            BacktestCodec.readTextStreamWithBom(ByteArrayInputStream(bytes), 8L)
+        }
+        assertTrue(rejected.isFailure)
+        assertTrue(rejected.exceptionOrNull()?.message?.contains("limit") == true)
+    }
 
     @Test
     fun streamCsvToCacheFile_reportsProgressAndKeepsOnlyPreviewInMemory() {
