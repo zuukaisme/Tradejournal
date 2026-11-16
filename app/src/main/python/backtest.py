@@ -311,10 +311,25 @@ _BTBIN_HEADER_FMT = "<4sIqqq"
 _BTBIN_HEADER_SIZE = struct.calcsize(_BTBIN_HEADER_FMT)
 
 
+def _btbin_path_for_csv(csv_path: str, for_write: bool = False) -> str:
+    adjacent_path = csv_path + ".btbin"
+    try:
+        from java import jclass
+        environment = jclass("android.os.Environment")
+        downloads = str(environment.getExternalStoragePublicDirectory(environment.DIRECTORY_DOWNLOADS).getAbsolutePath())
+        identity = hashlib.sha256(os.path.realpath(csv_path).encode("utf-8")).digest()[:12].hex()
+        shared_path = os.path.join(downloads, "Tradepulse", "cache", f"{os.path.basename(csv_path)}-{identity}.btbin")
+        if for_write or os.path.isfile(shared_path):
+            return shared_path
+    except Exception:
+        pass
+    return adjacent_path
+
+
 def _try_load_btbin(csv_path: str, st) -> Optional[CandleSeries]:
     if sys.byteorder != "little" or array("I").itemsize != 4 or array("d").itemsize != 8:
         return None
-    bin_path = csv_path + ".btbin"
+    bin_path = _btbin_path_for_csv(csv_path)
     try:
         if not os.path.exists(bin_path) or os.path.getsize(bin_path) < _BTBIN_HEADER_SIZE:
             return None
@@ -357,7 +372,7 @@ def _try_load_btbin_slice(
     keeping each worker process's RAM footprint to ~1/K of the full dataset."""
     if sys.byteorder != "little" or array("I").itemsize != 4 or array("d").itemsize != 8:
         return None
-    bin_path = csv_path + ".btbin"
+    bin_path = _btbin_path_for_csv(csv_path)
     try:
         if not os.path.exists(bin_path) or os.path.getsize(bin_path) < _BTBIN_HEADER_SIZE:
             return None
@@ -444,7 +459,8 @@ def _save_btbin(csv_path: str, st, series: CandleSeries) -> None:
     n = len(series)
     if n <= 0 or len(series._time_offsets) != n + 1:
         return
-    bin_path = csv_path + ".btbin"
+    bin_path = _btbin_path_for_csv(csv_path, for_write=True)
+    os.makedirs(os.path.dirname(bin_path), exist_ok=True)
     tmp_path = bin_path + f".pytmp.{os.getpid()}"
     try:
         mtime_ms = int(getattr(st, "st_mtime", 0.0) * 1000)
