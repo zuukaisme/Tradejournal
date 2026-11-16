@@ -755,9 +755,28 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             try {
                 val output = withContext(Dispatchers.IO) {
+                    val optimizerCsv = if (snapshot.selectedTimeframe == BacktestTimeframe.NATIVE) {
+                        csv
+                    } else {
+                        val activeDatasetKey = snapshot.activeSavedCsvId ?: csv.name
+                        val cacheKey = activeDatasetKey to snapshot.selectedTimeframe
+                        resampledCache[cacheKey]?.file?.takeIf { it.exists() } ?: run {
+                            val resampledDir = File(getApplication<Application>().cacheDir, "resampled_csvs").apply { mkdirs() }
+                            val outputFile = File(
+                                resampledDir,
+                                "resampled_${activeDatasetKey}_${snapshot.selectedTimeframe.shortLabel}.csv"
+                            )
+                            CandleTimeframeResampler.resampleCsvFile(
+                                sourceFile = csv,
+                                target = snapshot.selectedTimeframe,
+                                outputFile = outputFile
+                            ).also { resampledCache[cacheKey] = it }.file
+                        }
+                    }
+                    BinaryCandleCache.ensureCache(optimizerCsv)
                     PythonBacktestRunner.runOptimizerWithStrategyFile(
                         getApplication(),
-                        csv.absolutePath,
+                        optimizerCsv.absolutePath,
                         strategy.code,
                         strategy.className,
                         ranges,
