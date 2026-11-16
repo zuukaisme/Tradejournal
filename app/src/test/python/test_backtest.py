@@ -337,5 +337,50 @@ class BacktestRegressionTests(unittest.TestCase):
                 os.remove(csv_path)
 
 
+
+    def test_optimizer_runs_parameter_grid_and_ranks_results(self):
+        from backtest import run_optimizer_with_strategy_file
+
+        fd, csv_path = tempfile.mkstemp(suffix=".csv")
+        os.close(fd)
+        try:
+            with open(csv_path, "w", encoding="utf-8") as fh:
+                fh.write("datetime,open,high,low,close,volume\\n")
+                for idx in range(100):
+                    price = 100.0 + (idx % 5)
+                    fh.write(f"2025-01-02 09:{idx % 60:02d}:00,{price},{price + 2},{price - 2},{price + 1},1\\n")
+            code = (
+                "class GridStrategy(Strategy):\\n"
+                "    def __init__(self):\\n"
+                "        self.offset = 1\\n"
+                "    def on_candle(self, i, candles):\\n"
+                "        c = candles[i]\\n"
+                "        return Signal('buy', c.close - self.offset, c.close + self.offset)\\n"
+            )
+            payload = json.loads(run_optimizer_with_strategy_file(
+                csv_path, code, "GridStrategy",
+                json.dumps([{"name": "offset", "min": 1, "max": 3, "step": 1}])
+            ))
+            self.assertEqual(payload["combinationsTested"], 3)
+            self.assertEqual([row["rank"] for row in payload["results"]], [1, 2, 3])
+            self.assertTrue(all("offset" in row["parameters"] for row in payload["results"]))
+        finally:
+            if os.path.exists(csv_path):
+                os.remove(csv_path)
+            if os.path.exists(csv_path + ".btbin"):
+                os.remove(csv_path + ".btbin")
+
+    def test_optimizer_rejects_oversized_parameter_grid(self):
+        from backtest import run_optimizer_with_strategy_file
+
+        payload = json.loads(run_optimizer_with_strategy_file(
+            "missing.csv",
+            "class GridStrategy(Strategy):\\n    def on_candle(self, i, candles):\\n        return None\\n",
+            "GridStrategy",
+            json.dumps([{"name": "offset", "min": 1, "max": 100, "step": 1}]),
+            max_combinations=10,
+        ))
+        self.assertIn("maximum is 10", payload["error"])
+
 if __name__ == "__main__":
     unittest.main()
