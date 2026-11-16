@@ -960,7 +960,7 @@ class BacktestUnitTest {
                 skippedByStopCap = 1, totalCandles = 25_000
             ),
             points = emptyPoints, risk = emptyRisk, bySide = emptyBySide, timing = emptyTiming,
-            trades = listOf(shard1Trade)
+            equityCurve = emptyList(), trades = listOf(shard1Trade), warnings = emptyList()
         )
         val shard2Res = com.example.backtest.BacktestResult(
             summary = com.example.backtest.BacktestSummary(
@@ -969,7 +969,7 @@ class BacktestUnitTest {
                 skippedByStopCap = 2, totalCandles = 25_000
             ),
             points = emptyPoints, risk = emptyRisk, bySide = emptyBySide, timing = emptyTiming,
-            trades = listOf(shard2OverlapTrade, shard2ValidTrade)
+            equityCurve = emptyList(), trades = listOf(shard2OverlapTrade, shard2ValidTrade), warnings = emptyList()
         )
 
         val stitched = com.example.backtest.worker.BacktestShardStitcher.stitch(
