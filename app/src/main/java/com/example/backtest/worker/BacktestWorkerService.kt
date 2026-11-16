@@ -38,6 +38,13 @@ abstract class BacktestWorkerService(private val workerLabel: String) : Service(
 
     private val messenger = Messenger(incomingHandler)
 
+    override fun onCreate() {
+        super.onCreate()
+        executor.execute {
+            runCatching { PythonBacktestRunner.ensureStarted(applicationContext) }
+        }
+    }
+
     override fun onBind(intent: Intent?): IBinder = messenger.binder
 
     override fun onDestroy() {
@@ -183,3 +190,31 @@ class BacktestWorkerService1 : BacktestWorkerService("W1")
 class BacktestWorkerService2 : BacktestWorkerService("W2")
 class BacktestWorkerService3 : BacktestWorkerService("W3")
 class BacktestWorkerService4 : BacktestWorkerService("W4")
+class BacktestWorkerService5 : BacktestWorkerService("W5")
+class BacktestWorkerService6 : BacktestWorkerService("W6")
+class BacktestWorkerService7 : BacktestWorkerService("W7")
+class BacktestWorkerService8 : BacktestWorkerService("W8")
+class BacktestWorkerService9 : BacktestWorkerService("W9")
+class BacktestWorkerService10 : BacktestWorkerService("W10")
+class BacktestWorkerService11 : BacktestWorkerService("W11")
+class BacktestWorkerService12 : BacktestWorkerService("W12")
+class BacktestWorkerService13 : BacktestWorkerService("W13")
+class BacktestWorkerService14 : BacktestWorkerService("W14")
+class BacktestWorkerService15 : BacktestWorkerService("W15")
+class BacktestWorkerService16 : BacktestWorkerService("W16")
+class BacktestWorkerService17 : BacktestWorkerService("W17")
+class BacktestWorkerService18 : BacktestWorkerService("W18")
+class BacktestWorkerService19 : BacktestWorkerService("W19")
+class BacktestWorkerService20 : BacktestWorkerService("W20")
+class BacktestWorkerService21 : BacktestWorkerService("W21")
+class BacktestWorkerService22 : BacktestWorkerService("W22")
+class BacktestWorkerService23 : BacktestWorkerService("W23")
+class BacktestWorkerService24 : BacktestWorkerService("W24")
+class BacktestWorkerService25 : BacktestWorkerService("W25")
+class BacktestWorkerService26 : BacktestWorkerService("W26")
+class BacktestWorkerService27 : BacktestWorkerService("W27")
+class BacktestWorkerService28 : BacktestWorkerService("W28")
+class BacktestWorkerService29 : BacktestWorkerService("W29")
+class BacktestWorkerService30 : BacktestWorkerService("W30")
+class BacktestWorkerService31 : BacktestWorkerService("W31")
+class BacktestWorkerService32 : BacktestWorkerService("W32")
