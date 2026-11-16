@@ -125,7 +125,8 @@ object CsvCandleWindowReader {
             var currentIndex = 0
             while (currentIndex <= endIndex) {
                 val raw = reader.readLine() ?: break
-                if (currentIndex >= startIndex && raw.isNotBlank()) {
+                if (raw.isBlank()) continue
+                if (currentIndex >= startIndex) {
                     parseCandleRow(currentIndex, raw.trim(), cols)?.let(rawCandles::add)
                 }
                 currentIndex++
