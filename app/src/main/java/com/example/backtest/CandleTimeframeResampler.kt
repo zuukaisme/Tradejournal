@@ -175,22 +175,20 @@ object CandleTimeframeResampler {
         outputFile.parentFile?.mkdirs()
 
         var header: CsvHeaderInfo? = null
-        var firstLine = ""
+        var firstNonBlank = true
         var sourceCount = 0
-        var lastEpoch = Long.MIN_VALUE
+        var previousEpoch = Long.MIN_VALUE
         var chronological = true
 
-        BufferedReader(InputStreamReader(FileInputStream(sourceFile), Charsets.UTF_8), 65_536).use { reader ->
+        BufferedReader(InputStreamReader(FileInputStream(sourceFile), Charsets.UTF_8), 1 shl 16).use { reader ->
             while (true) {
-                val rawLine = reader.readLine() ?: break
-                val line = rawLine.trim()
-                if (line.isEmpty()) continue
-                firstLine = line
+                val line = reader.readLine() ?: break
+                if (line.isBlank()) continue
+                header = parseHeader(line.trim())
+                    ?: throw IllegalArgumentException("Unrecognized CSV header.")
                 break
             }
-            header = parseHeader(firstLine)
-                ?: throw IllegalArgumentException("Unrecognized CSV header.")
-            val parsedHeader = header!!
+            val parsedHeader = header ?: throw IllegalArgumentException("CSV file is empty.")
             require(parsedHeader.openIdx != null && parsedHeader.highIdx != null &&
                 parsedHeader.lowIdx != null && parsedHeader.closeIdx != null) {
                 "CSV must contain open, high, low, and close columns."
@@ -203,18 +201,15 @@ object CandleTimeframeResampler {
             while (true) {
                 val line = reader.readLine() ?: break
                 val candle = parseResampleLine(line, parsedHeader) ?: continue
-                if (candle.epochMillis < lastEpoch) chronological = false
-                lastEpoch = candle.epochMillis
+                if (candle.epochMillis < previousEpoch) chronological = false
+                previousEpoch = candle.epochMillis
                 sourceCount++
             }
         }
 
         require(sourceCount > 0) { "Could not parse candle timestamps/prices for resampling." }
-
-        if (!chronological) {
-            val fallback = resampleCsv(sourceFile.readText(Charsets.UTF_8), target)
-            outputFile.writeText(fallback.csvText, Charsets.UTF_8)
-            return ResampledCsvFileResult(outputFile, fallback.sourceCandleCount, fallback.outputCandleCount, target)
+        require(chronological) {
+            "This CSV is not in chronological order. Sort it from oldest to newest before resampling a large file."
         }
 
         var currentBucket = Long.MIN_VALUE
@@ -225,11 +220,11 @@ object CandleTimeframeResampler {
         var bucketVolume = 0.0
         var outputCount = 0
 
-        BufferedReader(InputStreamReader(FileInputStream(sourceFile), Charsets.UTF_8), 65_536).use { reader ->
-            BufferedWriter(OutputStreamWriter(FileOutputStream(outputFile), Charsets.UTF_8), 65_536).use { writer ->
+        BufferedReader(InputStreamReader(FileInputStream(sourceFile), Charsets.UTF_8), 1 shl 16).use { reader ->
+            var headerSkipped = false
+            BufferedWriter(OutputStreamWriter(FileOutputStream(outputFile), Charsets.UTF_8), 1 shl 16).use { writer ->
                 writer.write("datetime,open,high,low,close,volume")
                 writer.newLine()
-                var headerSkipped = false
 
                 fun flushBucket() {
                     val row = StringBuilder(80)

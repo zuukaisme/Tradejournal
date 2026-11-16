@@ -90,19 +90,27 @@ object BacktestCodec {
      * Streams arbitrarily large CSV/MT5 exports (222MB+ 1m history files) to an internal
      * UTF-8 cache file using a 64KB buffer so JVM heap never allocates a 200MB+ ByteArray/String.
      */
-    fun streamCsvToCacheFile(inputStream: InputStream, destFile: File): CsvStreamInspection {
+    fun streamCsvToCacheFile(inputStream: InputStream, destFile: File, onProgress: (Long) -> Unit = {}): CsvStreamInspection {
         destFile.parentFile?.mkdirs()
         val (pushback, charset, encodingLabel) = detectBomStream(inputStream)
 
         val sampleLines = ArrayList<String>(610)
         var nonBlankCount = 0
         var firstNonBlank = ""
+        var estimatedBytesRead = 0L
+        var lastProgressBytes = 0L
 
         BufferedReader(InputStreamReader(pushback, charset), 65_536).use { reader ->
             BufferedWriter(OutputStreamWriter(FileOutputStream(destFile), Charsets.UTF_8), 65_536).use { writer ->
                 var firstLine = true
                 while (true) {
                     val rawLine = reader.readLine() ?: break
+                    estimatedBytesRead += rawLine.length.toLong() * if (charset == Charsets.UTF_8) 1 else 2
+                    estimatedBytesRead += if (charset == Charsets.UTF_8) 1 else 2
+                    if (estimatedBytesRead - lastProgressBytes >= 1024L * 1024L) {
+                        lastProgressBytes = estimatedBytesRead
+                        onProgress(estimatedBytesRead)
+                    }
                     val line = if (firstLine) {
                         firstLine = false
                         rawLine.removePrefix("\uFEFF")
@@ -125,6 +133,7 @@ object BacktestCodec {
             }
         }
 
+        onProgress(estimatedBytesRead)
         val delimiter = when {
             firstNonBlank.contains('\t') -> "Tab (MT5)"
             firstNonBlank.contains(';') -> "Semicolon"

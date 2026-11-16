@@ -16,7 +16,7 @@ import java.io.File
 class BacktestUnitTest {
 
     @Test
-    fun streamCsvToCacheFile_handlesUtf16AndKeepsOnlyPreviewInMemory() {
+    fun streamCsvToCacheFile_reportsProgressAndKeepsOnlyPreviewInMemory() {
         val csv = buildString {
             appendLine("<DATE>\t<TIME>\t<OPEN>\t<HIGH>\t<LOW>\t<CLOSE>\t<TICKVOL>")
             repeat(700) {
@@ -25,15 +25,19 @@ class BacktestUnitTest {
         }
         val bytes = byteArrayOf(0xFF.toByte(), 0xFE.toByte()) + csv.toByteArray(Charsets.UTF_16LE)
         val output = File.createTempFile("tradepulse-stream-", ".csv")
+        var progress = 0L
 
         try {
-            val inspection = BacktestCodec.streamCsvToCacheFile(ByteArrayInputStream(bytes), output)
+            val inspection = BacktestCodec.streamCsvToCacheFile(ByteArrayInputStream(bytes), output) {
+                progress = it
+            }
 
             assertEquals("UTF-16LE (BOM)", inspection.detectedEncoding)
             assertEquals("Tab (MT5)", inspection.detectedDelimiter)
             assertEquals(700, inspection.estimatedRows)
             assertTrue(inspection.sampleLines.size <= 605)
             assertTrue(output.length() > 0L)
+            assertTrue(progress > 0L)
             assertTrue(output.readText(Charsets.UTF_8).startsWith("<DATE>\t<TIME>"))
         } finally {
             output.delete()
@@ -66,6 +70,7 @@ class BacktestUnitTest {
             output.delete()
         }
     }
+
 
     @Test
     fun decodeCsvBytes_handlesUtf16LeAndBeBom() {
