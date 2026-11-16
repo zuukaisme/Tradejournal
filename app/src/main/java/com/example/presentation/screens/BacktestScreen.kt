@@ -561,35 +561,23 @@ fun BacktestScreen(
                 BacktestTradeProgressCard(result = result)
             }
 
-            // Save Run for Side-by-Side Comparison
             item {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    OutlinedButton(
-                        onClick = { backtestViewModel.saveCurrentResult() },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("save_backtest_run_button"),
-                        shape = RoundedCornerShape(12.dp)
+                state.runSavedFeedback?.let { feedback ->
+                    Surface(
+                        color = positiveColor.copy(alpha = 0.10f),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth().testTag("backtest_auto_saved_feedback")
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.BookmarkAdd,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Save Run to Compare", fontWeight = FontWeight.Bold)
-                    }
-
-                    state.runSavedFeedback?.let { feedback ->
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
                                 text = feedback,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = positiveColor
+                                color = if (feedback.startsWith("Could not")) negativeColor else positiveColor,
+                                modifier = Modifier.weight(1f)
                             )
                             TextButton(onClick = { backtestViewModel.selectTab(2) }) {
                                 Text("View Compare", fontWeight = FontWeight.Bold)
