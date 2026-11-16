@@ -195,6 +195,10 @@ object BacktestCodec {
             else -> 0
         }
         if (prefixSize > bomSize) pushback.unread(prefix, bomSize, prefixSize - bomSize)
+        if (counted.bytesRead > maxBytes) {
+            val mb = maxBytes / (1024L * 1024L)
+            throw IllegalArgumentException("The selected file exceeds the $mb MB import limit.")
+        }
 
         val charset = when {
             utf16Le -> Charsets.UTF_16LE
