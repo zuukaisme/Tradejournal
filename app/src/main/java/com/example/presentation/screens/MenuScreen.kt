@@ -74,74 +74,118 @@ fun MenuScreen(
             .padding(horizontal = 16.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // Gold (XAUUSD) Featured Hero Card
+        // Top Quick-Access Shortcuts: BigTester & Gold Outlook
         item {
-            LiquidGlassCard(
-                onClick = { viewModel.navigateTo(AppScreen.OUTLOOK) },
-                testTag = "menu_gold_outlook_hero"
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                LiquidGlassCard(
+                    onClick = { viewModel.navigateTo(AppScreen.BACKTEST) },
+                    testTag = "menu_quick_backtest",
+                    modifier = Modifier.weight(1f)
                 ) {
-                    Row(
-                        modifier = Modifier.weight(1f),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = Color(0xFFFFB300).copy(alpha = 0.2f),
-                            modifier = Modifier.size(42.dp)
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    Icons.Default.Bolt,
-                                    contentDescription = null,
-                                    tint = Color(0xFFFFB300),
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.width(12.dp))
-
-                        Column {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = "Gold (XAUUSD) Outlook",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Surface(
-                                    color = Color(0xFFFFB300).copy(alpha = 0.18f),
-                                    shape = RoundedCornerShape(4.dp)
-                                ) {
-                                    Text(
-                                        text = "LIVE",
-                                        fontSize = 9.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFFFFB300),
-                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                            Surface(
+                                shape = CircleShape,
+                                color = accentColor.copy(alpha = 0.18f),
+                                modifier = Modifier.size(38.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        Icons.Default.QueryStats,
+                                        contentDescription = "Open Strategy Backtester",
+                                        tint = accentColor,
+                                        modifier = Modifier.size(20.dp)
                                     )
                                 }
                             }
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = if (nextNfpPred != null) "NFP Gold Model: ${(nextNfpPred.probGoldRise * 100).toInt()}% Buy vs ${(nextNfpPred.probGoldFall * 100).toInt()}% Sell" else "Macro news countdown & statistical prediction",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Surface(
+                                color = accentColor.copy(alpha = 0.16f),
+                                shape = RoundedCornerShape(6.dp)
+                            ) {
+                                Text(
+                                    text = "ENGINE",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = accentColor,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
                         }
+                        Text(
+                            text = "BigTester",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Multi-worker replay, AI builder & compare",
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2
+                        )
                     }
+                }
 
-                    Icon(
-                        Icons.AutoMirrored.Filled.ArrowForwardIos,
-                        contentDescription = "Open Outlook",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(14.dp)
-                    )
+                LiquidGlassCard(
+                    onClick = { viewModel.navigateTo(AppScreen.OUTLOOK) },
+                    testTag = "menu_gold_outlook_hero",
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = Color(0xFFFFB300).copy(alpha = 0.2f),
+                                modifier = Modifier.size(38.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        Icons.Default.Bolt,
+                                        contentDescription = "Open Gold News Outlook",
+                                        tint = Color(0xFFFFB300),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                            Surface(
+                                color = Color(0xFFFFB300).copy(alpha = 0.18f),
+                                shape = RoundedCornerShape(6.dp)
+                            ) {
+                                Text(
+                                    text = "LIVE",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color(0xFFFFB300),
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                        Text(
+                            text = "Gold Outlook",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = if (nextNfpPred != null) {
+                                "NFP ${(nextNfpPred.probGoldRise * 100).toInt()}% Buy vs ${(nextNfpPred.probGoldFall * 100).toInt()}% Sell"
+                            } else {
+                                "XAUUSD macro model & event odds"
+                            },
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2
+                        )
+                    }
                 }
             }
         }

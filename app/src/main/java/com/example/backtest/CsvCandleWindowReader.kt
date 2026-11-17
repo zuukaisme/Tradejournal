@@ -24,16 +24,26 @@ data class TradeReplayMarker(
     val exitCandlePos: Int
 )
 
+data class ContinuousCandleSlice(
+    val candles: List<ReplayCandle>,
+    val totalCandles: Int,
+    val startIndex: Int,
+    val endIndex: Int
+)
+
 data class TradeReplayWindow(
     val candles: List<ReplayCandle>,
     val entryCandlePos: Int,
     val exitCandlePos: Int,
     val truncatedMiddle: Boolean = false,
-    val markers: List<TradeReplayMarker> = emptyList()
+    val markers: List<TradeReplayMarker> = emptyList(),
+    val totalDatasetCandles: Int = candles.size,
+    val windowStartIndex: Int = candles.firstOrNull()?.index ?: 0,
+    val windowEndIndex: Int = candles.lastOrNull()?.index ?: -1
 )
 
 /**
- * Streams a targeted OHLC candle window around a specific trade from disk using O(1) memory,
+ * Streams targeted OHLC candle windows from disk using O(1) memory (or O(1) `.btbin` random-access),
  * supporting both MT5 exports (<DATE>\t<TIME>...) and standard CSVs without loading the file.
  */
 object CsvCandleWindowReader {
@@ -101,64 +111,144 @@ object CsvCandleWindowReader {
         }
     }
 
-    fun readTradesWindow(
+    /**
+     * Reads a contiguous 1:1 native candle slice `[startIndex..endIndex]` (no bucketing/downsampling).
+     * Uses `.btbin` O(1) disk seeks when valid, falling back to streaming CSV scan.
+     */
+    fun readContinuousSlice(
         csvFile: File,
-        trades: List<Trade>,
-        maxChartCandles: Int = 140
-    ): TradeReplayWindow {
-        val indexedTrades = trades.filter { it.openIndex >= 0 && it.closeIndex >= it.openIndex }
-            .sortedBy { it.openIndex }
-        if (!csvFile.exists() || indexedTrades.isEmpty()) return TradeReplayWindow(emptyList(), -1, -1)
-        val startIndex = (indexedTrades.minOf { it.openIndex } - 20).coerceAtLeast(0)
-        val endIndex = indexedTrades.maxOf { it.closeIndex } + 15
+        startIndex: Int,
+        endIndex: Int,
+        knownTotalCandles: Int = 0
+    ): ContinuousCandleSlice {
+        if (!csvFile.exists() || !csvFile.isFile) {
+            return ContinuousCandleSlice(emptyList(), 0, 0, -1)
+        }
+        BinaryCandleCache.readContinuousSlice(csvFile, startIndex, endIndex)?.let { cached ->
+            if (cached.candles.isNotEmpty() || cached.totalCandles == 0) {
+                return cached
+            }
+        }
+
+        val safeStart = startIndex.coerceAtLeast(0)
+        val safeEnd = endIndex.coerceAtLeast(safeStart)
         val (pushback, charset) = openUtfAwareReader(csvFile)
         return BufferedReader(InputStreamReader(pushback, charset), 65_536).use { reader ->
             var headerLine: String? = null
             var first = true
             while (true) {
                 val raw = reader.readLine() ?: break
-                val cleaned = if (first) { first = false; raw.removePrefix("\uFEFF") } else raw
-                if (cleaned.isNotBlank()) { headerLine = cleaned.trim(); break }
+                val cleaned = if (first) {
+                    first = false
+                    raw.removePrefix("\uFEFF")
+                } else raw
+                if (cleaned.isNotBlank()) {
+                    headerLine = cleaned.trim()
+                    break
+                }
             }
-            val cols = headerLine?.let(::parseHeader) ?: return@use TradeReplayWindow(emptyList(), -1, -1)
-            val rawCandles = ArrayList<ReplayCandle>()
+            val cols = headerLine?.let(::parseHeader)
+                ?: return@use ContinuousCandleSlice(emptyList(), 0, 0, -1)
+
+            val collected = ArrayList<ReplayCandle>((safeEnd - safeStart + 1).coerceIn(16, 4096))
             var currentIndex = 0
-            while (currentIndex <= endIndex) {
+            while (true) {
                 val raw = reader.readLine() ?: break
-                if (raw.isBlank()) continue
-                if (currentIndex >= startIndex) {
-                    parseCandleRow(currentIndex, raw.trim(), cols)?.let(rawCandles::add)
+                val trimmed = raw.trim()
+                if (trimmed.isEmpty()) continue
+                if (currentIndex in safeStart..safeEnd) {
+                    parseCandleRow(currentIndex, trimmed, cols)?.let(collected::add)
                 }
                 currentIndex++
+                if (currentIndex > safeEnd && knownTotalCandles > 0) {
+                    break
+                }
             }
-            if (rawCandles.isEmpty()) return@use TradeReplayWindow(emptyList(), -1, -1)
-            val bucketSize = ((rawCandles.size + maxChartCandles - 1) / maxChartCandles).coerceAtLeast(1)
-            val chartCandles = rawCandles.chunked(bucketSize).map { bucket ->
-                ReplayCandle(
-                    index = bucket.first().index,
-                    time = bucket.first().time,
-                    open = bucket.first().open,
-                    high = bucket.maxOf { it.high },
-                    low = bucket.minOf { it.low },
-                    close = bucket.last().close
-                )
-            }
-            fun positionFor(index: Int): Int {
-                val position = chartCandles.indexOfLast { it.index <= index }
-                return position.coerceIn(0, chartCandles.lastIndex)
-            }
-            val markers = indexedTrades.map { trade ->
-                TradeReplayMarker(trade, positionFor(trade.openIndex), positionFor(trade.closeIndex))
-            }
-            val selected = markers.firstOrNull()
-            TradeReplayWindow(
-                candles = chartCandles,
-                entryCandlePos = selected?.entryCandlePos ?: -1,
-                exitCandlePos = selected?.exitCandlePos ?: -1,
-                truncatedMiddle = bucketSize > 1,
-                markers = markers
+            val totalCount = if (knownTotalCandles > 0) maxOf(knownTotalCandles, currentIndex) else currentIndex
+            ContinuousCandleSlice(
+                candles = collected,
+                totalCandles = totalCount,
+                startIndex = collected.firstOrNull()?.index ?: safeStart,
+                endIndex = collected.lastOrNull()?.index ?: (safeStart - 1)
             )
         }
+    }
+
+    /**
+     * Loads a high-resolution 1:1 contiguous candle window around [focusGlobalIndex] (or spanning
+     * all trades directly when the dataset/span fits cleanly inside [maxWindowCandles]) so candles
+     * render crisp and TradingView-sized without crushing multi-day bars into coarse buckets.
+     */
+    fun readTradesWindow(
+        csvFile: File,
+        trades: List<Trade>,
+        focusGlobalIndex: Int = -1,
+        maxWindowCandles: Int = 1800,
+        knownTotalCandles: Int = 0
+    ): TradeReplayWindow {
+        val indexedTrades = trades.filter { it.openIndex >= 0 && it.closeIndex >= it.openIndex }
+            .sortedBy { it.openIndex }
+        if (!csvFile.exists()) return TradeReplayWindow(emptyList(), -1, -1)
+
+        if (indexedTrades.isEmpty()) {
+            // Fallback for timestamp-only legacy trade records
+            val firstTrade = trades.firstOrNull() ?: return TradeReplayWindow(emptyList(), -1, -1)
+            return readTradeWindow(csvFile, firstTrade, paddingBefore = 40, paddingAfter = 40)
+        }
+
+        val cachedCount = BinaryCandleCache.readCandleCount(csvFile) ?: knownTotalCandles
+        val minTradeOpen = indexedTrades.minOf { it.openIndex }
+        val maxTradeClose = indexedTrades.maxOf { it.closeIndex }
+        val defaultCenter = if (focusGlobalIndex >= 0) {
+            focusGlobalIndex
+        } else {
+            (indexedTrades.first().closeIndex + 8).coerceAtLeast(0)
+        }
+
+        val totalKnownOrMin = if (cachedCount > 0) cachedCount else (maxTradeClose + 60)
+        val fullSpanStart = (minTradeOpen - 40).coerceAtLeast(0)
+        val fullSpanEnd = (maxTradeClose + 40).coerceAtMost((totalKnownOrMin - 1).coerceAtLeast(0))
+
+        val (startIndex, endIndex) = if (totalKnownOrMin <= maxWindowCandles) {
+            0 to (totalKnownOrMin - 1).coerceAtLeast(0)
+        } else if ((fullSpanEnd - fullSpanStart + 1) <= maxWindowCandles) {
+            fullSpanStart to fullSpanEnd
+        } else {
+            val half = maxWindowCandles / 2
+            val s = (defaultCenter - half).coerceAtLeast(0)
+            val e = (s + maxWindowCandles - 1).coerceAtMost((totalKnownOrMin - 1).coerceAtLeast(s))
+            val adjustedS = (e - maxWindowCandles + 1).coerceAtLeast(0)
+            adjustedS to e
+        }
+
+        val slice = readContinuousSlice(
+            csvFile = csvFile,
+            startIndex = startIndex,
+            endIndex = endIndex,
+            knownTotalCandles = cachedCount
+        )
+        if (slice.candles.isEmpty()) return TradeReplayWindow(emptyList(), -1, -1)
+
+        val markers = indexedTrades
+            .filter { it.closeIndex >= slice.startIndex && it.openIndex <= slice.endIndex }
+            .map { trade ->
+                TradeReplayMarker(
+                    trade = trade,
+                    entryCandlePos = (trade.openIndex - slice.startIndex).coerceIn(0, slice.candles.lastIndex),
+                    exitCandlePos = (trade.closeIndex - slice.startIndex).coerceIn(0, slice.candles.lastIndex)
+                )
+            }
+        val selected = markers.firstOrNull()
+        return TradeReplayWindow(
+            candles = slice.candles,
+            entryCandlePos = selected?.entryCandlePos ?: -1,
+            exitCandlePos = selected?.exitCandlePos ?: -1,
+            truncatedMiddle = false,
+            markers = markers,
+            totalDatasetCandles = slice.totalCandles,
+            windowStartIndex = slice.startIndex,
+            windowEndIndex = slice.endIndex
+        )
     }
 
     private fun readByIndices(

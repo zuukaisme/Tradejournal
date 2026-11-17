@@ -8,18 +8,23 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -27,28 +32,34 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
 import androidx.compose.material.icons.automirrored.outlined.FormatListBulleted
 import androidx.compose.material.icons.filled.Analytics
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.outlined.Analytics
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.ScaffoldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -98,6 +109,8 @@ fun MainScreen(
     val allTrades by viewModel.trades.collectAsState()
     val showFreshInstallRestore by viewModel.showFreshInstallRestorePrompt.collectAsState()
     val vaultNotice by viewModel.vaultNoticeMessage.collectAsState()
+    val isVaultLoading by viewModel.isVaultLoading.collectAsState()
+    val vaultLoadingMessage by viewModel.vaultLoadingMessage.collectAsState()
 
     val vaultFilePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -133,6 +146,7 @@ fun MainScreen(
     }
 
     val backtestViewModel: BacktestViewModel = viewModel()
+    val backtestState by backtestViewModel.uiState.collectAsState()
 
     val isSecondaryScreen = currentScreen in listOf(
         AppScreen.STRATEGIES,
@@ -147,9 +161,17 @@ fun MainScreen(
         AppScreen.SETTINGS
     )
 
-    // Android BackHandler: Strategy Guide returns to Strategies, other sub-screens return to Menu, main tabs return to Calendar
+    val isReplayImmersive = !isVaultLoading && currentScreen == AppScreen.BACKTEST && backtestState.selectedTab == 1
+
+    if (isVaultLoading) {
+        VaultLoadingScreen(message = vaultLoadingMessage)
+        return
+    }
+
+    // Android BackHandler: Exit immersive Replay tab back to Run tab first, otherwise follow screen hierarchy
     BackHandler(enabled = currentScreen != AppScreen.CALENDAR) {
         when {
+            currentScreen == AppScreen.BACKTEST && backtestState.selectedTab == 1 -> backtestViewModel.selectTab(0)
             currentScreen == AppScreen.STRATEGY_GUIDE -> viewModel.navigateTo(AppScreen.STRATEGIES)
             isSecondaryScreen -> viewModel.navigateTo(AppScreen.MENU)
             else -> viewModel.navigateTo(AppScreen.CALENDAR)
@@ -158,7 +180,9 @@ fun MainScreen(
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        contentWindowInsets = if (isReplayImmersive) WindowInsets(0) else ScaffoldDefaults.contentWindowInsets,
         topBar = {
+            if (!isReplayImmersive) {
             TopAppBar(
                 navigationIcon = {
                     if (isSecondaryScreen) {
@@ -244,20 +268,120 @@ fun MainScreen(
                     }
                 },
                 actions = {
+                    val isBacktestActive = currentScreen == AppScreen.BACKTEST
+                    val isOutlookActive = currentScreen == AppScreen.OUTLOOK
+                    val goldColor = com.example.ui.theme.AmberGold
+
+                    // 1-Tap Quick Shortcut: BigTester
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("topbar_shortcut_backtest")
+                    ) {
+                        Surface(
+                            onClick = { viewModel.navigateTo(AppScreen.BACKTEST) },
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (isBacktestActive) {
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)
+                            } else {
+                                MaterialTheme.colorScheme.surfaceContainerHigh
+                            },
+                            border = BorderStroke(
+                                width = 1.dp,
+                                color = if (isBacktestActive) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+                                }
+                            )
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.QueryStats,
+                                    contentDescription = "Open Strategy Backtester",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Text(
+                                    text = "Tester",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isBacktestActive) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurface
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.width(4.dp))
+
+                    // 1-Tap Quick Shortcut: Gold Outlook
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("topbar_shortcut_outlook")
+                    ) {
+                        Surface(
+                            onClick = { viewModel.navigateTo(AppScreen.OUTLOOK) },
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (isOutlookActive) {
+                                goldColor.copy(alpha = 0.24f)
+                            } else {
+                                MaterialTheme.colorScheme.surfaceContainerHigh
+                            },
+                            border = BorderStroke(
+                                width = 1.dp,
+                                color = if (isOutlookActive) {
+                                    goldColor
+                                } else {
+                                    goldColor.copy(alpha = 0.35f)
+                                }
+                            )
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(3.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Bolt,
+                                    contentDescription = "Open Gold News Outlook",
+                                    tint = goldColor,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Text(
+                                    text = "Gold",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isOutlookActive) goldColor else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
+
                     if (isDailyLossLimitHit) {
                         Surface(
                             color = MaterialTheme.colorScheme.error.copy(alpha = 0.2f),
                             shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.padding(end = 4.dp)
+                            modifier = Modifier.padding(start = 4.dp)
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
+                                Spacer(modifier = Modifier.width(3.dp))
                                 Text(
-                                    text = "Risk Cap Hit",
+                                    text = "Cap",
                                     color = MaterialTheme.colorScheme.error,
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 10.sp
@@ -282,8 +406,10 @@ fun MainScreen(
                     actionIconContentColor = MaterialTheme.colorScheme.onBackground
                 )
             )
+            }
         },
         bottomBar = {
+            if (!isReplayImmersive) {
             ThemedBottomNavBar(
                 style = settings.bottomNavStyle,
                 isDarkTheme = isDarkTheme,
@@ -323,6 +449,7 @@ fun MainScreen(
                     )
                 )
             )
+            }
         }
     ) { innerPadding ->
         Column(
@@ -330,6 +457,7 @@ fun MainScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
+            if (!isReplayImmersive) {
             vaultNotice?.let { notice ->
                 Surface(
                     color = MaterialTheme.colorScheme.primaryContainer,
@@ -430,6 +558,7 @@ fun MainScreen(
                     }
                 }
             }
+            }
 
             Box(
                 modifier = Modifier
@@ -487,5 +616,71 @@ fun MainScreen(
             reviewDate = reviewDate,
             onDismiss = { viewModel.closeDailyReview() }
         )
+    }
+}
+
+@Composable
+private fun VaultLoadingScreen(message: String) {
+    Surface(
+        color = MaterialTheme.colorScheme.background,
+        modifier = Modifier
+            .fillMaxSize()
+            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .testTag("vault_loading_screen")
+    ) {
+        Box(
+            modifier = Modifier.fillMaxSize().padding(32.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                    border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)),
+                    modifier = Modifier.size(84.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.Storage,
+                            contentDescription = "Loading TradePulse Vault",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(38.dp)
+                        )
+                    }
+                }
+                Text(
+                    text = "TradePulse Vault",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                CircularProgressIndicator(
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                    strokeWidth = 3.5.dp,
+                    modifier = Modifier.size(40.dp)
+                )
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        text = "Loading vault.json snapshot & encrypted settings...",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                    )
+                }
+            }
+        }
     }
 }

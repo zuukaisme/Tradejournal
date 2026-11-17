@@ -8,6 +8,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -41,7 +43,9 @@ import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Queue
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
@@ -80,6 +84,8 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -87,6 +93,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.roundToInt
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.backtest.BacktestError
 import com.example.backtest.BacktestProgressSnapshot
@@ -141,33 +148,41 @@ fun BacktestScreen(
     val onPrimaryColor = MaterialTheme.colorScheme.onPrimary
 
     Box(modifier = modifier.fillMaxSize()) {
+    val isReplayTab = state.selectedTab == 1
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .then(
+                if (isReplayTab) Modifier else Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            )
     ) {
-        val replayLabel = if (state.replaySourceTrades.isEmpty()) "Replay" else "Replay (${state.replaySourceTrades.size})"
-        val compareLabel = if (state.savedRuns.isEmpty()) "Compare" else "Compare (${state.savedRuns.size})"
-        LiquidGlassTabRow(
-            tabs = listOf("Run", replayLabel, "Builder", compareLabel),
-            icons = listOf(
-                Icons.Default.PlayArrow,
-                Icons.Default.CandlestickChart,
-                Icons.Default.AutoAwesome,
-                Icons.Default.CompareArrows
-            ),
-            selectedIndex = state.selectedTab,
-            onTabSelected = { backtestViewModel.selectTab(it) }
-        )
+        if (!isReplayTab) {
+            val replayLabel = if (state.replaySourceTrades.isEmpty()) "Replay" else "Replay (${state.replaySourceTrades.size})"
+            val compareLabel = if (state.savedRuns.isEmpty()) "Compare" else "Compare (${state.savedRuns.size})"
+            LiquidGlassTabRow(
+                tabs = listOf("Run", replayLabel, "Builder", compareLabel),
+                icons = listOf(
+                    Icons.Default.PlayArrow,
+                    Icons.Default.CandlestickChart,
+                    Icons.Default.AutoAwesome,
+                    Icons.Default.CompareArrows
+                ),
+                selectedIndex = state.selectedTab,
+                onTabSelected = { backtestViewModel.selectTab(it) }
+            )
 
-        Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(10.dp))
+        }
 
         when (state.selectedTab) {
             1 -> TradeReplayTabContent(
                 strategyName = state.replayStrategyName,
                 trades = state.replaySourceTrades,
                 currentIndex = state.replayTradeIndex,
+                cursorGlobalBar = state.replayCursorBar,
+                totalDatasetCandles = state.replayTotalCandles,
+                skipEmptyGaps = state.replaySkipEmptyGaps,
                 window = state.replayWindow,
                 isLoading = state.isReplayLoading,
                 error = state.replayError,
@@ -181,8 +196,10 @@ fun BacktestScreen(
                 },
                 onSelectFilter = backtestViewModel::selectReplayFilter,
                 onCycleSpeed = backtestViewModel::cycleReplaySpeed,
+                onToggleSkipEmptyGaps = backtestViewModel::toggleReplaySkipEmptyGaps,
+                onUpdateCursorBar = backtestViewModel::updateReplayCursorBar,
+                onEnsureSliceCovers = backtestViewModel::ensureReplaySliceCovers,
                 onSelectTradeIndex = backtestViewModel::selectReplayTradeAt,
-                onExpandFullscreen = { backtestViewModel.setReplayFullscreen(true) },
                 onGoToBacktest = { backtestViewModel.selectTab(0) },
                 modifier = Modifier.weight(1f)
             )
@@ -196,6 +213,7 @@ fun BacktestScreen(
                 runAId = state.compareRunAId,
                 runBId = state.compareRunBId,
                 onSelectRun = backtestViewModel::selectCompareSlot,
+                onSwapRuns = backtestViewModel::swapCompareSlots,
                 onDeleteRun = backtestViewModel::deleteSavedRun,
                 modifier = Modifier.weight(1f)
             )
@@ -773,154 +791,233 @@ fun BacktestScreen(
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(18.dp))
-                        Text("Strategy Optimizer", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Text(
-                            "Optimize one public strategy parameter. Enter its exact attribute name from the Python strategy.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        OutlinedTextField(
-                            value = state.optimizerParameterInput,
-                            onValueChange = backtestViewModel::updateOptimizerParameter,
-                            label = { Text("Parameter name") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp)
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedTextField(
-                                value = state.optimizerMinInput,
-                                onValueChange = backtestViewModel::updateOptimizerMin,
-                                label = { Text("Minimum") },
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(12.dp)
-                            )
-                            OutlinedTextField(
-                                value = state.optimizerMaxInput,
-                                onValueChange = backtestViewModel::updateOptimizerMax,
-                                label = { Text("Maximum") },
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(12.dp)
-                            )
-                            OutlinedTextField(
-                                value = state.optimizerStepInput,
-                                onValueChange = backtestViewModel::updateOptimizerStep,
-                                label = { Text("Step") },
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(12.dp)
-                            )
-                        }
-                        Button(
-                            onClick = backtestViewModel::runOptimizer,
-                            enabled = state.hasCsvBytes && state.selectedStrategy != null && !state.isOptimizing && !state.isLoading && !state.isQueueRunning,
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp)
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        var showOptimizer by remember { mutableStateOf(state.isOptimizing || state.optimizerCombinations > 0) }
+                        var showQueue by remember { mutableStateOf(state.isQueueRunning || state.backtestQueue.isNotEmpty()) }
+
+                        // Collapsible Parameter Optimizer Card
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceContainer,
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.16f)),
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            if (state.isOptimizing) {
-                                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("Optimizing parameter grid...")
-                            } else {
-                                Text("Run Optimizer")
-                            }
-                        }
-                        state.optimizerError?.let {
-                            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                        }
-                        if (state.optimizerCombinations > 0) {
-                            Text(
-                                "${state.optimizerCombinations} combinations tested • ranked by Net R, profit factor and drawdown",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            state.optimizerResults.take(10).forEach { result ->
-                                val params = result.optJSONObject("parameters")
-                                Surface(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                                    shape = RoundedCornerShape(10.dp)
+                            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { showOptimizer = !showOptimizer }
+                                        .padding(vertical = 4.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Row(
-                                        modifier = Modifier.fillMaxWidth().padding(10.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text("#${result.optInt("rank")} • ${params?.toString() ?: ""}", fontWeight = FontWeight.SemiBold)
-                                            Text("${result.optInt("totalTrades")} trades • PF ${result.optString("profitFactor")} • DD ${result.optString("maxDrawdownR")}R", style = MaterialTheme.typography.bodySmall)
+                                        Icon(Icons.Default.Tune, contentDescription = null, tint = positiveColor, modifier = Modifier.size(18.dp))
+                                        Column {
+                                            Text("Parameter Optimizer", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                                            Text(
+                                                text = if (state.optimizerCombinations > 0) "${state.optimizerCombinations} combos tested" else "Sweep one public parameter",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
                                         }
-                                        Text("${result.optString("netR")}R", fontWeight = FontWeight.Bold, color = positiveColor)
+                                    }
+                                    Icon(
+                                        imageVector = if (showOptimizer) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                        contentDescription = if (showOptimizer) "Collapse Optimizer" else "Expand Optimizer"
+                                    )
+                                }
+
+                                AnimatedVisibility(visible = showOptimizer) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                                        OutlinedTextField(
+                                            value = state.optimizerParameterInput,
+                                            onValueChange = backtestViewModel::updateOptimizerParameter,
+                                            label = { Text("Parameter name") },
+                                            singleLine = true,
+                                            modifier = Modifier.fillMaxWidth(),
+                                            shape = RoundedCornerShape(12.dp)
+                                        )
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            OutlinedTextField(
+                                                value = state.optimizerMinInput,
+                                                onValueChange = backtestViewModel::updateOptimizerMin,
+                                                label = { Text("Min") },
+                                                singleLine = true,
+                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                                modifier = Modifier.weight(1f),
+                                                shape = RoundedCornerShape(12.dp)
+                                            )
+                                            OutlinedTextField(
+                                                value = state.optimizerMaxInput,
+                                                onValueChange = backtestViewModel::updateOptimizerMax,
+                                                label = { Text("Max") },
+                                                singleLine = true,
+                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                                modifier = Modifier.weight(1f),
+                                                shape = RoundedCornerShape(12.dp)
+                                            )
+                                            OutlinedTextField(
+                                                value = state.optimizerStepInput,
+                                                onValueChange = backtestViewModel::updateOptimizerStep,
+                                                label = { Text("Step") },
+                                                singleLine = true,
+                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                                modifier = Modifier.weight(1f),
+                                                shape = RoundedCornerShape(12.dp)
+                                            )
+                                        }
+                                        Button(
+                                            onClick = backtestViewModel::runOptimizer,
+                                            enabled = state.hasCsvBytes && state.selectedStrategy != null && !state.isOptimizing && !state.isLoading && !state.isQueueRunning,
+                                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                                            shape = RoundedCornerShape(12.dp)
+                                        ) {
+                                            if (state.isOptimizing) {
+                                                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Text("Optimizing parameter grid...")
+                                            } else {
+                                                Text("Run Optimizer", fontWeight = FontWeight.Bold)
+                                            }
+                                        }
+                                        state.optimizerError?.let {
+                                            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                                        }
+                                        if (state.optimizerCombinations > 0) {
+                                            Text(
+                                                "${state.optimizerCombinations} combinations tested • ranked by Net R, PF & DD",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            state.optimizerResults.take(10).forEach { result ->
+                                                val params = result.optJSONObject("parameters")
+                                                Surface(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                                    shape = RoundedCornerShape(10.dp)
+                                                ) {
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth().padding(10.dp),
+                                                        horizontalArrangement = Arrangement.SpaceBetween
+                                                    ) {
+                                                        Column(modifier = Modifier.weight(1f)) {
+                                                            Text("#${result.optInt("rank")} • ${params?.toString() ?: ""}", fontWeight = FontWeight.SemiBold)
+                                                            Text("${result.optInt("totalTrades")} trades • PF ${result.optString("profitFactor")} • DD ${result.optString("maxDrawdownR")}R", style = MaterialTheme.typography.bodySmall)
+                                                        }
+                                                        Text("${result.optString("netR")}R", fontWeight = FontWeight.Bold, color = positiveColor)
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(18.dp))
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text("Backtest Queue", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Text(
-                            "Queue strategies and process them one at a time. Pause prevents the next job from starting.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                            OutlinedButton(
-                                onClick = backtestViewModel::enqueueSelectedStrategies,
-                                enabled = state.hasCsvBytes && !state.isLoading,
-                                modifier = Modifier.weight(1f)
-                            ) { Text("Add selected") }
-                            Button(
-                                onClick = backtestViewModel::startQueue,
-                                enabled = state.backtestQueue.any { it.status == "Queued" } && !state.isQueueRunning && !state.isLoading,
-                                modifier = Modifier.weight(1f)
-                            ) { Text("Start queue") }
-                        }
-                        if (state.isQueueRunning) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                OutlinedButton(
-                                    onClick = if (state.isQueuePaused) backtestViewModel::resumeQueue else backtestViewModel::pauseQueue,
-                                    modifier = Modifier.weight(1f)
-                                ) { Text(if (state.isQueuePaused) "Resume" else "Pause") }
-                                OutlinedButton(
-                                    onClick = backtestViewModel::clearFinishedQueueItems,
-                                    modifier = Modifier.weight(1f)
-                                ) { Text("Clear finished") }
-                            }
-                        } else if (state.backtestQueue.any { it.status != "Queued" }) {
-                            TextButton(onClick = backtestViewModel::clearFinishedQueueItems) { Text("Clear finished jobs") }
-                        }
-                        state.backtestQueue.forEach { queued ->
-                            Surface(
-                                modifier = Modifier.fillMaxWidth(),
-                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                                shape = RoundedCornerShape(10.dp)
-                            ) {
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Collapsible Batch Queue Card
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceContainer,
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.16f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                                 Row(
-                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { showQueue = !showQueue }
+                                        .padding(vertical = 4.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(queued.strategyName, fontWeight = FontWeight.SemiBold)
-                                        Text(queued.status, style = MaterialTheme.typography.bodySmall, color = when {
-                                            queued.status == "Completed" -> positiveColor
-                                            queued.status == "Failed" -> negativeColor
-                                            queued.status == "Running" -> AmberGold
-                                            else -> MaterialTheme.colorScheme.onSurfaceVariant
-                                        })
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Icon(Icons.Default.Queue, contentDescription = null, tint = AmberGold, modifier = Modifier.size(18.dp))
+                                        Column {
+                                            Text("Backtest Queue", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                                            Text(
+                                                text = if (state.backtestQueue.isEmpty()) "Sequential job runner" else "${state.backtestQueue.size} jobs queued",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
                                     }
-                                    TextButton(onClick = { backtestViewModel.removeQueuedItem(queued.id) }) {
-                                        Text(if (queued.status == "Running") "Cancel" else "Remove")
+                                    Icon(
+                                        imageVector = if (showQueue) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                        contentDescription = if (showQueue) "Collapse Queue" else "Expand Queue"
+                                    )
+                                }
+
+                                AnimatedVisibility(visible = showQueue) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                                        Text(
+                                            "Queue strategies and process them one at a time. Pause prevents the next job from starting.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                                            OutlinedButton(
+                                                onClick = backtestViewModel::enqueueSelectedStrategies,
+                                                enabled = state.hasCsvBytes && !state.isLoading,
+                                                modifier = Modifier.weight(1f).height(48.dp)
+                                            ) { Text("Add selected") }
+                                            Button(
+                                                onClick = backtestViewModel::startQueue,
+                                                enabled = state.backtestQueue.any { it.status == "Queued" } && !state.isQueueRunning && !state.isLoading,
+                                                modifier = Modifier.weight(1f).height(48.dp)
+                                            ) { Text("Start queue") }
+                                        }
+                                        if (state.isQueueRunning) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                OutlinedButton(
+                                                    onClick = if (state.isQueuePaused) backtestViewModel::resumeQueue else backtestViewModel::pauseQueue,
+                                                    modifier = Modifier.weight(1f).height(48.dp)
+                                                ) { Text(if (state.isQueuePaused) "Resume" else "Pause") }
+                                                OutlinedButton(
+                                                    onClick = backtestViewModel::clearFinishedQueueItems,
+                                                    modifier = Modifier.weight(1f).height(48.dp)
+                                                ) { Text("Clear finished") }
+                                            }
+                                        } else if (state.backtestQueue.any { it.status != "Queued" }) {
+                                            TextButton(onClick = backtestViewModel::clearFinishedQueueItems) { Text("Clear finished jobs") }
+                                        }
+                                        state.backtestQueue.forEach { queued ->
+                                            Surface(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                                shape = RoundedCornerShape(10.dp)
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Column(modifier = Modifier.weight(1f)) {
+                                                        Text(queued.strategyName, fontWeight = FontWeight.SemiBold)
+                                                        Text(queued.status, style = MaterialTheme.typography.bodySmall, color = when {
+                                                            queued.status == "Completed" -> positiveColor
+                                                            queued.status == "Failed" -> negativeColor
+                                                            queued.status == "Running" -> AmberGold
+                                                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                                        })
+                                                    }
+                                                    TextButton(onClick = { backtestViewModel.removeQueuedItem(queued.id) }) {
+                                                        Text(if (queued.status == "Running") "Cancel" else "Remove")
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1061,7 +1158,7 @@ fun BacktestScreen(
                 }
             }
 
-            // Equity Curve Line Chart (Canvas)
+            // Interactive Equity Growth & Drawdown Curve Card
             item {
                 LiquidGlassCard {
                     Row(
@@ -1069,15 +1166,23 @@ fun BacktestScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "Equity Curve (Points)",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
+                        Column {
+                            Text(
+                                text = "Equity Growth Curve",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Drag chart to inspect trade progression",
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                         val netPts = result.summary.netPoints
                         Text(
-                            text = formatSignedPoints(netPts),
+                            text = "${formatSignedPoints(netPts)} pts (${formatSignedR(result.summary.netR)})",
                             style = MaterialTheme.typography.labelMedium,
+                            fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold,
                             color = if (netPts >= 0.0) positiveColor else negativeColor
                         )
@@ -1085,9 +1190,7 @@ fun BacktestScreen(
                     Spacer(modifier = Modifier.height(10.dp))
                     BacktestEquityCurveCanvas(
                         equityCurve = result.equityCurve,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(170.dp)
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
             }
@@ -2230,15 +2333,23 @@ private fun BacktestEquityCurveCanvas(
     equityCurve: List<Double>,
     modifier: Modifier = Modifier
 ) {
-    val series = remember(equityCurve) { listOf(0.0) + equityCurve }
-    val finalVal = series.lastOrNull() ?: 0.0
-    val positiveColor = MaterialTheme.colorScheme.primary
-    val negativeColor = MaterialTheme.colorScheme.error
-    val lineColor = if (finalVal >= 0.0) positiveColor else negativeColor
-    val gridColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.22f)
+    var showDrawdown by remember { mutableStateOf(false) }
+    var scrubFrac by remember(equityCurve, showDrawdown) { mutableStateOf<Float?>(null) }
+
+    val growthSeries = remember(equityCurve) { listOf(0.0) + equityCurve }
+    val drawdownSeries = remember(growthSeries) {
+        var peak = 0.0
+        growthSeries.map { v ->
+            if (v > peak) peak = v
+            v - peak
+        }
+    }
+    val activeSeries = if (showDrawdown) drawdownSeries else growthSeries
+    val finalVal = activeSeries.lastOrNull() ?: 0.0
+    val lineColor = if (showDrawdown) MaterialTheme.colorScheme.error else if (finalVal >= 0.0) Color(0xFF089981) else Color(0xFFF23645)
 
     if (equityCurve.isEmpty()) {
-        Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        Box(modifier = modifier.height(140.dp), contentAlignment = Alignment.Center) {
             Text(
                 text = "No closed trades to plot",
                 style = MaterialTheme.typography.bodySmall,
@@ -2248,102 +2359,188 @@ private fun BacktestEquityCurveCanvas(
         return
     }
 
-    Column(modifier = modifier) {
-        val minVal = series.minOrNull() ?: 0.0
-        val maxVal = series.maxOrNull() ?: 0.0
+    val minVal = activeSeries.minOrNull() ?: 0.0
+    val maxVal = activeSeries.maxOrNull() ?: 0.0
+    val inspectIdx = scrubFrac?.let { f ->
+        (f * (activeSeries.size - 1).coerceAtLeast(0)).roundToInt().coerceIn(0, activeSeries.lastIndex)
+    }
+    val axisPaint = remember {
+        android.graphics.Paint().apply {
+            isAntiAlias = true
+            typeface = android.graphics.Typeface.MONOSPACE
+        }
+    }
 
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        // Growth vs Underwater Drawdown Toggle Pills
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Surface(
+                    onClick = { showDrawdown = false },
+                    color = if (!showDrawdown) Color(0xFF089981).copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceContainerHigh,
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, if (!showDrawdown) Color(0xFF089981) else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                ) {
+                    Text(
+                        text = "Cumulative",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (!showDrawdown) Color(0xFF089981) else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
+                    )
+                }
+                Surface(
+                    onClick = { showDrawdown = true },
+                    color = if (showDrawdown) Color(0xFFF23645).copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceContainerHigh,
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, if (showDrawdown) Color(0xFFF23645) else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                ) {
+                    Text(
+                        text = "Drawdown",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (showDrawdown) Color(0xFFF23645) else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
+                    )
+                }
+            }
+            val displayVal = if (inspectIdx != null) activeSeries[inspectIdx] else finalVal
+            val prefix = if (inspectIdx != null) "T#$inspectIdx: " else if (showDrawdown) "End DD: " else "End: "
             Text(
-                text = "High: ${formatSignedPoints(maxVal)}",
-                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                color = positiveColor
-            )
-            Text(
-                text = "Low: ${formatSignedPoints(minVal)}",
-                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                color = if (minVal < 0.0) negativeColor else MaterialTheme.colorScheme.onSurfaceVariant
+                text = "$prefix${formatSignedPoints(displayVal)}p",
+                fontFamily = FontFamily.Monospace,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                color = lineColor
             )
         }
 
-        Spacer(modifier = Modifier.height(4.dp))
-
-        Canvas(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
+        Surface(
+            color = Color(0xFF0A111A),
+            shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.dp, Color(0xFF1E293B)),
+            modifier = Modifier.fillMaxWidth()
         ) {
-            val range = (maxVal - minVal).takeIf { it > 0.0 } ?: 1.0
-            val padTop = 10.dp.toPx()
-            val padBottom = 10.dp.toPx()
-            val usableH = (size.height - padTop - padBottom).coerceAtLeast(1f)
+            Canvas(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(185.dp)
+                    .padding(horizontal = 8.dp, vertical = 8.dp)
+                    .pointerInput(activeSeries) {
+                        detectTapGestures { offset ->
+                            val w = size.width.toFloat().coerceAtLeast(1f)
+                            scrubFrac = if (scrubFrac != null) null else (offset.x / w).coerceIn(0f, 1f)
+                        }
+                    }
+                    .pointerInput(activeSeries) {
+                        detectHorizontalDragGestures { change, _ ->
+                            change.consume()
+                            val w = size.width.toFloat().coerceAtLeast(1f)
+                            scrubFrac = (change.position.x / w).coerceIn(0f, 1f)
+                        }
+                    }
+            ) {
+                val axisLabelW = 46.dp.toPx()
+                val plotW = (size.width - axisLabelW).coerceAtLeast(40f)
+                val rawRange = (maxVal - minVal).takeIf { it > 1e-6 } ?: 1.0
+                val pMin = minVal - rawRange * 0.08
+                val pMax = maxVal + rawRange * 0.08
+                val range = (pMax - pMin).coerceAtLeast(1e-6)
+                val padTop = 8.dp.toPx()
+                val padBottom = 8.dp.toPx()
+                val usableH = (size.height - padTop - padBottom).coerceAtLeast(20f)
 
-            fun yFor(value: Double): Float {
-                val ratio = ((value - minVal) / range).toFloat()
-                return padTop + usableH * (1f - ratio)
-            }
-
-            // Zero baseline
-            if (0.0 in minVal..maxVal) {
-                val zeroY = yFor(0.0)
-                drawLine(
-                    color = gridColor,
-                    start = Offset(0f, zeroY),
-                    end = Offset(size.width, zeroY),
-                    strokeWidth = 1.dp.toPx(),
-                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 8f), 0f)
-                )
-            }
-
-            val linePath = Path()
-            val fillPath = Path()
-            val stepX = if (series.size > 1) size.width / (series.size - 1) else size.width
-
-            series.forEachIndexed { idx, value ->
-                val x = idx * stepX
-                val y = yFor(value)
-                if (idx == 0) {
-                    linePath.moveTo(x, y)
-                    fillPath.moveTo(x, size.height)
-                    fillPath.lineTo(x, y)
-                } else {
-                    linePath.lineTo(x, y)
-                    fillPath.lineTo(x, y)
+                fun yFor(value: Double): Float {
+                    val ratio = ((value - pMin) / range).toFloat()
+                    return padTop + usableH * (1f - ratio)
                 }
-            }
 
-            fillPath.lineTo((series.size - 1) * stepX, size.height)
-            fillPath.close()
+                axisPaint.textSize = 9.5.sp.toPx()
+                axisPaint.color = android.graphics.Color.argb(180, 148, 163, 184)
+                for (step in 0..3) {
+                    val f = step / 3f
+                    val y = padTop + usableH * f
+                    val v = pMax - range * f
+                    drawLine(
+                        color = Color(0xFF162131),
+                        start = Offset(0f, y),
+                        end = Offset(plotW, y),
+                        strokeWidth = 1.dp.toPx()
+                    )
+                    drawContext.canvas.nativeCanvas.drawText(
+                        String.format(Locale.US, "%.1f", v),
+                        plotW + 4.dp.toPx(),
+                        y + 3.dp.toPx(),
+                        axisPaint
+                    )
+                }
 
-            drawPath(
-                path = fillPath,
-                brush = Brush.verticalGradient(
-                    colors = listOf(
-                        lineColor.copy(alpha = 0.28f),
-                        Color.Transparent
+                if (0.0 in pMin..pMax) {
+                    val zeroY = yFor(0.0)
+                    drawLine(
+                        color = Color(0xFF475569),
+                        start = Offset(0f, zeroY),
+                        end = Offset(plotW, zeroY),
+                        strokeWidth = 1.dp.toPx(),
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f), 0f)
+                    )
+                }
+
+                val linePath = Path()
+                val fillPath = Path()
+                val stepX = if (activeSeries.size > 1) plotW / (activeSeries.size - 1) else plotW
+
+                activeSeries.forEachIndexed { idx, value ->
+                    val x = idx * stepX
+                    val y = yFor(value)
+                    if (idx == 0) {
+                        linePath.moveTo(x, y)
+                        fillPath.moveTo(x, padTop + usableH)
+                        fillPath.lineTo(x, y)
+                    } else {
+                        linePath.lineTo(x, y)
+                        fillPath.lineTo(x, y)
+                    }
+                }
+
+                fillPath.lineTo((activeSeries.size - 1) * stepX, padTop + usableH)
+                fillPath.close()
+
+                drawPath(
+                    path = fillPath,
+                    brush = Brush.verticalGradient(
+                        colors = listOf(lineColor.copy(alpha = 0.28f), Color.Transparent)
                     )
                 )
-            )
 
-            drawPath(
-                path = linePath,
-                color = lineColor,
-                style = Stroke(
-                    width = 2.5.dp.toPx(),
-                    cap = StrokeCap.Round,
-                    join = StrokeJoin.Round
+                drawPath(
+                    path = linePath,
+                    color = lineColor,
+                    style = Stroke(width = 2.4.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
                 )
-            )
 
-            val lastX = (series.size - 1) * stepX
-            val lastY = yFor(finalVal)
-            drawCircle(
-                color = lineColor,
-                radius = 4.dp.toPx(),
-                center = Offset(lastX, lastY)
-            )
+                val lastX = (activeSeries.size - 1) * stepX
+                val lastY = yFor(finalVal)
+                drawCircle(color = lineColor.copy(alpha = 0.35f), radius = 6.dp.toPx(), center = Offset(lastX, lastY))
+                drawCircle(color = lineColor, radius = 3.5.dp.toPx(), center = Offset(lastX, lastY))
+
+                inspectIdx?.let { idx ->
+                    val cx = idx * stepX
+                    val cy = yFor(activeSeries[idx])
+                    drawLine(
+                        color = Color(0xFF38BDF8).copy(alpha = 0.7f),
+                        start = Offset(cx, padTop),
+                        end = Offset(cx, padTop + usableH),
+                        strokeWidth = 1.dp.toPx(),
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(5f, 4f), 0f)
+                    )
+                    drawCircle(color = Color(0xFF38BDF8), radius = 4.5.dp.toPx(), center = Offset(cx, cy))
+                }
+            }
         }
     }
 }

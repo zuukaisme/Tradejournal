@@ -8,6 +8,7 @@ import com.example.backtest.BacktestParseOutcome
 import com.example.backtest.ExitReason
 import com.example.backtest.Side
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -1000,5 +1001,94 @@ class BacktestUnitTest {
         val snap = agg.snapshot()
         assertEquals(25_000, snap.candlesProcessed)
         assertEquals(50_000, snap.totalCandles)
+    }
+
+    @Test
+    fun binaryCandleCache_readContinuousSlicePreservesUnbucketedBars() {
+        val tempDir = java.nio.file.Files.createTempDirectory("tradepulse-slice-").toFile()
+        val csvFile = File(tempDir, "XAUUSD.csv")
+        try {
+            val sb = StringBuilder()
+            sb.appendLine("<DATE>\t<TIME>\t<OPEN>\t<HIGH>\t<LOW>\t<CLOSE>")
+            for (i in 0 until 260) {
+                val day = (i / 24) + 1
+                val hour = i % 24
+                val open = 2500.0 + i
+                sb.appendLine(
+                    String.format(
+                        java.util.Locale.US,
+                        "2025.02.%02d\t%02d:00:00\t%.2f\t%.2f\t%.2f\t%.2f",
+                        day, hour, open, open + 3.0, open - 2.0, open + 1.0
+                    )
+                )
+            }
+            csvFile.writeText(sb.toString(), Charsets.UTF_8)
+            com.example.backtest.BinaryCandleCache.ensureCache(csvFile)
+
+            val slice = com.example.backtest.BinaryCandleCache.readContinuousSlice(csvFile, 120, 220)
+            assertNotNull(slice)
+            assertEquals(260, slice!!.totalCandles)
+            assertEquals(120, slice.startIndex)
+            assertEquals(220, slice.endIndex)
+            assertEquals(101, slice.candles.size)
+            assertEquals(2620.0, slice.candles.first().open, 1e-6)
+            assertEquals(2720.0, slice.candles.last().open, 1e-6)
+        } finally {
+            tempDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun csvCandleWindowReader_readTradesWindowLoads1to1ContinuousTimeline() {
+        val tempDir = java.nio.file.Files.createTempDirectory("tradepulse-replay-").toFile()
+        val csvFile = File(tempDir, "XAUUSD.csv")
+        try {
+            val sb = StringBuilder()
+            sb.appendLine("<DATE>\t<TIME>\t<OPEN>\t<HIGH>\t<LOW>\t<CLOSE>")
+            for (i in 0 until 450) {
+                val day = (i / 24) + 1
+                val hour = i % 24
+                val open = 2600.0 + i * 0.5
+                sb.appendLine(
+                    String.format(
+                        java.util.Locale.US,
+                        "2025.03.%02d\t%02d:00:00\t%.2f\t%.2f\t%.2f\t%.2f",
+                        day, hour, open, open + 4.0, open - 3.0, open + 1.5
+                    )
+                )
+            }
+            csvFile.writeText(sb.toString(), Charsets.UTF_8)
+
+            val trades = listOf(
+                com.example.backtest.Trade(
+                    side = Side.BUY, entry = 2620.0, sl = 2610.0, tp = 2640.0, exit = 2640.0,
+                    openTime = "2025.03.02 16:00:00", closeTime = "2025.03.03 02:00:00",
+                    reason = ExitReason.TP, points = 20.0, r = 2.0, durationCandles = 10,
+                    openIndex = 40, closeIndex = 50
+                ),
+                com.example.backtest.Trade(
+                    side = Side.SELL, entry = 2780.0, sl = 2790.0, tp = 2760.0, exit = 2790.0,
+                    openTime = "2025.03.16 00:00:00", closeTime = "2025.03.16 08:00:00",
+                    reason = ExitReason.SL, points = -10.0, r = -1.0, durationCandles = 8,
+                    openIndex = 360, closeIndex = 368
+                )
+            )
+
+            val window = com.example.backtest.CsvCandleWindowReader.readTradesWindow(
+                csvFile = csvFile,
+                trades = trades,
+                focusGlobalIndex = 200,
+                knownTotalCandles = 450
+            )
+            assertEquals(450, window.totalDatasetCandles)
+            assertEquals(0, window.windowStartIndex)
+            assertEquals(449, window.windowEndIndex)
+            assertEquals(450, window.candles.size) // 1:1 native bars, never crushed into 140 buckets
+            assertEquals(2, window.markers.size)
+            assertEquals(40, window.markers[0].entryCandlePos)
+            assertEquals(368, window.markers[1].exitCandlePos)
+        } finally {
+            tempDir.deleteRecursively()
+        }
     }
 }

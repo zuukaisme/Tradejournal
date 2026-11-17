@@ -173,6 +173,12 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
     private val _vaultNoticeMessage = MutableStateFlow<String?>(null)
     val vaultNoticeMessage: StateFlow<String?> = _vaultNoticeMessage.asStateFlow()
 
+    private val _isVaultLoading = MutableStateFlow(true)
+    val isVaultLoading: StateFlow<Boolean> = _isVaultLoading.asStateFlow()
+
+    private val _vaultLoadingMessage = MutableStateFlow("Checking local vault.json...")
+    val vaultLoadingMessage: StateFlow<String> = _vaultLoadingMessage.asStateFlow()
+
     private var latestSettings: UserSettings = UserSettings()
     private var hasHydratedOutlookAiPrefs = false
     private var hasTriggeredStartupGoldNewsPull = false
@@ -1176,31 +1182,39 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
     private fun startLocalVaultLifecycle() {
         val app = getApplication<Application>()
         viewModelScope.launch {
-            var hasDataAfterStartup = runCatching {
-                val initialSnap = repository.captureVaultSnapshot()
-                VaultJsonCodec.hasMeaningfulData(initialSnap)
-            }.getOrDefault(false)
+            var hasDataAfterStartup = false
+            try {
+                _isVaultLoading.value = true
+                _vaultLoadingMessage.value = "Checking local Vault..."
+                hasDataAfterStartup = runCatching {
+                    val initialSnap = repository.captureVaultSnapshot()
+                    VaultJsonCodec.hasMeaningfulData(initialSnap)
+                }.getOrDefault(false)
 
-            if (!hasDataAfterStartup) {
-                runCatching {
-                    val readableJson = withContext(Dispatchers.IO) {
-                        LocalVaultStorage.tryFindReadableVaultJson(app)
-                    }
-                    if (!readableJson.isNullOrBlank()) {
-                        val summary = repository.restoreCompleteVaultJson(readableJson)
-                        if (summary.success) {
-                            val updatedSnap = repository.captureVaultSnapshot()
-                            hasDataAfterStartup = VaultJsonCodec.hasMeaningfulData(updatedSnap)
-                            if (hasDataAfterStartup) {
-                                _vaultNoticeMessage.value = "Auto-restored Vault: ${summary.toUserMessage()}"
+                if (!hasDataAfterStartup) {
+                    runCatching {
+                        val readableJson = withContext(Dispatchers.IO) {
+                            LocalVaultStorage.tryFindReadableVaultJson(app)
+                        }
+                        if (!readableJson.isNullOrBlank()) {
+                            _vaultLoadingMessage.value = "Loading tradepulse_vault.json..."
+                            val summary = repository.restoreCompleteVaultJson(readableJson)
+                            if (summary.success) {
+                                val updatedSnap = repository.captureVaultSnapshot()
+                                hasDataAfterStartup = VaultJsonCodec.hasMeaningfulData(updatedSnap)
+                                if (hasDataAfterStartup) {
+                                    _vaultNoticeMessage.value = "Auto-restored Vault: ${summary.toUserMessage()}"
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            _showFreshInstallRestorePrompt.value =
-                !hasDataAfterStartup && !LocalVaultStorage.isRestorePromptDismissed(app)
+                _showFreshInstallRestorePrompt.value =
+                    !hasDataAfterStartup && !LocalVaultStorage.isRestorePromptDismissed(app)
+            } finally {
+                _isVaultLoading.value = false
+            }
 
             // Auto-sync Downloads/TradePulse/tradepulse_vault.json whenever user data/settings change
             combine(
@@ -1279,24 +1293,31 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
     fun restoreVaultFromUri(uri: Uri, onComplete: (VaultRestoreSummary) -> Unit) {
         val app = getApplication<Application>()
         viewModelScope.launch {
-            val readResult = withContext(Dispatchers.IO) {
-                LocalVaultStorage.readUriText(app, uri)
-            }
-            val summary = readResult.fold(
-                onSuccess = { json -> repository.restoreCompleteVaultJson(json) },
-                onFailure = { err ->
-                    VaultRestoreSummary(
-                        success = false,
-                        errorMessage = err.message ?: "Unable to read selected Vault file."
-                    )
+            _vaultLoadingMessage.value = "Loading selected vault.json..."
+            _isVaultLoading.value = true
+            val summary = try {
+                val readResult = withContext(Dispatchers.IO) {
+                    LocalVaultStorage.readUriText(app, uri)
                 }
-            )
-            if (summary.success) {
-                _showFreshInstallRestorePrompt.value = false
-                LocalVaultStorage.setRestorePromptDismissed(app, false)
-                if (_autoVaultEnabled.value) {
-                    persistVaultSnapshotInternal(app)
+                val res = readResult.fold(
+                    onSuccess = { json -> repository.restoreCompleteVaultJson(json) },
+                    onFailure = { err ->
+                        VaultRestoreSummary(
+                            success = false,
+                            errorMessage = err.message ?: "Unable to read selected Vault file."
+                        )
+                    }
+                )
+                if (res.success) {
+                    _showFreshInstallRestorePrompt.value = false
+                    LocalVaultStorage.setRestorePromptDismissed(app, false)
+                    if (_autoVaultEnabled.value) {
+                        persistVaultSnapshotInternal(app)
+                    }
                 }
+                res
+            } finally {
+                _isVaultLoading.value = false
             }
             onComplete(summary)
         }
@@ -1305,12 +1326,19 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
     fun restoreVaultFromJson(json: String, onComplete: (VaultRestoreSummary) -> Unit) {
         val app = getApplication<Application>()
         viewModelScope.launch {
-            val summary = repository.restoreCompleteVaultJson(json)
-            if (summary.success) {
-                _showFreshInstallRestorePrompt.value = false
-                if (_autoVaultEnabled.value) {
-                    persistVaultSnapshotInternal(app)
+            _vaultLoadingMessage.value = "Importing Vault JSON..."
+            _isVaultLoading.value = true
+            val summary = try {
+                val res = repository.restoreCompleteVaultJson(json)
+                if (res.success) {
+                    _showFreshInstallRestorePrompt.value = false
+                    if (_autoVaultEnabled.value) {
+                        persistVaultSnapshotInternal(app)
+                    }
                 }
+                res
+            } finally {
+                _isVaultLoading.value = false
             }
             onComplete(summary)
         }

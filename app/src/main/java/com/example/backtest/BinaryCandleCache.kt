@@ -295,6 +295,78 @@ object BinaryCandleCache {
     }
 
     /**
+     * Reads a contiguous 1:1 range of native candles [startIndex..endIndex] in O(1) disk seeks
+     * from a validated `.btbin` file with zero bucketing or compression.
+     */
+    fun readContinuousSlice(
+        csvFile: File,
+        startIndex: Int,
+        endIndex: Int
+    ): ContinuousCandleSlice? {
+        val binFile = cacheFileFor(csvFile)
+        if (!isCacheValid(csvFile)) return null
+        val header = readHeader(binFile) ?: return null
+        val n = header.candleCount
+        if (n <= 0) return ContinuousCandleSlice(emptyList(), 0, 0, -1)
+
+        val firstI = startIndex.coerceIn(0, n - 1)
+        val lastI = endIndex.coerceIn(firstI, n - 1)
+        val spanCount = lastI - firstI + 1
+
+        val nLong = n.toLong()
+        val opensBase = HEADER_BYTES
+        val highsBase = opensBase + 8L * nLong
+        val lowsBase = highsBase + 8L * nLong
+        val closesBase = lowsBase + 8L * nLong
+        val offsetsBase = closesBase + 16L * nLong // skip closes & volumes
+        val timeBufBase = offsetsBase + 4L * (nLong + 1L)
+
+        val candles = ArrayList<ReplayCandle>(spanCount)
+        RandomAccessFile(binFile, "r").use { raf ->
+            val opens = readDoubleSlice(raf, opensBase + firstI * 8L, spanCount)
+            val highs = readDoubleSlice(raf, highsBase + firstI * 8L, spanCount)
+            val lows = readDoubleSlice(raf, lowsBase + firstI * 8L, spanCount)
+            val closes = readDoubleSlice(raf, closesBase + firstI * 8L, spanCount)
+            val offBytes = ByteArray((spanCount + 1) * 4)
+            raf.seek(offsetsBase + firstI * 4L)
+            raf.readFully(offBytes)
+            val offBuf = ByteBuffer.wrap(offBytes).order(ByteOrder.LITTLE_ENDIAN)
+            val relOffsets = LongArray(spanCount + 1) { offBuf.int.toLong() and 0xFFFFFFFFL }
+
+            val firstTimeByte = relOffsets[0]
+            val lastTimeByte = relOffsets[spanCount]
+            val totalTimeSpan = (lastTimeByte - firstTimeByte).toInt().coerceAtLeast(0)
+            val timeSpanBytes = ByteArray(totalTimeSpan)
+            if (totalTimeSpan > 0) {
+                raf.seek(timeBufBase + firstTimeByte)
+                raf.readFully(timeSpanBytes)
+            }
+
+            for (rel in 0 until spanCount) {
+                val tStart = (relOffsets[rel] - firstTimeByte).toInt().coerceIn(0, timeSpanBytes.size)
+                val tEnd = (relOffsets[rel + 1] - firstTimeByte).toInt().coerceIn(tStart, timeSpanBytes.size)
+                val timeStr = String(timeSpanBytes, tStart, tEnd - tStart, Charsets.UTF_8)
+                candles.add(
+                    ReplayCandle(
+                        index = firstI + rel,
+                        time = timeStr,
+                        open = opens[rel],
+                        high = highs[rel],
+                        low = lows[rel],
+                        close = closes[rel]
+                    )
+                )
+            }
+        }
+        return ContinuousCandleSlice(
+            candles = candles,
+            totalCandles = n,
+            startIndex = firstI,
+            endIndex = lastI
+        )
+    }
+
+    /**
      * Reads a contiguous or middle-compressed candle window in O(1) disk seeks
      * from a validated `.btbin` file.
      */

@@ -95,10 +95,13 @@ data class BacktestUiState(
     val replayStrategyName: String = "",
     val replaySourceTrades: List<Trade> = emptyList(),
     val replayTradeIndex: Int = -1,
+    val replayCursorBar: Int = 0,
+    val replayTotalCandles: Int = 0,
+    val replaySkipEmptyGaps: Boolean = true,
     val replayWindow: TradeReplayWindow? = null,
     val replayError: String? = null,
     val replayOutcomeFilter: Int = 0, // 0 = All, 1 = Losses, 2 = Wins, 3 = BE
-    val replayPlaybackSpeed: Int = 1, // 1, 2, 4
+    val replayPlaybackSpeed: Int = 1, // 1, 2, 4, 8
     // AI Strategy Builder state (Backtester only)
     val selectedProvider: AiProvider = AiProvider.CLAUDE,
     val selectedModelId: String = AiModelCatalog.defaultModelFor(AiProvider.CLAUDE).id,
@@ -283,17 +286,28 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
             val stratName = snapshot.activeBatchStrategyId?.let { id ->
                 snapshot.batchResults.firstOrNull { it.strategyId == id }?.strategyName
             } ?: snapshot.selectedStrategy?.name ?: "Strategy"
+            val initialCursor = initialCursorForTrade(activeRes.trades.first())
+            val knownTotal = maxOf(
+                snapshot.lastRunCandleCount ?: 0,
+                activeRes.summary.totalCandles
+            )
             _uiState.update {
                 it.copy(
                     replayStrategyName = stratName,
                     replaySourceTrades = activeRes.trades,
                     replayTradeIndex = 0,
+                    replayCursorBar = initialCursor,
+                    replayTotalCandles = knownTotal,
                     replayError = null
                 )
             }
-            loadReplayWindow(activeRes.trades)
+            loadReplayWindow(activeRes.trades, focusBar = initialCursor, knownTotal = knownTotal)
         } else if (snapshot.replayWindow == null && !snapshot.isReplayLoading) {
-            loadReplayWindow(activeRes.trades)
+            loadReplayWindow(
+                trades = activeRes.trades,
+                focusBar = snapshot.replayCursorBar,
+                knownTotal = snapshot.replayTotalCandles
+            )
         }
     }
 
@@ -475,6 +489,8 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
     fun selectBatchResult(strategyId: Long) {
         val picked = _uiState.value.batchResults.firstOrNull { it.strategyId == strategyId }
         val newRes = picked?.result
+        val initialCursor = newRes?.trades?.firstOrNull()?.let(::initialCursorForTrade)
+        val knownTotal = newRes?.summary?.totalCandles ?: _uiState.value.replayTotalCandles
         _uiState.update { current ->
             current.copy(
                 activeBatchStrategyId = strategyId,
@@ -482,12 +498,18 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                 replayStrategyName = picked?.strategyName ?: current.replayStrategyName,
                 replaySourceTrades = newRes?.trades ?: current.replaySourceTrades,
                 replayTradeIndex = if (newRes != null && newRes.trades.isNotEmpty()) 0 else -1,
+                replayCursorBar = initialCursor ?: current.replayCursorBar,
+                replayTotalCandles = if (knownTotal > 0) knownTotal else current.replayTotalCandles,
                 replayWindow = if (newRes != null) null else current.replayWindow,
                 replayError = null
             )
         }
         if (newRes != null && newRes.trades.isNotEmpty()) {
-            loadReplayWindow(newRes.trades)
+            loadReplayWindow(
+                trades = newRes.trades,
+                focusBar = initialCursor ?: 0,
+                knownTotal = knownTotal
+            )
         }
     }
 
@@ -1044,6 +1066,8 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                     is BacktestParseOutcome.Success -> {
                         val ranStrategy = selectedList.first()
                         val initialTrades = rawOutcome.result.trades
+                        val initialCursor = initialTrades.firstOrNull()?.let(::initialCursorForTrade) ?: 0
+                        val totalBars = maxOf(candleCount, rawOutcome.result.summary.totalCandles)
                         _uiState.update {
                             it.copy(
                                 isLoading = false,
@@ -1058,12 +1082,14 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                                 replayStrategyName = ranStrategy.name,
                                 replaySourceTrades = initialTrades,
                                 replayTradeIndex = if (initialTrades.isNotEmpty()) 0 else -1,
+                                replayCursorBar = initialCursor,
+                                replayTotalCandles = totalBars,
                                 replayWindow = null,
                                 replayError = null
                             )
                         }
                         if (initialTrades.isNotEmpty()) {
-                            loadReplayWindow(initialTrades)
+                            loadReplayWindow(initialTrades, focusBar = initialCursor, knownTotal = totalBars)
                         }
                         saveSingleResult(ranStrategy.name, rawOutcome.result, snapshot)
                     }
@@ -1087,6 +1113,8 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                                 ?: BacktestError("All selected strategies failed to produce results.")
                         } else null
                         val initialTrades = firstOk?.result?.trades.orEmpty()
+                        val initialCursor = initialTrades.firstOrNull()?.let(::initialCursorForTrade) ?: 0
+                        val totalBars = maxOf(candleCount, firstOk?.result?.summary?.totalCandles ?: 0)
                         _uiState.update {
                             it.copy(
                                 isLoading = false,
@@ -1101,12 +1129,14 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                                 replayStrategyName = firstOk?.strategyName ?: "",
                                 replaySourceTrades = initialTrades,
                                 replayTradeIndex = if (initialTrades.isNotEmpty()) 0 else -1,
+                                replayCursorBar = initialCursor,
+                                replayTotalCandles = totalBars,
                                 replayWindow = null,
                                 replayError = null
                             )
                         }
                         if (initialTrades.isNotEmpty()) {
-                            loadReplayWindow(initialTrades)
+                            loadReplayWindow(initialTrades, focusBar = initialCursor, knownTotal = totalBars)
                         }
                         saveBatchResults(rawOutcome.runs, snapshot)
                     }
@@ -1231,6 +1261,14 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
 
     // --- Candlestick Trade Replay Controls ---
 
+    private fun initialCursorForTrade(trade: Trade): Int {
+        return when {
+            trade.closeIndex >= 0 -> (trade.closeIndex + 4).coerceAtLeast(0)
+            trade.openIndex >= 0 -> (trade.openIndex + 6).coerceAtLeast(0)
+            else -> 0
+        }
+    }
+
     fun openTradeReplay(tradeIndexInResult: Int) {
         val snapshot = _uiState.value
         val result = snapshot.result ?: return
@@ -1239,19 +1277,33 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
         val stratName = snapshot.activeBatchStrategyId?.let { id ->
             snapshot.batchResults.firstOrNull { it.strategyId == id }?.strategyName
         } ?: snapshot.selectedStrategy?.name ?: "Strategy"
+        val targetTrade = result.trades[clamped]
+        val knownTotal = maxOf(
+            snapshot.lastRunCandleCount ?: 0,
+            result.summary.totalCandles,
+            (result.trades.maxOfOrNull { it.closeIndex } ?: 0) + 40
+        )
+        val targetCursor = initialCursorForTrade(targetTrade).coerceIn(0, (knownTotal - 1).coerceAtLeast(0))
 
         _uiState.update {
             it.copy(
-                selectedTab = 1, // Switch directly to dedicated Replay tab
+                selectedTab = 1, // Switch directly to dedicated landscape Replay tab
                 isReplayOpen = false,
                 replayStrategyName = stratName,
                 replaySourceTrades = result.trades,
                 replayTradeIndex = clamped,
-                replayWindow = null,
+                replayCursorBar = targetCursor,
+                replayTotalCandles = knownTotal,
                 replayError = null
             )
         }
-        loadReplayWindow(result.trades)
+        val currentWin = snapshot.replayWindow
+        val sameTrades = snapshot.replaySourceTrades == result.trades
+        val coversCursor = sameTrades && currentWin != null &&
+            targetCursor in (currentWin.windowStartIndex + 40)..(currentWin.windowEndIndex - 40).coerceAtLeast(currentWin.windowStartIndex)
+        if (!coversCursor) {
+            loadReplayWindow(result.trades, focusBar = targetCursor, knownTotal = knownTotal)
+        }
     }
 
     fun setReplayFullscreen(open: Boolean) {
@@ -1267,19 +1319,90 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
             val next = when (current.replayPlaybackSpeed) {
                 1 -> 2
                 2 -> 4
+                4 -> 8
                 else -> 1
             }
             current.copy(replayPlaybackSpeed = next)
         }
     }
 
-    fun selectReplayTradeAt(index: Int) {
-        val trades = _uiState.value.replaySourceTrades
+    fun toggleReplaySkipEmptyGaps() {
+        _uiState.update { it.copy(replaySkipEmptyGaps = !it.replaySkipEmptyGaps) }
+    }
+
+    fun selectReplayTradeAt(index: Int, revealAtEntry: Boolean = false) {
+        val snapshot = _uiState.value
+        val trades = snapshot.replaySourceTrades
         if (index !in trades.indices) return
+        val target = trades[index]
+        val maxIdx = (snapshot.replayTotalCandles - 1).coerceAtLeast(0)
+        val rawCursor = if (revealAtEntry) {
+            (target.openIndex - 8).coerceAtLeast(0)
+        } else {
+            initialCursorForTrade(target)
+        }
+        val targetCursor = if (snapshot.replayTotalCandles > 0) rawCursor.coerceIn(0, maxIdx) else rawCursor
         _uiState.update {
             it.copy(
                 replayTradeIndex = index,
+                replayCursorBar = targetCursor,
                 replayError = null
+            )
+        }
+        ensureReplaySliceCovers(targetCursor)
+    }
+
+    fun updateReplayCursorBar(barIndex: Int) {
+        val snapshot = _uiState.value
+        val maxIdx = (snapshot.replayTotalCandles - 1).coerceAtLeast(0)
+        val clampedBar = if (snapshot.replayTotalCandles > 0) {
+            barIndex.coerceIn(0, maxIdx)
+        } else {
+            barIndex.coerceAtLeast(0)
+        }
+        val trades = snapshot.replaySourceTrades
+        val matchedTradeIdx = trades.indexOfLast { t ->
+            t.openIndex >= 0 && clampedBar in t.openIndex..t.closeIndex
+        }.takeIf { it >= 0 }
+            ?: trades.indexOfLast { t -> t.openIndex >= 0 && t.openIndex <= clampedBar }
+                .takeIf { it >= 0 }
+            ?: snapshot.replayTradeIndex
+
+        _uiState.update {
+            it.copy(
+                replayCursorBar = clampedBar,
+                replayTradeIndex = matchedTradeIdx
+            )
+        }
+        ensureReplaySliceCovers(clampedBar)
+    }
+
+    fun ensureReplaySliceCovers(centerBar: Int) {
+        val snapshot = _uiState.value
+        val window = snapshot.replayWindow
+        if (snapshot.isReplayLoading) return
+        if (window == null) {
+            if (snapshot.replaySourceTrades.isNotEmpty()) {
+                loadReplayWindow(
+                    trades = snapshot.replaySourceTrades,
+                    focusBar = centerBar,
+                    knownTotal = snapshot.replayTotalCandles,
+                    preserveExistingWindow = false
+                )
+            }
+            return
+        }
+        val total = window.totalDatasetCandles.coerceAtLeast(snapshot.replayTotalCandles)
+        val hasLeftMore = window.windowStartIndex > 0
+        val hasRightMore = total > 0 && window.windowEndIndex < total - 1
+        val nearLeftEdge = hasLeftMore && (centerBar - window.windowStartIndex) < 220
+        val nearRightEdge = hasRightMore && (window.windowEndIndex - centerBar) < 220
+        if (nearLeftEdge || nearRightEdge) {
+            loadReplayWindow(
+                trades = snapshot.replaySourceTrades,
+                focusBar = centerBar,
+                knownTotal = total,
+                preserveExistingWindow = true
             )
         }
     }
@@ -1292,7 +1415,12 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    private fun loadReplayWindow(trades: List<Trade>) {
+    private fun loadReplayWindow(
+        trades: List<Trade>,
+        focusBar: Int = -1,
+        knownTotal: Int = 0,
+        preserveExistingWindow: Boolean = false
+    ) {
         replayLoadJob?.cancel()
         val csvFile = lastRunBacktestFile ?: csvCacheFile
         if (csvFile == null || !csvFile.exists()) {
@@ -1306,25 +1434,41 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
             return
         }
         replayLoadJob = viewModelScope.launch {
-            _uiState.update { it.copy(isReplayLoading = true, replayError = null) }
+            if (!preserveExistingWindow) {
+                _uiState.update { it.copy(isReplayLoading = true, replayError = null) }
+            }
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    CsvCandleWindowReader.readTradesWindow(csvFile, trades)
+                    CsvCandleWindowReader.readTradesWindow(
+                        csvFile = csvFile,
+                        trades = trades,
+                        focusGlobalIndex = focusBar,
+                        knownTotalCandles = knownTotal
+                    )
                 }
             }
             result.onSuccess { window ->
-                _uiState.update {
-                    it.copy(
+                _uiState.update { current ->
+                    val maxBar = (window.totalDatasetCandles - 1).coerceAtLeast(0)
+                    val safeCursor = if (window.totalDatasetCandles > 0) {
+                        current.replayCursorBar.coerceIn(0, maxBar)
+                    } else {
+                        current.replayCursorBar
+                    }
+                    current.copy(
                         isReplayLoading = false,
                         replayWindow = window,
+                        replayTotalCandles = window.totalDatasetCandles.coerceAtLeast(current.replayTotalCandles),
+                        replayCursorBar = safeCursor,
                         replayError = null
                     )
                 }
             }.onFailure { err ->
+                if (err is kotlinx.coroutines.CancellationException) return@onFailure
                 _uiState.update {
                     it.copy(
                         isReplayLoading = false,
-                        replayWindow = null,
+                        replayWindow = if (preserveExistingWindow) it.replayWindow else null,
                         replayError = err.message ?: "Failed to read candlestick window from CSV."
                     )
                 }
@@ -1342,6 +1486,16 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                     compareRunAId = runId
                 )
             }
+        }
+    }
+
+    fun swapCompareSlots(currentRunAId: Long?, currentRunBId: Long?) {
+        if (currentRunAId == null || currentRunBId == null) return
+        _uiState.update { current ->
+            current.copy(
+                compareRunAId = currentRunBId,
+                compareRunBId = currentRunAId
+            )
         }
     }
 

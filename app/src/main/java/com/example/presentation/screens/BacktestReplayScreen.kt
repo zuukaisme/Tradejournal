@@ -2,19 +2,20 @@ package com.example.presentation.screens
 
 import android.app.Activity
 import android.content.pm.ActivityInfo
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.ui.platform.LocalContext
-import android.content.res.Configuration
-import androidx.compose.ui.platform.LocalConfiguration
-
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -25,56 +26,68 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CandlestickChart
-import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -86,26 +99,42 @@ import com.example.backtest.ExitReason
 import com.example.backtest.ReplayCandle
 import com.example.backtest.Side
 import com.example.backtest.Trade
-import com.example.backtest.TradeReplayWindow
 import com.example.backtest.TradeReplayMarker
+import com.example.backtest.TradeReplayWindow
 import com.example.presentation.components.LiquidGlassCard
 import com.example.ui.theme.AmberGold
 import com.example.ui.theme.SlateBreakEven
 import kotlinx.coroutines.delay
 import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
+
+private val TvCanvasBg = Color(0xFF0A111A)
+private val TvToolbarBg = Color(0xFF0F1722)
+private val TvSurfaceBorder = Color(0xFF1E293B)
+private val TvBullColor = Color(0xFF089981)
+private val TvBearColor = Color(0xFFF23645)
+private val TvEntryColor = Color(0xFF38BDF8)
+private val TvTextPrimary = Color(0xFFE2E8F0)
+private val TvTextMuted = Color(0xFF94A3B8)
 
 /**
- * Dedicated top-bar Replay tab: combines a filterable trade list (All / Losses / Wins / BE),
- * batch strategy switcher, and live OHLC candlestick playback with SL/TP risk-reward zones.
+ * Full-screen landscape TradingView-style continuous candlestick replay tab.
+ * All trades live on ONE uninterrupted chronological chart timeline with bounded
+ * TP (green) & SL (red) zones, viewport-locked scaling, pan/pinch-zoom, and gap-aware bar playback.
  */
 @Composable
 fun TradeReplayTabContent(
     strategyName: String,
     trades: List<Trade>,
     currentIndex: Int,
+    cursorGlobalBar: Int,
+    totalDatasetCandles: Int,
+    skipEmptyGaps: Boolean,
     window: TradeReplayWindow?,
     isLoading: Boolean,
     error: String?,
@@ -116,50 +145,69 @@ fun TradeReplayTabContent(
     onSelectBatchStrategy: (Long) -> Unit,
     onSelectFilter: (Int) -> Unit,
     onCycleSpeed: () -> Unit,
+    onToggleSkipEmptyGaps: () -> Unit,
+    onUpdateCursorBar: (Int) -> Unit,
+    onEnsureSliceCovers: (Int) -> Unit = {},
     onSelectTradeIndex: (Int) -> Unit,
-    onExpandFullscreen: () -> Unit,
     onGoToBacktest: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val positiveColor = MaterialTheme.colorScheme.primary
-    val negativeColor = MaterialTheme.colorScheme.error
+    val context = LocalContext.current
+    val activity = context as? Activity
+    DisposableEffect(activity) {
+        val previousOrientation = activity?.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        onDispose {
+            activity?.requestedOrientation = previousOrientation
+        }
+    }
 
     if (trades.isEmpty()) {
-        Box(
-            modifier = modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center
+        Surface(
+            color = MaterialTheme.colorScheme.background,
+            modifier = modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing)
         ) {
-            LiquidGlassCard(testTag = "replay_tab_empty_card") {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+            Box(
+                modifier = Modifier.fillMaxSize().padding(24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                LiquidGlassCard(
+                    testTag = "replay_tab_empty_card",
+                    modifier = Modifier.fillMaxWidth(0.75f)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.CandlestickChart,
-                        contentDescription = null,
-                        tint = positiveColor,
-                        modifier = Modifier.size(38.dp)
-                    )
-                    Text(
-                        text = "No Trades to Replay Yet",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "Run a single or multi-strategy backtest on the Run tab to inspect candlestick entries, Stop Losses, and Take Profits right here.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Button(
-                        onClick = onGoToBacktest,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                            .testTag("replay_empty_go_run")
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Text("Go to Run Tab", fontWeight = FontWeight.Bold)
+                        Icon(
+                            imageVector = Icons.Default.CandlestickChart,
+                            contentDescription = null,
+                            tint = TvBullColor,
+                            modifier = Modifier.size(36.dp)
+                        )
+                        Text(
+                            text = "No Trades to Replay Yet",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Run a single or multi-strategy backtest on the Run tab to watch continuous candlestick replay with TradingView-style TP & SL zones.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Button(
+                            onClick = onGoToBacktest,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("replay_empty_go_run")
+                        ) {
+                            Text("Back to Run Tab", fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
@@ -167,8 +215,14 @@ fun TradeReplayTabContent(
         return
     }
 
+    val effectiveTotalBars = maxOf(
+        totalDatasetCandles,
+        window?.totalDatasetCandles ?: 0,
+        (trades.maxOfOrNull { it.closeIndex } ?: 0) + 1,
+        1
+    )
+    val safeCursor = cursorGlobalBar.coerceIn(0, effectiveTotalBars - 1)
     val safeIndex = currentIndex.coerceIn(0, trades.lastIndex)
-    val trade = trades[safeIndex]
 
     val totalWins = remember(trades) {
         trades.count { t ->
@@ -199,28 +253,65 @@ fun TradeReplayTabContent(
     }
     val matchingIndices = remember(filteredIndexedTrades) { filteredIndexedTrades.map { it.index } }
 
-    val totalCandles = window?.candles?.size ?: 0
-    var revealedCount by remember(safeIndex, totalCandles) {
-        mutableIntStateOf(totalCandles.coerceAtLeast(1))
-    }
-    var isPlaying by remember(safeIndex) { mutableStateOf(false) }
+    var isPlaying by remember { mutableStateOf(false) }
+    var showTradeDrawer by remember { mutableStateOf(false) }
+    var strategyMenuOpen by remember { mutableStateOf(false) }
+    var filterMenuOpen by remember { mutableStateOf(false) }
 
-    val stepDelayMs = when (playbackSpeed) {
-        4 -> 45L
-        2 -> 80L
-        else -> 150L
+    // Continuous TradingView viewport state: default pitch 22.dp = large crisp candles!
+    var candlePitchDp by remember { mutableFloatStateOf(22f) }
+    var isFollowingCursor by remember { mutableStateOf(true) }
+    var panCenterBarFloat by remember { mutableFloatStateOf(safeCursor.toFloat()) }
+
+    LaunchedEffect(safeCursor, isFollowingCursor) {
+        if (isFollowingCursor) {
+            panCenterBarFloat = safeCursor.toFloat()
+        }
     }
 
-    LaunchedEffect(isPlaying, safeIndex, totalCandles, playbackSpeed) {
-        if (!isPlaying || totalCandles <= 0) return@LaunchedEffect
-        if (revealedCount >= totalCandles) {
-            revealedCount = (window?.entryCandlePos ?: 0).coerceIn(1, totalCandles)
+    val latestCursor by rememberUpdatedState(safeCursor)
+    val latestTrades by rememberUpdatedState(trades)
+    val latestSkipGaps by rememberUpdatedState(skipEmptyGaps)
+    val latestTotalBars by rememberUpdatedState(effectiveTotalBars)
+
+    // Monotonic continuous Bar Replay clock (never stops cleanly between consecutive trades!)
+    val tickDelayMs = when (playbackSpeed) {
+        8 -> 25L
+        4 -> 55L
+        2 -> 110L
+        else -> 210L
+    }
+
+    LaunchedEffect(isPlaying, playbackSpeed) {
+        if (!isPlaying) return@LaunchedEffect
+        while (isPlaying) {
+            delay(tickDelayMs)
+            val cur = latestCursor
+            val maxBar = (latestTotalBars - 1).coerceAtLeast(0)
+            if (cur >= maxBar) {
+                isPlaying = false
+                break
+            }
+            var nextBar = cur + 1
+            if (latestSkipGaps) {
+                val insideAnyTrade = latestTrades.any { t ->
+                    t.openIndex >= 0 && cur in t.openIndex..t.closeIndex
+                }
+                if (!insideAnyTrade) {
+                    val lastClosedBar = latestTrades
+                        .filter { it.closeIndex in 0..cur }
+                        .maxOfOrNull { it.closeIndex } ?: -999
+                    val nextOpenBar = latestTrades
+                        .filter { it.openIndex > cur }
+                        .minOfOrNull { it.openIndex }
+                    val barsSinceLastClose = cur - lastClosedBar
+                    if (nextOpenBar != null && barsSinceLastClose >= 14 && (nextOpenBar - cur) > 45) {
+                        nextBar = (nextOpenBar - 14).coerceAtLeast(cur + 1)
+                    }
+                }
+            }
+            onUpdateCursorBar(nextBar.coerceAtMost(maxBar))
         }
-        while (isPlaying && revealedCount < totalCandles) {
-            delay(stepDelayMs)
-            revealedCount = (revealedCount + 1).coerceAtMost(totalCandles)
-        }
-        isPlaying = false
     }
 
     val posInFiltered = matchingIndices.indexOf(safeIndex)
@@ -235,641 +326,1107 @@ fun TradeReplayTabContent(
         else -> matchingIndices.firstOrNull { it > safeIndex }
     }
 
-    val successfulBatchRuns = remember(batchResults) {
-        batchResults.filter { it.result != null }
+    val activeLiveTradeIdx = remember(trades, safeCursor) {
+        trades.indexOfLast { t -> t.openIndex >= 0 && safeCursor in t.openIndex..t.closeIndex }
     }
-
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .testTag("replay_tab_content"),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        if (successfulBatchRuns.size > 1) {
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                items(successfulBatchRuns, key = { it.strategyId }) { batchItem ->
-                    val selected = batchItem.strategyId == activeBatchStrategyId
-                    val count = batchItem.result?.trades?.size ?: 0
-                    FilterChip(
-                        selected = selected,
-                        onClick = { onSelectBatchStrategy(batchItem.strategyId) },
-                        label = {
-                            Text(
-                                text = "${batchItem.strategyName} ($count)",
-                                fontSize = 11.sp,
-                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = positiveColor,
-                            selectedLabelColor = MaterialTheme.colorScheme.onPrimary
-                        ),
-                        modifier = Modifier.testTag("replay_batch_strat_${batchItem.strategyId}")
-                    )
-                }
-            }
-        }
-
-        val filterLabels = listOf(
-            "All (${trades.size})",
-            "Losses ($totalLosses)",
-            "Wins ($totalWins)",
-            "BE ($totalBe)"
-        )
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            itemsIndexed(filterLabels) { fIdx, label ->
-                val selected = outcomeFilter == fIdx
-                FilterChip(
-                    selected = selected,
-                    onClick = {
-                        onSelectFilter(fIdx)
-                        val targetSet = trades.indices.filter { idx ->
-                            val t = trades[idx]
-                            val be = t.reason == ExitReason.BE || (abs(t.points) <= 1e-6 && abs(t.r) <= 1e-6)
-                            val win = !be && (t.points > 1e-6 || t.r > 1e-6)
-                            when (fIdx) {
-                                1 -> !be && !win
-                                2 -> win
-                                3 -> be
-                                else -> true
-                            }
-                        }
-                        if (targetSet.isNotEmpty() && safeIndex !in targetSet) {
-                            onSelectTradeIndex(targetSet.first())
-                        }
-                    },
-                    label = {
-                        Text(
-                            text = label,
-                            fontSize = 11.sp,
-                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
-                        )
-                    },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = if (fIdx == 1) negativeColor else positiveColor,
-                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary
-                    ),
-                    modifier = Modifier.testTag("replay_tab_filter_$fIdx")
-                )
-            }
-        }
-
-        BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            val isWide = maxWidth >= 700.dp
-            if (isWide) {
-                Row(
-                    modifier = Modifier.fillMaxSize(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    ReplayTradeListColumn(
-                        filteredIndexedTrades = filteredIndexedTrades,
-                        activeIndex = safeIndex,
-                        onSelectTrade = onSelectTradeIndex,
-                        modifier = Modifier
-                            .weight(0.42f)
-                            .fillMaxHeight()
-                    )
-                    Column(
-                        modifier = Modifier
-                            .weight(0.58f)
-                            .fillMaxHeight()
-                            .verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        InlineReplayPlayerCard(
-                            strategyName = strategyName,
-                            trade = trade,
-                            tradeNumber = safeIndex + 1,
-                            totalTrades = trades.size,
-                            window = window,
-                            isLoading = isLoading,
-                            error = error,
-                            revealedCount = revealedCount,
-                            isPlaying = isPlaying,
-                            playbackSpeed = playbackSpeed,
-                            hasPrev = prevMatchingIdx != null,
-                            hasNext = nextMatchingIdx != null,
-                            onSeekBar = {
-                                isPlaying = false
-                                revealedCount = it
-                            },
-                            onTogglePlay = {
-                                if (window != null && window.candles.isNotEmpty()) {
-                                    if (!isPlaying && revealedCount >= window.candles.size) {
-                                        revealedCount = (window.entryCandlePos).coerceIn(1, window.candles.size)
-                                    }
-                                    isPlaying = !isPlaying
-                                }
-                            },
-                            onRestart = {
-                                if (window != null && window.candles.isNotEmpty()) {
-                                    revealedCount = 1
-                                    isPlaying = true
-                                }
-                            },
-                            onShowAll = {
-                                isPlaying = false
-                                revealedCount = window?.candles?.size ?: 1
-                            },
-                            onCycleSpeed = onCycleSpeed,
-                            onPrevTrade = { prevMatchingIdx?.let(onSelectTradeIndex) },
-                            onNextTrade = { nextMatchingIdx?.let(onSelectTradeIndex) },
-                            onExpandFullscreen = onExpandFullscreen
-                        )
-                    }
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    item(key = "player") {
-                        InlineReplayPlayerCard(
-                            strategyName = strategyName,
-                            trade = trade,
-                            tradeNumber = safeIndex + 1,
-                            totalTrades = trades.size,
-                            window = window,
-                            isLoading = isLoading,
-                            error = error,
-                            revealedCount = revealedCount,
-                            isPlaying = isPlaying,
-                            playbackSpeed = playbackSpeed,
-                            hasPrev = prevMatchingIdx != null,
-                            hasNext = nextMatchingIdx != null,
-                            onSeekBar = {
-                                isPlaying = false
-                                revealedCount = it
-                            },
-                            onTogglePlay = {
-                                if (window != null && window.candles.isNotEmpty()) {
-                                    if (!isPlaying && revealedCount >= window.candles.size) {
-                                        revealedCount = (window.entryCandlePos).coerceIn(1, window.candles.size)
-                                    }
-                                    isPlaying = !isPlaying
-                                }
-                            },
-                            onRestart = {
-                                if (window != null && window.candles.isNotEmpty()) {
-                                    revealedCount = 1
-                                    isPlaying = true
-                                }
-                            },
-                            onShowAll = {
-                                isPlaying = false
-                                revealedCount = window?.candles?.size ?: 1
-                            },
-                            onCycleSpeed = onCycleSpeed,
-                            onPrevTrade = { prevMatchingIdx?.let(onSelectTradeIndex) },
-                            onNextTrade = { nextMatchingIdx?.let(onSelectTradeIndex) },
-                            onExpandFullscreen = onExpandFullscreen
-                        )
-                    }
-
-                    item(key = "list_header") {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 2.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "Filtered Trades (${filteredIndexedTrades.size})",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "Tap any trade to load candles",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    if (filteredIndexedTrades.isEmpty()) {
-                        item(key = "filtered_empty") {
-                            LiquidGlassCard {
-                                Text(
-                                    text = "No trades match this filter.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    } else {
-                        items(filteredIndexedTrades, key = { it.index }) { indexed ->
-                            ReplaySelectableTradeRow(
-                                index = indexed.index,
-                                trade = indexed.value,
-                                isSelected = indexed.index == safeIndex,
-                                onClick = { onSelectTradeIndex(indexed.index) }
-                            )
-                        }
-                    }
-                    item(key = "bottom_pad") {
-                        Spacer(modifier = Modifier.height(16.dp))
-                    }
-                }
-            }
+    val recentClosedTradeIdx = remember(trades, safeCursor) {
+        trades.indexOfLast { t ->
+            t.closeIndex >= 0 && safeCursor in t.closeIndex..(t.closeIndex + 10)
         }
     }
-}
 
-@Composable
-private fun ReplayTradeListColumn(
-    filteredIndexedTrades: List<IndexedValue<Trade>>,
-    activeIndex: Int,
-    onSelectTrade: (Int) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    LazyColumn(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        if (filteredIndexedTrades.isEmpty()) {
-            item {
-                LiquidGlassCard {
-                    Text(
-                        text = "No trades match this filter.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        } else {
-            items(filteredIndexedTrades, key = { it.index }) { indexed ->
-                ReplaySelectableTradeRow(
-                    index = indexed.index,
-                    trade = indexed.value,
-                    isSelected = indexed.index == activeIndex,
-                    onClick = { onSelectTrade(indexed.index) }
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun ReplaySelectableTradeRow(
-    index: Int,
-    trade: Trade,
-    isSelected: Boolean,
-    onClick: () -> Unit
-) {
-    val positiveColor = MaterialTheme.colorScheme.primary
-    val negativeColor = MaterialTheme.colorScheme.error
-    val isBe = trade.reason == ExitReason.BE || (abs(trade.points) <= 1e-6 && abs(trade.r) <= 1e-6)
-    val isWin = !isBe && (trade.points > 1e-6 || trade.r > 1e-6)
-    val pnlColor = when {
-        isWin -> positiveColor
-        isBe -> SlateBreakEven
-        else -> negativeColor
-    }
-    val sideColor = if (trade.side == Side.BUY) positiveColor else negativeColor
+    val successfulBatchRuns = remember(batchResults) { batchResults.filter { it.result != null } }
 
     Surface(
-        color = if (isSelected) {
-            positiveColor.copy(alpha = 0.14f)
-        } else {
-            MaterialTheme.colorScheme.surfaceContainer
-        },
-        shape = RoundedCornerShape(14.dp),
-        border = if (isSelected) BorderStroke(1.2.dp, positiveColor) else null,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .testTag("replay_list_item_$index")
+        color = TvCanvasBg,
+        modifier = modifier
+            .fillMaxSize()
+            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .testTag("replay_tab_content")
     ) {
-        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+        Column(modifier = Modifier.fillMaxSize()) {
+            // 1) Compact Top Studio Strip (~44dp)
+            Surface(
+                color = TvToolbarBg,
+                border = BorderStroke(0.5.dp, TvSurfaceBorder)
             ) {
                 Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Text(
-                        text = "#${index + 1}",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace
-                    )
-                    Surface(color = sideColor.copy(alpha = 0.16f), shape = RoundedCornerShape(6.dp)) {
+                    // Back to Run tab (also restores portrait)
+                    Surface(
+                        onClick = {
+                            isPlaying = false
+                            onGoToBacktest()
+                        },
+                        color = Color(0xFF172334),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .heightIn(min = 38.dp)
+                            .testTag("replay_back_to_run_button")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back to Run tab",
+                                tint = TvTextPrimary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "Run",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = TvTextPrimary
+                            )
+                        }
+                    }
+
+                    // Strategy Switcher Chip
+                    Box {
+                        Surface(
+                            onClick = { if (successfulBatchRuns.size > 1) strategyMenuOpen = true },
+                            color = Color(0xFF162131),
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, TvSurfaceBorder)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CandlestickChart,
+                                    contentDescription = null,
+                                    tint = TvBullColor,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Text(
+                                    text = strategyName.ifBlank { "Replay" },
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = TvTextPrimary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                if (successfulBatchRuns.size > 1) {
+                                    Text(
+                                        text = "▼",
+                                        fontSize = 8.sp,
+                                        color = TvTextMuted
+                                    )
+                                }
+                            }
+                        }
+                        DropdownMenu(
+                            expanded = strategyMenuOpen,
+                            onDismissRequest = { strategyMenuOpen = false }
+                        ) {
+                            successfulBatchRuns.forEach { batchItem ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = "${batchItem.strategyName} (${batchItem.result?.trades?.size ?: 0})",
+                                            fontWeight = if (batchItem.strategyId == activeBatchStrategyId) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    },
+                                    onClick = {
+                                        strategyMenuOpen = false
+                                        isPlaying = false
+                                        onSelectBatchStrategy(batchItem.strategyId)
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    // Filter Pill
+                    Box {
+                        val filterNames = listOf(
+                            "All (${trades.size})",
+                            "Losses ($totalLosses)",
+                            "Wins ($totalWins)",
+                            "BE ($totalBe)"
+                        )
+                        Surface(
+                            onClick = { filterMenuOpen = true },
+                            color = if (outcomeFilter == 1) TvBearColor.copy(alpha = 0.16f) else Color(0xFF162131),
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(
+                                1.dp,
+                                if (outcomeFilter == 1) TvBearColor.copy(alpha = 0.5f) else TvSurfaceBorder
+                            ),
+                            modifier = Modifier.testTag("replay_filter_pill")
+                        ) {
+                            Text(
+                                text = filterNames.getOrElse(outcomeFilter) { filterNames.first() },
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (outcomeFilter == 1) TvBearColor else TvTextPrimary,
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp)
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = filterMenuOpen,
+                            onDismissRequest = { filterMenuOpen = false }
+                        ) {
+                            filterNames.forEachIndexed { idx, label ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = label,
+                                            fontWeight = if (outcomeFilter == idx) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    },
+                                    onClick = {
+                                        filterMenuOpen = false
+                                        onSelectFilter(idx)
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    // Live Trade / Flat HUD Status Pill
+                    val statusTuple = remember(activeLiveTradeIdx, recentClosedTradeIdx, trades) {
+                        when {
+                            activeLiveTradeIdx >= 0 -> {
+                                val t = trades[activeLiveTradeIdx]
+                                Triple("#${activeLiveTradeIdx + 1} ${t.side.name} • OPEN", TvEntryColor, Color(0xFF102A3D))
+                            }
+                            recentClosedTradeIdx >= 0 -> {
+                                val t = trades[recentClosedTradeIdx]
+                                val isBe = t.reason == ExitReason.BE || (abs(t.points) <= 1e-6 && abs(t.r) <= 1e-6)
+                                val isWin = !isBe && (t.points > 1e-6 || t.r > 1e-6)
+                                val col = when {
+                                    isWin -> TvBullColor
+                                    isBe -> SlateBreakEven
+                                    else -> TvBearColor
+                                }
+                                val bg = col.copy(alpha = 0.18f)
+                                val rSign = if (t.r > 0) "+" else ""
+                                Triple(
+                                    "#${recentClosedTradeIdx + 1} ${t.reason.name} $rSign${String.format(Locale.US, "%.2f", t.r)}R",
+                                    col,
+                                    bg
+                                )
+                            }
+                            else -> Triple("FLAT • No Position", TvTextMuted, Color(0xFF131D2A))
+                        }
+                    }
+                    Surface(
+                        color = statusTuple.third,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.weight(1f, fill = false)
+                    ) {
                         Text(
-                            text = trade.side.name,
-                            fontSize = 10.sp,
+                            text = statusTuple.first,
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
-                            color = sideColor,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            fontFamily = FontFamily.Monospace,
+                            color = statusTuple.second,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp)
                         )
                     }
-                    Surface(color = pnlColor.copy(alpha = 0.16f), shape = RoundedCornerShape(6.dp)) {
+
+                    Spacer(modifier = Modifier.weight(1f))
+
+                    // Slide-Over Trade List Toggle
+                    Surface(
+                        onClick = { showTradeDrawer = !showTradeDrawer },
+                        color = if (showTradeDrawer) TvBullColor.copy(alpha = 0.22f) else Color(0xFF162131),
+                        shape = RoundedCornerShape(8.dp),
+                        border = BorderStroke(1.dp, if (showTradeDrawer) TvBullColor else TvSurfaceBorder),
+                        modifier = Modifier.testTag("replay_toggle_trades_drawer")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.FormatListBulleted,
+                                contentDescription = "Toggle trade list drawer",
+                                tint = if (showTradeDrawer) TvBullColor else TvTextPrimary,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Text(
+                                text = "Trades (${filteredIndexedTrades.size})",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (showTradeDrawer) TvBullColor else TvTextPrimary
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 2) Main Full-Height Continuous Chart + Optional Slide-Over Trade Drawer
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .background(TvCanvasBg)
+            ) {
+                when {
+                    isLoading && (window == null || window.candles.isEmpty()) -> {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                CircularProgressIndicator(color = TvBullColor)
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "Loading candle stream...",
+                                    color = TvTextMuted,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                    }
+                    error != null && (window == null || window.candles.isEmpty()) -> {
+                        Box(modifier = Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
+                            Text(text = error, color = TvBearColor, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    window == null || window.candles.isEmpty() -> {
+                        Box(modifier = Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
+                            Text(
+                                text = "Candle data unavailable for the active CSV file.",
+                                color = TvTextMuted,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                    else -> {
+                        ContinuousTradingViewCanvas(
+                            window = window,
+                            cursorGlobalBar = safeCursor,
+                            candlePitchDp = candlePitchDp,
+                            isFollowingCursor = isFollowingCursor,
+                            panCenterBarFloat = panCenterBarFloat,
+                            activeSelectedTradeIdx = safeIndex,
+                            onPan = { newCenter ->
+                                isFollowingCursor = false
+                                val clamped = newCenter.coerceIn(0f, (effectiveTotalBars - 1).toFloat())
+                                panCenterBarFloat = clamped
+                                onEnsureSliceCovers(clamped.roundToInt())
+                            },
+                            onZoom = { scaleFactor ->
+                                candlePitchDp = (candlePitchDp * scaleFactor).coerceIn(10f, 48f)
+                            },
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .testTag("continuous_replay_canvas")
+                        )
+
+                        // Floating Top-Left OHLC HUD + Legend
+                        val activeLocalIdx = (safeCursor - window.windowStartIndex).coerceIn(0, window.candles.lastIndex)
+                        val activeCandle = window.candles.getOrNull(activeLocalIdx)
+                        if (activeCandle != null) {
+                            val isBull = activeCandle.close >= activeCandle.open
+                            Surface(
+                                color = Color(0xCC0D1520),
+                                shape = RoundedCornerShape(8.dp),
+                                border = BorderStroke(0.5.dp, TvSurfaceBorder),
+                                modifier = Modifier
+                                    .align(Alignment.TopStart)
+                                    .padding(8.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = activeCandle.time,
+                                        fontSize = 10.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = TvTextMuted
+                                    )
+                                    Text(
+                                        text = "O ${fmtP(activeCandle.open)}  H ${fmtP(activeCandle.high)}  L ${fmtP(activeCandle.low)}  C ${fmtP(activeCandle.close)}",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = if (isBull) TvBullColor else TvBearColor
+                                    )
+                                }
+                            }
+                        }
+
+                        // Floating "Follow Cursor" Snap Pill when user has panned manually
+                        if (!isFollowingCursor) {
+                            Surface(
+                                onClick = {
+                                    isFollowingCursor = true
+                                    panCenterBarFloat = safeCursor.toFloat()
+                                },
+                                color = TvEntryColor.copy(alpha = 0.22f),
+                                shape = RoundedCornerShape(8.dp),
+                                border = BorderStroke(1.dp, TvEntryColor),
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .padding(end = 68.dp, bottom = 26.dp)
+                                    .testTag("replay_follow_cursor_button")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.MyLocation,
+                                        contentDescription = "Snap chart back to playhead",
+                                        tint = TvEntryColor,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Text(
+                                        text = "Follow",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = TvEntryColor
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Slide-Over Trade Drawer on Right Edge
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = showTradeDrawer,
+                    enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
+                    exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(),
+                    modifier = Modifier.align(Alignment.CenterEnd)
+                ) {
+                    Surface(
+                        color = Color(0xF50F1722),
+                        border = BorderStroke(1.dp, TvSurfaceBorder),
+                        modifier = Modifier
+                            .width(270.dp)
+                            .fillMaxHeight()
+                    ) {
+                        Column(modifier = Modifier.fillMaxSize().padding(8.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Jump to Trade (${filteredIndexedTrades.size})",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = TvTextPrimary
+                                )
+                                IconButton(
+                                    onClick = { showTradeDrawer = false },
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Icon(Icons.Default.Close, contentDescription = "Close trade list", tint = TvTextMuted, modifier = Modifier.size(16.dp))
+                                }
+                            }
+
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
+                            ) {
+                                val tabs = listOf("All", "Loss", "Win", "BE")
+                                itemsIndexed(tabs) { idx, label ->
+                                    val sel = outcomeFilter == idx
+                                    Surface(
+                                        onClick = { onSelectFilter(idx) },
+                                        color = if (sel) (if (idx == 1) TvBearColor else TvBullColor) else Color(0xFF172334),
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Text(
+                                            text = label,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (sel) Color.White else TvTextMuted,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            LazyColumn(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                items(filteredIndexedTrades, key = { it.index }) { indexed ->
+                                    val t = indexed.value
+                                    val isSel = indexed.index == safeIndex
+                                    val isBe = t.reason == ExitReason.BE || (abs(t.points) <= 1e-6 && abs(t.r) <= 1e-6)
+                                    val isWin = !isBe && (t.points > 1e-6 || t.r > 1e-6)
+                                    val outcomeCol = when {
+                                        isWin -> TvBullColor
+                                        isBe -> SlateBreakEven
+                                        else -> TvBearColor
+                                    }
+                                    Surface(
+                                        onClick = {
+                                            isPlaying = false
+                                            isFollowingCursor = true
+                                            onSelectTradeIndex(indexed.index)
+                                        },
+                                        color = if (isSel) TvBullColor.copy(alpha = 0.16f) else Color(0xFF141E2B),
+                                        shape = RoundedCornerShape(8.dp),
+                                        border = if (isSel) BorderStroke(1.dp, TvBullColor) else BorderStroke(0.5.dp, TvSurfaceBorder),
+                                        modifier = Modifier.fillMaxWidth().testTag("replay_list_item_${indexed.index}")
+                                    ) {
+                                        Column(modifier = Modifier.padding(8.dp)) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Text(
+                                                    text = "#${indexed.index + 1} ${t.side.name} • ${t.reason.name}",
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = outcomeCol,
+                                                    fontFamily = FontFamily.Monospace
+                                                )
+                                                val sign = if (t.r > 0) "+" else ""
+                                                Text(
+                                                    text = "$sign${String.format(Locale.US, "%.2f", t.r)}R",
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = outcomeCol,
+                                                    fontFamily = FontFamily.Monospace
+                                                )
+                                            }
+                                            Text(
+                                                text = "${t.openTime} • ${t.durationCandles}c",
+                                                fontSize = 9.sp,
+                                                color = TvTextMuted,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 3) Compact Bottom Transport & Timeline Bar
+            Surface(
+                color = TvToolbarBg,
+                border = BorderStroke(0.5.dp, TvSurfaceBorder)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    // Prev Trade
+                    IconButton(
+                        onClick = {
+                            prevMatchingIdx?.let {
+                                isPlaying = false
+                                isFollowingCursor = true
+                                onSelectTradeIndex(it)
+                            }
+                        },
+                        enabled = prevMatchingIdx != null,
+                        modifier = Modifier.size(40.dp).testTag("replay_prev_trade")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SkipPrevious,
+                            contentDescription = "Previous Trade",
+                            tint = if (prevMatchingIdx != null) TvTextPrimary else TvTextMuted.copy(alpha = 0.35f),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    // Step -1 Bar
+                    IconButton(
+                        onClick = {
+                            isPlaying = false
+                            isFollowingCursor = true
+                            onUpdateCursorBar((safeCursor - 1).coerceAtLeast(0))
+                        },
+                        enabled = safeCursor > 0,
+                        modifier = Modifier.size(38.dp).testTag("replay_step_back")
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                            contentDescription = "Step back 1 bar",
+                            tint = TvTextPrimary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    // Play / Pause Continuous Replay
+                    Button(
+                        onClick = {
+                            if (!isPlaying && safeCursor >= effectiveTotalBars - 1) {
+                                val firstBar = (trades.firstOrNull()?.openIndex?.minus(8) ?: 0).coerceAtLeast(0)
+                                onUpdateCursorBar(firstBar)
+                            }
+                            isFollowingCursor = true
+                            isPlaying = !isPlaying
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = TvBullColor,
+                            contentColor = Color.White
+                        ),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .height(38.dp)
+                            .testTag("replay_play_pause_button")
+                    ) {
+                        Icon(
+                            imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            contentDescription = if (isPlaying) "Pause Replay" else "Play Replay",
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(3.dp))
                         Text(
-                            text = trade.reason.name,
-                            fontSize = 10.sp,
+                            text = if (isPlaying) "Pause" else "Play",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    // Step +1 Bar
+                    IconButton(
+                        onClick = {
+                            isPlaying = false
+                            isFollowingCursor = true
+                            onUpdateCursorBar((safeCursor + 1).coerceAtMost(effectiveTotalBars - 1))
+                        },
+                        enabled = safeCursor < effectiveTotalBars - 1,
+                        modifier = Modifier.size(38.dp).testTag("replay_step_forward")
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = "Step forward 1 bar",
+                            tint = TvTextPrimary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    // Next Trade
+                    IconButton(
+                        onClick = {
+                            nextMatchingIdx?.let {
+                                isPlaying = false
+                                isFollowingCursor = true
+                                onSelectTradeIndex(it)
+                            }
+                        },
+                        enabled = nextMatchingIdx != null,
+                        modifier = Modifier.size(40.dp).testTag("replay_next_trade")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SkipNext,
+                            contentDescription = "Next Trade",
+                            tint = if (nextMatchingIdx != null) TvTextPrimary else TvTextMuted.copy(alpha = 0.35f),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    // Timeline Scrubber + Bar Progress
+                    Column(modifier = Modifier.weight(1f)) {
+                        Slider(
+                            value = safeCursor.toFloat(),
+                            onValueChange = {
+                                isPlaying = false
+                                isFollowingCursor = true
+                                onUpdateCursorBar(it.toInt())
+                            },
+                            valueRange = 0f..(effectiveTotalBars - 1).coerceAtLeast(1).toFloat(),
+                            colors = SliderDefaults.colors(
+                                thumbColor = TvBullColor,
+                                activeTrackColor = TvBullColor,
+                                inactiveTrackColor = TvSurfaceBorder
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(22.dp)
+                                .testTag("replay_scrubber")
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Bar ${safeCursor + 1} / $effectiveTotalBars",
+                                fontSize = 9.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = TvTextMuted
+                            )
+                            Text(
+                                text = "Trade #${safeIndex + 1}/${trades.size}",
+                                fontSize = 9.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = TvTextMuted
+                            )
+                        }
+                    }
+
+                    // Speed Multiplier Chip (1x/2x/4x/8x)
+                    Surface(
+                        onClick = onCycleSpeed,
+                        color = Color(0xFF162131),
+                        shape = RoundedCornerShape(7.dp),
+                        border = BorderStroke(1.dp, TvSurfaceBorder),
+                        modifier = Modifier.testTag("replay_speed_button")
+                    ) {
+                        Text(
+                            text = "${playbackSpeed}x",
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
-                            color = pnlColor,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            fontFamily = FontFamily.Monospace,
+                            color = TvTextPrimary,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                        )
+                    }
+
+                    // Skip Gaps Chip
+                    Surface(
+                        onClick = onToggleSkipEmptyGaps,
+                        color = if (skipEmptyGaps) TvBullColor.copy(alpha = 0.18f) else Color(0xFF162131),
+                        shape = RoundedCornerShape(7.dp),
+                        border = BorderStroke(1.dp, if (skipEmptyGaps) TvBullColor else TvSurfaceBorder),
+                        modifier = Modifier.testTag("replay_skip_gaps_button")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.FastForward,
+                                contentDescription = "Skip flat gaps",
+                                tint = if (skipEmptyGaps) TvBullColor else TvTextMuted,
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Text(
+                                text = "Gaps",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (skipEmptyGaps) TvBullColor else TvTextMuted
+                            )
+                        }
+                    }
+
+                    // Zoom Out / Zoom In
+                    Surface(
+                        onClick = { candlePitchDp = (candlePitchDp * 0.8f).coerceIn(10f, 48f) },
+                        color = Color(0xFF162131),
+                        shape = RoundedCornerShape(7.dp),
+                        border = BorderStroke(1.dp, TvSurfaceBorder)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Remove,
+                            contentDescription = "Zoom out candles",
+                            tint = TvTextPrimary,
+                            modifier = Modifier.padding(6.dp).size(15.dp)
+                        )
+                    }
+                    Surface(
+                        onClick = { candlePitchDp = (candlePitchDp * 1.25f).coerceIn(10f, 48f) },
+                        color = Color(0xFF162131),
+                        shape = RoundedCornerShape(7.dp),
+                        border = BorderStroke(1.dp, TvSurfaceBorder)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "Zoom in candles",
+                            tint = TvTextPrimary,
+                            modifier = Modifier.padding(6.dp).size(15.dp)
                         )
                     }
                 }
-                val sign = if (trade.r > 0) "+" else ""
-                val ptSign = if (trade.points > 0) "+" else ""
-                Text(
-                    text = "$sign${String.format(Locale.US, "%.2f", trade.r)}R (${ptSign}${String.format(Locale.US, "%.1f", trade.points)}p)",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = pnlColor,
-                    fontFamily = FontFamily.Monospace
-                )
             }
-            Spacer(modifier = Modifier.height(4.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = "IN ${String.format(Locale.US, "%.2f", trade.entry)} • SL ${String.format(Locale.US, "%.2f", trade.sl)} • TP ${String.format(Locale.US, "%.2f", trade.tp)}",
-                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontFamily = FontFamily.Monospace,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-                Text(
-                    text = "${trade.durationCandles}c",
-                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontFamily = FontFamily.Monospace
-                )
-            }
-            Text(
-                text = "${trade.openTime} -> ${trade.closeTime}",
-                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
         }
     }
 }
 
 @Composable
-private fun InlineReplayPlayerCard(
-    strategyName: String,
-    trade: Trade,
-    tradeNumber: Int,
-    totalTrades: Int,
-    window: TradeReplayWindow?,
-    isLoading: Boolean,
-    error: String?,
-    revealedCount: Int,
-    isPlaying: Boolean,
-    playbackSpeed: Int,
-    hasPrev: Boolean,
-    hasNext: Boolean,
-    onSeekBar: (Int) -> Unit,
-    onTogglePlay: () -> Unit,
-    onRestart: () -> Unit,
-    onShowAll: () -> Unit,
-    onCycleSpeed: () -> Unit,
-    onPrevTrade: () -> Unit,
-    onNextTrade: () -> Unit,
-    onExpandFullscreen: () -> Unit
+private fun ContinuousTradingViewCanvas(
+    window: TradeReplayWindow,
+    cursorGlobalBar: Int,
+    candlePitchDp: Float,
+    isFollowingCursor: Boolean,
+    panCenterBarFloat: Float,
+    activeSelectedTradeIdx: Int,
+    onPan: (Float) -> Unit,
+    onZoom: (Float) -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    val positiveColor = MaterialTheme.colorScheme.primary
-    val negativeColor = MaterialTheme.colorScheme.error
-    val isBe = trade.reason == ExitReason.BE || (abs(trade.points) <= 1e-6 && abs(trade.r) <= 1e-6)
-    val isWin = !isBe && (trade.points > 1e-6 || trade.r > 1e-6)
-    val outcomeColor = when {
-        isWin -> positiveColor
-        isBe -> SlateBreakEven
-        else -> negativeColor
+    val latestPanCenter by rememberUpdatedState(panCenterBarFloat)
+    val latestPitchDp by rememberUpdatedState(candlePitchDp)
+    val latestCursorBar by rememberUpdatedState(cursorGlobalBar)
+    val latestIsFollowing by rememberUpdatedState(isFollowingCursor)
+
+    val priceAxisPaint = remember {
+        android.graphics.Paint().apply {
+            isAntiAlias = true
+            typeface = android.graphics.Typeface.MONOSPACE
+        }
+    }
+    val timeAxisPaint = remember {
+        android.graphics.Paint().apply {
+            isAntiAlias = true
+            typeface = android.graphics.Typeface.MONOSPACE
+        }
+    }
+    val badgePaint = remember {
+        android.graphics.Paint().apply {
+            isAntiAlias = true
+            isFakeBoldText = true
+            typeface = android.graphics.Typeface.MONOSPACE
+        }
     }
 
-    LiquidGlassCard(testTag = "inline_replay_player_card") {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Trade #$tradeNumber / $totalTrades • ${trade.side.name} ${trade.reason.name}",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+    Box(
+        modifier = modifier
+            .pointerInput(Unit) {
+                detectTransformGestures { _, pan, zoom, _ ->
+                    if (abs(zoom - 1f) > 0.01f) {
+                        onZoom(zoom)
+                    }
+                    if (abs(pan.x) > 0.5f) {
+                        val slotPx = latestPitchDp.dp.toPx().coerceAtLeast(1f)
+                        val anchor = if (latestIsFollowing) latestCursorBar.toFloat() else latestPanCenter
+                        onPan(anchor - pan.x / slotPx)
+                    }
+                }
+            }
+            .pointerInput(Unit) {
+                detectHorizontalDragGestures { _, dragAmount ->
+                    val slotPx = latestPitchDp.dp.toPx().coerceAtLeast(1f)
+                    val anchor = if (latestIsFollowing) latestCursorBar.toFloat() else latestPanCenter
+                    onPan(anchor - dragAmount / slotPx)
+                }
+            }
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val candles = window.candles
+            if (candles.isEmpty()) return@Canvas
+
+            val labelAxisWidth = 58.dp.toPx()
+            val timeAxisHeight = 18.dp.toPx()
+            val chartRight = (size.width - labelAxisWidth).coerceAtLeast(60f)
+            val padTop = 30.dp.toPx()
+            val chartBottom = (size.height - timeAxisHeight - 4.dp.toPx()).coerceAtLeast(padTop + 40f)
+            val chartHeight = (chartBottom - padTop).coerceAtLeast(40f)
+
+            val slotPx = candlePitchDp.dp.toPx().coerceAtLeast(6f)
+            val visibleBarCount = (chartRight / slotPx).coerceAtLeast(4f)
+
+            // Position the camera: in follow mode, place cursor at ~74% width so user sees recent price action + future breathing room
+            val cameraLeftFloat = if (isFollowingCursor) {
+                cursorGlobalBar - visibleBarCount * 0.74f
+            } else {
+                panCenterBarFloat - visibleBarCount * 0.5f
+            }
+            val cameraRightFloat = cameraLeftFloat + visibleBarCount
+
+            val viewMinBar = floor(cameraLeftFloat).toInt().coerceAtLeast(window.windowStartIndex)
+            val viewMaxBar = ceil(cameraRightFloat).toInt()
+                .coerceAtMost(min(window.windowEndIndex, cursorGlobalBar))
+
+            if (viewMaxBar < viewMinBar) return@Canvas
+
+            val localStart = (viewMinBar - window.windowStartIndex).coerceIn(0, candles.lastIndex)
+            val localEnd = (viewMaxBar - window.windowStartIndex).coerceIn(0, candles.lastIndex)
+
+            // Viewport-locked Y min/max across revealed visible candles ONLY + overlapping visible trades
+            var minPrice = Double.POSITIVE_INFINITY
+            var maxPrice = Double.NEGATIVE_INFINITY
+            for (li in localStart..localEnd) {
+                val c = candles[li]
+                if (c.low < minPrice) minPrice = c.low
+                if (c.high > maxPrice) maxPrice = c.high
+            }
+
+            // Collect trades overlapping visible revealed range [viewMinBar..min(viewMaxBar, cursorGlobalBar)]
+            val overlappingMarkers = window.markers.filter { m ->
+                val openBar = if (m.trade.openIndex >= 0) m.trade.openIndex else window.windowStartIndex + m.entryCandlePos
+                val closeBar = if (m.trade.closeIndex >= 0) m.trade.closeIndex else window.windowStartIndex + m.exitCandlePos
+                openBar <= min(viewMaxBar, cursorGlobalBar) && closeBar >= viewMinBar
+            }
+
+            overlappingMarkers.forEach { m ->
+                minPrice = minOf(minPrice, m.trade.sl, m.trade.tp, m.trade.entry, m.trade.exit)
+                maxPrice = maxOf(maxPrice, m.trade.sl, m.trade.tp, m.trade.entry, m.trade.exit)
+            }
+
+            if (!minPrice.isFinite() || !maxPrice.isFinite()) return@Canvas
+            val rawSpan = (maxPrice - minPrice).takeIf { it > 1e-9 } ?: 1.0
+            val paddedMin = minPrice - rawSpan * 0.09
+            val paddedMax = maxPrice + rawSpan * 0.09
+            val priceRange = (paddedMax - paddedMin).coerceAtLeast(1e-6)
+
+            fun yForPrice(price: Double): Float {
+                val fraction = ((price - paddedMin) / priceRange).toFloat()
+                return padTop + chartHeight * (1f - fraction)
+            }
+
+            fun xCenterForGlobalBar(bar: Int): Float = (bar - cameraLeftFloat + 0.5f) * slotPx
+
+            // 1) Horizontal Price Grid & Right Price Scale
+            priceAxisPaint.textSize = 10.sp.toPx()
+            priceAxisPaint.color = android.graphics.Color.argb(200, 148, 163, 184)
+            for (step in 0..4) {
+                val f = step / 4f
+                val y = padTop + chartHeight * f
+                val price = paddedMax - priceRange * f
+                drawLine(
+                    color = Color(0xFF162131),
+                    start = Offset(0f, y),
+                    end = Offset(chartRight, y),
+                    strokeWidth = 1.dp.toPx()
                 )
-                val rSign = if (trade.r > 0) "+" else ""
-                val pSign = if (trade.points > 0) "+" else ""
-                Text(
-                    text = "$strategyName • $pSign${String.format(Locale.US, "%.1f", trade.points)}p ($rSign${String.format(Locale.US, "%.2f", trade.r)}R)",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = outcomeColor,
-                    fontWeight = FontWeight.SemiBold,
-                    fontFamily = FontFamily.Monospace,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                drawContext.canvas.nativeCanvas.drawText(
+                    String.format(Locale.US, "%.2f", price),
+                    chartRight + 5.dp.toPx(),
+                    y + 3.5.dp.toPx(),
+                    priceAxisPaint
                 )
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(
-                    onClick = onCycleSpeed,
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                    modifier = Modifier.testTag("replay_speed_button")
-                ) {
-                    Text(
-                        text = "${playbackSpeed}x",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace
+
+            // Right Axis Divider
+            drawLine(
+                color = TvSurfaceBorder,
+                start = Offset(chartRight, 0f),
+                end = Offset(chartRight, chartBottom),
+                strokeWidth = 1.dp.toPx()
+            )
+            // Bottom Time Axis Divider
+            drawLine(
+                color = TvSurfaceBorder,
+                start = Offset(0f, chartBottom),
+                end = Offset(size.width, chartBottom),
+                strokeWidth = 1.dp.toPx()
+            )
+
+            // 2) Draw TradingView-Style SL / TP Zones Strictly Bounded to Each Trade's Span
+            val dashEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f), 0f)
+            badgePaint.textSize = 9.sp.toPx()
+
+            overlappingMarkers.forEach { marker ->
+                val trade = marker.trade
+                val openBar = if (trade.openIndex >= 0) trade.openIndex else window.windowStartIndex + marker.entryCandlePos
+                val closeBar = if (trade.closeIndex >= 0) trade.closeIndex else window.windowStartIndex + marker.exitCandlePos
+                val activeEndBar = min(closeBar, cursorGlobalBar).coerceAtLeast(openBar)
+
+                val rawEntryX = xCenterForGlobalBar(openBar)
+                val rawEndX = xCenterForGlobalBar(activeEndBar)
+                val startX = rawEntryX.coerceIn(0f, chartRight)
+                val endX = rawEndX.coerceIn(startX, chartRight)
+                val zoneWidth = (endX - startX).coerceAtLeast(4.dp.toPx())
+
+                val entryY = yForPrice(trade.entry)
+                val slY = yForPrice(trade.sl)
+                val tpY = yForPrice(trade.tp)
+
+                // Green TP Profit Box (Entry <-> TP)
+                drawRect(
+                    color = TvBullColor.copy(alpha = 0.16f),
+                    topLeft = Offset(startX, min(entryY, tpY)),
+                    size = Size(zoneWidth, abs(entryY - tpY).coerceAtLeast(2f))
+                )
+                drawLine(
+                    color = TvBullColor.copy(alpha = 0.85f),
+                    start = Offset(startX, tpY),
+                    end = Offset(endX, tpY),
+                    strokeWidth = 1.3.dp.toPx(),
+                    pathEffect = dashEffect
+                )
+
+                // Red SL Risk Box (Entry <-> SL)
+                drawRect(
+                    color = TvBearColor.copy(alpha = 0.16f),
+                    topLeft = Offset(startX, min(entryY, slY)),
+                    size = Size(zoneWidth, abs(entryY - slY).coerceAtLeast(2f))
+                )
+                drawLine(
+                    color = TvBearColor.copy(alpha = 0.85f),
+                    start = Offset(startX, slY),
+                    end = Offset(endX, slY),
+                    strokeWidth = 1.3.dp.toPx(),
+                    pathEffect = dashEffect
+                )
+
+                // Entry Divider Line
+                drawLine(
+                    color = TvEntryColor.copy(alpha = 0.9f),
+                    start = Offset(startX, entryY),
+                    end = Offset(endX, entryY),
+                    strokeWidth = 1.2.dp.toPx()
+                )
+
+                // Entry Marker & Labels if Entry is inside viewport
+                if (rawEntryX in 0f..chartRight) {
+                    drawCircle(color = TvEntryColor, radius = 4.dp.toPx(), center = Offset(rawEntryX, entryY))
+                    badgePaint.color = android.graphics.Color.rgb(56, 189, 248)
+                    drawContext.canvas.nativeCanvas.drawText(
+                        if (trade.side == Side.BUY) "BUY" else "SELL",
+                        (rawEntryX + 4.dp.toPx()).coerceAtMost(chartRight - 32f),
+                        entryY - 5.dp.toPx(),
+                        badgePaint
+                    )
+                    badgePaint.color = android.graphics.Color.rgb(8, 153, 129)
+                    drawContext.canvas.nativeCanvas.drawText(
+                        "TP",
+                        (rawEntryX + 4.dp.toPx()).coerceAtMost(chartRight - 24f),
+                        tpY - 3.dp.toPx(),
+                        badgePaint
+                    )
+                    badgePaint.color = android.graphics.Color.rgb(242, 54, 69)
+                    drawContext.canvas.nativeCanvas.drawText(
+                        "SL",
+                        (rawEntryX + 4.dp.toPx()).coerceAtMost(chartRight - 24f),
+                        slY + 9.dp.toPx(),
+                        badgePaint
                     )
                 }
-                IconButton(
-                    onClick = onExpandFullscreen,
-                    modifier = Modifier.testTag("replay_expand_fullscreen_button")
-                ) {
-                    Icon(Icons.Default.Fullscreen, contentDescription = "Expand Replay Fullscreen")
-                }
-            }
-        }
 
-        Spacer(modifier = Modifier.height(6.dp))
-
-        Surface(
-            color = Color(0xFF0A111A),
-            shape = RoundedCornerShape(12.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(250.dp)
-                .testTag("inline_replay_chart_surface")
-        ) {
-            when {
-                isLoading -> {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = positiveColor)
+                // Exit Marker + Result Badge if closed and revealed
+                if (cursorGlobalBar >= closeBar && rawEndX in 0f..chartRight) {
+                    val exitY = yForPrice(trade.exit)
+                    val isBe = trade.reason == ExitReason.BE || (abs(trade.points) <= 1e-6 && abs(trade.r) <= 1e-6)
+                    val isWin = !isBe && (trade.points > 1e-6 || trade.r > 1e-6)
+                    val exitCol = when {
+                        isWin -> TvBullColor
+                        isBe -> SlateBreakEven
+                        else -> TvBearColor
                     }
-                }
-                error != null -> {
-                    Box(modifier = Modifier.fillMaxSize().padding(14.dp), contentAlignment = Alignment.Center) {
-                        Text(text = error, color = negativeColor, style = MaterialTheme.typography.bodySmall)
+                    drawCircle(color = exitCol, radius = 4.5.dp.toPx(), center = Offset(rawEndX, exitY))
+                    val rSign = if (trade.r > 0) "+" else ""
+                    val exitLabel = "${trade.reason.name} $rSign${String.format(Locale.US, "%.1f", trade.r)}R"
+                    badgePaint.color = when {
+                        isWin -> android.graphics.Color.rgb(16, 185, 129)
+                        isBe -> android.graphics.Color.rgb(148, 163, 184)
+                        else -> android.graphics.Color.rgb(242, 54, 69)
                     }
-                }
-                window == null || window.candles.isEmpty() -> {
-                    Box(modifier = Modifier.fillMaxSize().padding(14.dp), contentAlignment = Alignment.Center) {
-                        Text(
-                            text = "No matching candles in CSV for ${trade.openTime}.",
-                            color = Color(0xFF94A3B8),
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                }
-                else -> {
-                    val visibleCandles = window.candles.take(revealedCount.coerceIn(1, window.candles.size))
-                    CandlestickReplayCanvas(
-                        visibleCandles = visibleCandles,
-                        totalWindowCount = window.candles.size,
-                        markers = window.markers,
-                        bullColor = Color(0xFF10B981),
-                        bearColor = Color(0xFFEF4444),
-                        tpColor = Color(0xFF22C55E),
-                        slColor = Color(0xFFF43F5E),
-                        entryLineColor = Color(0xFF38BDF8),
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(8.dp)
+                    drawContext.canvas.nativeCanvas.drawText(
+                        exitLabel,
+                        (rawEndX + 5.dp.toPx()).coerceAtMost(chartRight - 58f),
+                        exitY - 5.dp.toPx(),
+                        badgePaint
                     )
                 }
             }
-        }
 
-        Spacer(modifier = Modifier.height(6.dp))
+            // 3) Draw Large Crisp 1:1 Native Candlesticks
+            val candleBodyWidth = (slotPx * 0.70f).coerceIn(4.dp.toPx(), 32.dp.toPx())
+            val wickWidth = (slotPx * 0.14f).coerceIn(1.5.dp.toPx(), 3.dp.toPx())
+            val timeTickStride = max(4, (72.dp.toPx() / slotPx).roundToInt())
+            timeAxisPaint.textSize = 9.sp.toPx()
+            timeAxisPaint.color = android.graphics.Color.argb(185, 148, 163, 184)
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceEvenly
-        ) {
-            ReplayLegendDot("TP ${String.format(Locale.US, "%.2f", trade.tp)}", Color(0xFF22C55E))
-            ReplayLegendDot("SL ${String.format(Locale.US, "%.2f", trade.sl)}", Color(0xFFF43F5E))
-            ReplayLegendDot("IN ${String.format(Locale.US, "%.2f", trade.entry)}", Color(0xFF38BDF8))
-        }
+            for (globalIdx in viewMinBar..viewMaxBar) {
+                val localIdx = globalIdx - window.windowStartIndex
+                if (localIdx !in candles.indices) continue
+                val candle = candles[localIdx]
+                val centerX = xCenterForGlobalBar(globalIdx)
+                if (centerX < -slotPx || centerX > chartRight + slotPx) continue
 
-        if (window != null && window.candles.isNotEmpty()) {
-            Spacer(modifier = Modifier.height(4.dp))
-            val activeCandle = window.candles.getOrNull((revealedCount - 1).coerceIn(0, window.candles.lastIndex))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Bar $revealedCount/${window.candles.size}" + (activeCandle?.let { " • ${it.time}" } ?: ""),
-                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                    fontFamily = FontFamily.Monospace,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
+                val isBull = candle.close >= candle.open
+                val candleColor = if (isBull) TvBullColor else TvBearColor
+
+                // Wick
+                drawLine(
+                    color = candleColor,
+                    start = Offset(centerX, yForPrice(candle.high)),
+                    end = Offset(centerX, yForPrice(candle.low)),
+                    strokeWidth = wickWidth
                 )
-                TextButton(
-                    onClick = onShowAll,
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                ) {
-                    Text("All Bars", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+
+                // Body (clipped cleanly within chart)
+                val openY = yForPrice(candle.open)
+                val closeY = yForPrice(candle.close)
+                val topY = min(openY, closeY)
+                val bodyH = max(abs(closeY - openY), 2.dp.toPx())
+                drawRoundRect(
+                    color = candleColor,
+                    topLeft = Offset((centerX - candleBodyWidth / 2f).coerceAtLeast(0f), topY),
+                    size = Size(candleBodyWidth.coerceAtMost((chartRight - (centerX - candleBodyWidth / 2f)).coerceAtLeast(1f)), bodyH),
+                    cornerRadius = CornerRadius(1.5.dp.toPx(), 1.5.dp.toPx())
+                )
+
+                // Vertical time grid ticks
+                if (globalIdx % timeTickStride == 0 && centerX in 20f..(chartRight - 36f)) {
+                    drawLine(
+                        color = Color(0xFF131D2B),
+                        start = Offset(centerX, padTop),
+                        end = Offset(centerX, chartBottom),
+                        strokeWidth = 0.8.dp.toPx()
+                    )
+                    val shortTime = if (candle.time.length >= 16) candle.time.substring(5, 16) else candle.time.takeLast(11)
+                    drawContext.canvas.nativeCanvas.drawText(
+                        shortTime,
+                        centerX - 18.dp.toPx(),
+                        chartBottom + 12.dp.toPx(),
+                        timeAxisPaint
+                    )
                 }
             }
-            if (window.candles.size > 1) {
-                Slider(
-                    value = revealedCount.toFloat(),
-                    onValueChange = { onSeekBar(it.toInt().coerceIn(1, window.candles.size)) },
-                    valueRange = 1f..window.candles.size.toFloat(),
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        }
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            OutlinedButton(
-                onClick = onPrevTrade,
-                enabled = hasPrev,
-                contentPadding = PaddingValues(horizontal = 8.dp),
-                modifier = Modifier
-                    .weight(0.9f)
-                    .height(48.dp)
-                    .testTag("inline_replay_prev"),
-                shape = RoundedCornerShape(10.dp)
-            ) {
-                Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Previous trade")
-                Text("Prev", fontSize = 12.sp)
-            }
-            Button(
-                onClick = onTogglePlay,
-                enabled = window != null && window.candles.isNotEmpty(),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = positiveColor,
-                    contentColor = MaterialTheme.colorScheme.onPrimary
-                ),
-                contentPadding = PaddingValues(horizontal = 10.dp),
-                modifier = Modifier
-                    .weight(1.2f)
-                    .height(48.dp)
-                    .testTag("inline_replay_play"),
-                shape = RoundedCornerShape(10.dp)
-            ) {
-                Icon(
-                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp)
+            // 4) Replay Playhead Line & Live Price Tag on Right Axis
+            val cursorLocalIdx = cursorGlobalBar - window.windowStartIndex
+            val cursorCandle = candles.getOrNull(cursorLocalIdx)
+            if (cursorCandle != null) {
+                val cursorX = xCenterForGlobalBar(cursorGlobalBar)
+                if (cursorX in 0f..chartRight) {
+                    drawLine(
+                        color = TvEntryColor.copy(alpha = 0.65f),
+                        start = Offset(cursorX, padTop),
+                        end = Offset(cursorX, chartBottom),
+                        strokeWidth = 1.2.dp.toPx(),
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 5f), 0f)
+                    )
+                }
+                val livePriceY = yForPrice(cursorCandle.close)
+                val tagColor = if (cursorCandle.close >= cursorCandle.open) TvBullColor else TvBearColor
+                drawLine(
+                    color = tagColor.copy(alpha = 0.55f),
+                    start = Offset(0f, livePriceY),
+                    end = Offset(chartRight, livePriceY),
+                    strokeWidth = 0.9.dp.toPx(),
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(4f, 4f), 0f)
                 )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(if (isPlaying) "Pause" else "Play", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            }
-            OutlinedButton(
-                onClick = onRestart,
-                enabled = window != null && window.candles.isNotEmpty(),
-                contentPadding = PaddingValues(horizontal = 8.dp),
-                modifier = Modifier.height(48.dp),
-                shape = RoundedCornerShape(10.dp)
-            ) {
-                Icon(Icons.Default.Refresh, contentDescription = "Restart")
-            }
-            OutlinedButton(
-                onClick = onNextTrade,
-                enabled = hasNext,
-                contentPadding = PaddingValues(horizontal = 8.dp),
-                modifier = Modifier
-                    .weight(0.9f)
-                    .height(48.dp)
-                    .testTag("inline_replay_next"),
-                shape = RoundedCornerShape(10.dp)
-            ) {
-                Text("Next", fontSize = 12.sp)
-                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Next trade")
+                drawRoundRect(
+                    color = tagColor,
+                    topLeft = Offset(chartRight + 2.dp.toPx(), livePriceY - 9.dp.toPx()),
+                    size = Size(labelAxisWidth - 4.dp.toPx(), 18.dp.toPx()),
+                    cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx())
+                )
+                badgePaint.textSize = 9.5.sp.toPx()
+                badgePaint.color = android.graphics.Color.WHITE
+                drawContext.canvas.nativeCanvas.drawText(
+                    String.format(Locale.US, "%.2f", cursorCandle.close),
+                    chartRight + 5.dp.toPx(),
+                    livePriceY + 3.5.dp.toPx(),
+                    badgePaint
+                )
             }
         }
     }
 }
 
 /**
- * Full-screen candlestick replay inspector showing historical candles around a closed trade,
- * with explicit Stop Loss (SL), Take Profit (TP), Entry, and Exit overlays plus step-by-step playback.
+ * Legacy modal wrapper preserved for any secondary callers, delegating directly to the continuous
+ * landscape TradingView replay experience.
  */
 @Composable
 fun BacktestReplayScreen(
@@ -884,705 +1441,46 @@ fun BacktestReplayScreen(
     modifier: Modifier = Modifier
 ) {
     BackHandler(onBack = onClose)
-
-    val context = LocalContext.current
-    val activity = context as? Activity
-    DisposableEffect(activity) {
-        val previousOrientation = activity?.requestedOrientation
-        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-        onDispose {
-            if (previousOrientation != null) {
-                activity?.requestedOrientation = previousOrientation
-            }
-        }
-    }
-
-    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-
-    val safeIndex = currentIndex.coerceIn(0, (trades.size - 1).coerceAtLeast(0))
-    val trade = trades.getOrNull(safeIndex) ?: return
-
-    // 0 = All, 1 = Losses (SL), 2 = Wins (TP/positive), 3 = Break-Even
-    var outcomeFilter by remember { mutableIntStateOf(0) }
-
-    val matchingIndices = remember(trades, outcomeFilter) {
-        trades.indices.filter { idx ->
-            val t = trades[idx]
-            val isBe = t.reason == ExitReason.BE || (abs(t.points) <= 1e-6 && abs(t.r) <= 1e-6)
-            val isWin = !isBe && (t.points > 1e-6 || t.r > 1e-6)
-            when (outcomeFilter) {
-                1 -> !isBe && !isWin
-                2 -> isWin
-                3 -> isBe
-                else -> true
-            }
-        }
-    }
-
-    val totalCandles = window?.candles?.size ?: 0
-    var revealedCount by remember(safeIndex, totalCandles) {
-        mutableIntStateOf(totalCandles.coerceAtLeast(1))
-    }
-    var isPlaying by remember { mutableStateOf(false) }
-    var showLandscapeTradeList by remember { mutableStateOf(false) }
-
-    val positiveColor = MaterialTheme.colorScheme.primary
-    val negativeColor = MaterialTheme.colorScheme.error
-    val isBe = trade.reason == ExitReason.BE || (abs(trade.points) <= 1e-6 && abs(trade.r) <= 1e-6)
-    val isWin = !isBe && (trade.points > 1e-6 || trade.r > 1e-6)
-    val outcomeColor = when {
-        isWin -> positiveColor
-        isBe -> SlateBreakEven
-        else -> negativeColor
-    }
-    val sideColor = if (trade.side == Side.BUY) positiveColor else negativeColor
-
-    val posInFiltered = matchingIndices.indexOf(safeIndex)
-    val prevMatchingIdx = when {
-        matchingIndices.isEmpty() -> null
-        posInFiltered > 0 -> matchingIndices[posInFiltered - 1]
-        else -> matchingIndices.lastOrNull { it < safeIndex }
-    }
-    val nextMatchingIdx = when {
-        matchingIndices.isEmpty() -> null
-        posInFiltered in 0 until (matchingIndices.size - 1) -> matchingIndices[posInFiltered + 1]
-        else -> matchingIndices.firstOrNull { it > safeIndex }
-    }
-
-    LaunchedEffect(isPlaying, safeIndex, totalCandles, isLoading) {
-        if (!isPlaying || isLoading || totalCandles <= 0) return@LaunchedEffect
-        val playbackEnd = ((window?.exitCandlePos ?: (totalCandles - 1)) + 1).coerceIn(1, totalCandles)
-        val playbackStart = (window?.entryCandlePos ?: 0).coerceIn(1, playbackEnd)
-        if (revealedCount >= totalCandles || revealedCount > playbackEnd) {
-            revealedCount = playbackStart
-        }
-        while (isPlaying && revealedCount < playbackEnd) {
-            delay(140L)
-            revealedCount = (revealedCount + 1).coerceAtMost(playbackEnd)
-        }
-        if (isPlaying && revealedCount >= playbackEnd) {
-            if (nextMatchingIdx != null) {
-                delay(450L)
-                onSelectTradeIndex(nextMatchingIdx)
-            } else {
-                isPlaying = false
-            }
-        }
-    }
-
-    Surface(
-        color = MaterialTheme.colorScheme.background,
-        modifier = modifier.fillMaxSize()
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.statusBars)
-                .windowInsetsPadding(WindowInsets.navigationBars)
-        ) {
-            // Top App Header
-            Surface(color = MaterialTheme.colorScheme.surface) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        IconButton(
-                            onClick = onClose,
-                            modifier = Modifier.testTag("replay_close_button")
-                        ) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close Replay")
-                        }
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Trade Replay • #${safeIndex + 1} / ${trades.size}",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                text = strategyName.ifBlank { "Strategy" },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(end = 6.dp)
-                    ) {
-                        Surface(
-                            color = sideColor.copy(alpha = 0.18f),
-                            shape = RoundedCornerShape(6.dp)
-                        ) {
-                            Text(
-                                text = trade.side.name,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = sideColor,
-                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
-                            )
-                        }
-                        if (isLandscape) {
-                            TextButton(onClick = { showLandscapeTradeList = !showLandscapeTradeList }) {
-                                Text(if (showLandscapeTradeList) "Hide trades" else "Trades", fontSize = 11.sp)
-                            }
-                        }
-                        Surface(
-                            color = outcomeColor.copy(alpha = 0.18f),
-                            shape = RoundedCornerShape(6.dp)
-                        ) {
-                            val label = when {
-                                isWin -> "WON (${trade.reason.name})"
-                                isBe -> "BE"
-                                else -> "LOST (${trade.reason.name})"
-                            }
-                            Text(
-                                text = label,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = outcomeColor,
-                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
-                            )
-                        }
-                    }
-                }
-            }
-
-            if (!isLandscape) {
-            // Outcome filter strip (quickly jump between losses / wins)
-            val totalWins = remember(trades) { trades.count { t -> val be = t.reason == ExitReason.BE || (abs(t.points) <= 1e-6 && abs(t.r) <= 1e-6); !be && (t.points > 1e-6 || t.r > 1e-6) } }
-            val totalLosses = remember(trades) { trades.count { t -> val be = t.reason == ExitReason.BE || (abs(t.points) <= 1e-6 && abs(t.r) <= 1e-6); val w = !be && (t.points > 1e-6 || t.r > 1e-6); !be && !w } }
-            val filterItems = listOf(
-                "All (${trades.size})",
-                "Losses ($totalLosses)",
-                "Wins ($totalWins)",
-                "BE (${trades.size - totalLosses - totalWins})"
-            )
-            LazyRow(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                itemsIndexed(filterItems) { fIdx, label ->
-                    FilterChip(
-                        selected = outcomeFilter == fIdx,
-                        onClick = {
-                            outcomeFilter = fIdx
-                            val targetSet = trades.indices.filter { idx ->
-                                val t = trades[idx]
-                                val be = t.reason == ExitReason.BE || (abs(t.points) <= 1e-6 && abs(t.r) <= 1e-6)
-                                val win = !be && (t.points > 1e-6 || t.r > 1e-6)
-                                when (fIdx) {
-                                    1 -> !be && !win
-                                    2 -> win
-                                    3 -> be
-                                    else -> true
-                                }
-                            }
-                            if (targetSet.isNotEmpty() && safeIndex !in targetSet) {
-                                onSelectTradeIndex(targetSet.first())
-                            }
-                        },
-                        label = {
-                            Text(
-                                text = label,
-                                fontSize = 11.sp,
-                                fontWeight = if (outcomeFilter == fIdx) FontWeight.Bold else FontWeight.Medium
-                            )
-                        },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = if (fIdx == 1) negativeColor else positiveColor,
-                            selectedLabelColor = MaterialTheme.colorScheme.onPrimary
-                        ),
-                        modifier = Modifier.testTag("replay_filter_$fIdx")
-                    )
-                }
-            }
-
-            }
-
-            // Main replay area: chart and execution details beside the complete trade list
-            Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .padding(horizontal = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .weight(if (isLandscape && showLandscapeTradeList) 0.76f else if (isLandscape) 1f else 0.72f)
-                        .fillMaxHeight()
-                        .then(if (isLandscape) Modifier else Modifier.verticalScroll(rememberScrollState())),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                // Candlestick Canvas Card
-                Surface(
-                    color = Color(0xFF0A111A),
-                    shape = RoundedCornerShape(16.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .then(if (isLandscape) Modifier.weight(1f) else Modifier.height(340.dp))
-                        .testTag("replay_chart_surface")
-                ) {
-                    when {
-                        isLoading -> {
-                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    CircularProgressIndicator(color = positiveColor)
-                                    Spacer(modifier = Modifier.height(10.dp))
-                                    Text(
-                                        text = "Reading candle window from CSV...",
-                                        color = Color(0xFF94A3B8),
-                                        style = MaterialTheme.typography.bodySmall
-                                    )
-                                }
-                            }
-                        }
-                        error != null -> {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(16.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = error,
-                                    color = negativeColor,
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                            }
-                        }
-                        window == null || window.candles.isEmpty() -> {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(16.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "No matching candles found in the active CSV for ${trade.openTime}.",
-                                    color = Color(0xFF94A3B8),
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                            }
-                        }
-                        else -> {
-                            val visibleCandles = window.candles.take(revealedCount.coerceIn(1, window.candles.size))
-                            CandlestickReplayCanvas(
-                                visibleCandles = visibleCandles,
-                                totalWindowCount = window.candles.size,
-                                markers = window.markers,
-                                bullColor = Color(0xFF10B981),
-                                bearColor = Color(0xFFEF4444),
-                                tpColor = Color(0xFF22C55E),
-                                slColor = Color(0xFFF43F5E),
-                                entryLineColor = Color(0xFF38BDF8),
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(10.dp)
-                            )
-                        }
-                    }
-                }
-
-                if (!isLandscape) {
-                // Legend row
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    ReplayLegendDot("TP Zone", Color(0xFF22C55E))
-                    ReplayLegendDot("SL Zone", Color(0xFFF43F5E))
-                    ReplayLegendDot("Entry", Color(0xFF38BDF8))
-                    ReplayLegendDot("Exit", AmberGold)
-                }
-
-                if (window != null && window.candles.isNotEmpty()) {
-                    LiquidGlassCard {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            val activeCandle = window.candles.getOrNull((revealedCount - 1).coerceIn(0, window.candles.lastIndex))
-                            Text(
-                                text = "Bar $revealedCount / ${window.candles.size}" +
-                                    (activeCandle?.let { " • ${it.time}" } ?: ""),
-                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                                fontFamily = FontFamily.Monospace,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
-                            )
-                            TextButton(
-                                onClick = {
-                                    isPlaying = false
-                                    revealedCount = window.candles.size
-                                }
-                            ) {
-                                Text("Show All", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-
-                        if (window.candles.size > 1) {
-                            Slider(
-                                value = revealedCount.toFloat(),
-                                onValueChange = {
-                                    isPlaying = false
-                                    revealedCount = it.toInt().coerceIn(1, window.candles.size)
-                                },
-                                valueRange = 1f..window.candles.size.toFloat(),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("replay_scrubber")
-                            )
-                        }
-
-                        if (window.truncatedMiddle) {
-                            Text(
-                                text = "Long-duration trade compressed in middle bars while keeping full entry & exit context.",
-                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-
-                }
-
-                // Telemetry Card
-                if (!isLandscape) LiquidGlassCard {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Trade #${safeIndex + 1} Execution",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        val ptsSign = if (trade.points > 0) "+" else ""
-                        val rSign = if (trade.r > 0) "+" else ""
-                        Text(
-                            text = "${ptsSign}${String.format(Locale.US, "%.1f", trade.points)} pts ($rSign${String.format(Locale.US, "%.2f", trade.r)}R)",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = outcomeColor,
-                            fontFamily = FontFamily.Monospace
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    ReplayMetricRow("Entry Price", String.format(Locale.US, "%.2f", trade.entry), Color(0xFF38BDF8))
-                    ReplayMetricRow("Stop Loss (SL)", String.format(Locale.US, "%.2f", trade.sl), negativeColor)
-                    ReplayMetricRow("Take Profit (TP)", String.format(Locale.US, "%.2f", trade.tp), positiveColor)
-                    ReplayMetricRow("Exit Price (${trade.reason.name})", String.format(Locale.US, "%.2f", trade.exit), outcomeColor)
-                    ReplayMetricRow("Duration", "${trade.durationCandles} candles")
-                    ReplayMetricRow("Opened", trade.openTime)
-                    ReplayMetricRow("Closed", trade.closeTime)
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-                }
-
-                if (!isLandscape || showLandscapeTradeList) {
-                    ReplayTradeListColumn(
-                        filteredIndexedTrades = trades.withIndex().toList(),
-                        activeIndex = safeIndex,
-                        onSelectTrade = onSelectTradeIndex,
-                        modifier = Modifier
-                            .weight(if (isLandscape) 0.24f else 0.28f)
-                            .fillMaxHeight()
-                    )
-                }
-            }
-
-            // Bottom Navigation & Play Controls Bar
-            Surface(color = MaterialTheme.colorScheme.surface) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    OutlinedButton(
-                        onClick = { prevMatchingIdx?.let(onSelectTradeIndex) },
-                        enabled = prevMatchingIdx != null,
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(48.dp)
-                            .testTag("replay_prev_trade"),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = null)
-                        Text("Prev")
-                    }
-
-                    Button(
-                        onClick = {
-                            if (window != null && window.candles.isNotEmpty()) {
-                                if (!isPlaying && revealedCount >= window.candles.size) {
-                                    revealedCount = (window.entryCandlePos).coerceIn(1, window.candles.size)
-                                }
-                                isPlaying = !isPlaying
-                            }
-                        },
-                        enabled = window != null && window.candles.isNotEmpty(),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = positiveColor,
-                            contentColor = MaterialTheme.colorScheme.onPrimary
-                        ),
-                        modifier = Modifier
-                            .weight(1.3f)
-                            .height(48.dp)
-                            .testTag("replay_play_pause_button"),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Icon(
-                            imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(if (isPlaying) "Pause" else "Replay", fontWeight = FontWeight.Bold)
-                    }
-
-                    OutlinedButton(
-                        onClick = {
-                            if (window != null && window.candles.isNotEmpty()) {
-                                isPlaying = true
-                                revealedCount = 1
-                            }
-                        },
-                        enabled = window != null && window.candles.isNotEmpty(),
-                        modifier = Modifier.height(48.dp),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Restart Replay")
-                    }
-
-                    OutlinedButton(
-                        onClick = { nextMatchingIdx?.let(onSelectTradeIndex) },
-                        enabled = nextMatchingIdx != null,
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(48.dp)
-                            .testTag("replay_next_trade"),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Text("Next")
-                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CandlestickReplayCanvas(
-    visibleCandles: List<ReplayCandle>,
-    totalWindowCount: Int,
-    markers: List<TradeReplayMarker>,
-    bullColor: Color,
-    bearColor: Color,
-    tpColor: Color,
-    slColor: Color,
-    entryLineColor: Color,
-    modifier: Modifier = Modifier
-) {
-    Canvas(modifier = modifier) {
-        if (visibleCandles.isEmpty()) return@Canvas
-
-        val labelAxisWidth = 54.dp.toPx()
-        val chartRight = (size.width - labelAxisWidth).coerceAtLeast(40f)
-        val padTop = 14.dp.toPx()
-        val padBottom = 14.dp.toPx()
-        val chartHeight = (size.height - padTop - padBottom).coerceAtLeast(40f)
-        val maxVisibleCandles = (chartRight / 8.dp.toPx()).toInt().coerceIn(16, 140)
-        val candleOffset = (visibleCandles.size - maxVisibleCandles).coerceAtLeast(0)
-        val chartCandles = visibleCandles.drop(candleOffset)
-        val visibleMarkers = markers.filter { it.entryCandlePos < visibleCandles.size && it.exitCandlePos >= 0 }
-
-        var minPrice = chartCandles.minOf { it.low }
-        var maxPrice = chartCandles.maxOf { it.high }
-        visibleMarkers.forEach { marker ->
-            minPrice = minOf(minPrice, marker.trade.sl, marker.trade.tp, marker.trade.entry, marker.trade.exit)
-            maxPrice = maxOf(maxPrice, marker.trade.sl, marker.trade.tp, marker.trade.entry, marker.trade.exit)
-        }
-        val rawSpan = (maxPrice - minPrice).takeIf { it > 0.0 } ?: 1.0
-        val paddedMin = minPrice - rawSpan * 0.08
-        val paddedMax = maxPrice + rawSpan * 0.08
-        val priceRange = (paddedMax - paddedMin).coerceAtLeast(1e-6)
-
-        fun yForPrice(price: Double): Float {
-            val fraction = ((price - paddedMin) / priceRange).toFloat()
-            return padTop + chartHeight * (1f - fraction)
-        }
-
-        val slotWidth = chartRight / chartCandles.size.coerceAtLeast(1).toFloat()
-        val textPaint = android.graphics.Paint().apply {
-            isAntiAlias = true
-            textSize = 10.sp.toPx()
-            color = android.graphics.Color.argb(190, 148, 163, 184)
-            typeface = android.graphics.Typeface.MONOSPACE
-        }
-
-        for (step in 0..4) {
-            val fraction = step / 4f
-            val y = padTop + chartHeight * fraction
-            val price = paddedMax - priceRange * fraction
-            drawLine(
-                color = Color(0xFF1E293B),
-                start = Offset(0f, y),
-                end = Offset(chartRight, y),
-                strokeWidth = 1.dp.toPx()
-            )
-            drawContext.canvas.nativeCanvas.drawText(
-                String.format(Locale.US, "%.2f", price),
-                chartRight + 4.dp.toPx(),
-                y + 3.dp.toPx(),
-                textPaint
-            )
-        }
-
-        val candleBodyWidth = (slotWidth * 0.72f).coerceIn(3.dp.toPx(), 14.dp.toPx())
-        val wickWidth = (slotWidth * 0.16f).coerceIn(1.2.dp.toPx(), 2.2.dp.toPx())
-        chartCandles.forEachIndexed { index, candle ->
-            val centerX = (index + 0.5f) * slotWidth
-            val color = if (candle.close >= candle.open) bullColor else bearColor
-            drawLine(
-                color = color,
-                start = Offset(centerX, yForPrice(candle.high)),
-                end = Offset(centerX, yForPrice(candle.low)),
-                strokeWidth = wickWidth
-            )
-            val openY = yForPrice(candle.open)
-            val closeY = yForPrice(candle.close)
-            drawRect(
-                color = color,
-                topLeft = Offset(centerX - candleBodyWidth / 2f, min(openY, closeY)),
-                size = Size(candleBodyWidth, max(abs(closeY - openY), 1.5.dp.toPx()))
-            )
-        }
-
-        val dashEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 7f), 0f)
-        val tagPaint = android.graphics.Paint().apply {
-            isAntiAlias = true
-            textSize = 8.5.sp.toPx()
-            isFakeBoldText = true
-            typeface = android.graphics.Typeface.MONOSPACE
-        }
-
-        visibleMarkers.forEach { marker ->
-            val entryIndex = marker.entryCandlePos - candleOffset
-            val exitIndex = marker.exitCandlePos - candleOffset
-            if (entryIndex !in chartCandles.indices) return@forEach
-
-            val trade = marker.trade
-            val entryX = (entryIndex + 0.5f) * slotWidth
-            val endIndex = if (exitIndex in chartCandles.indices) exitIndex else chartCandles.lastIndex
-            val exitX = ((endIndex + 0.5f) * slotWidth).coerceAtLeast(entryX)
-            val entryY = yForPrice(trade.entry)
-            val slY = yForPrice(trade.sl)
-            val tpY = yForPrice(trade.tp)
-
-            drawRect(
-                color = tpColor.copy(alpha = 0.10f),
-                topLeft = Offset(entryX, min(entryY, tpY)),
-                size = Size((exitX - entryX).coerceAtLeast(1f), abs(entryY - tpY))
-            )
-            drawRect(
-                color = slColor.copy(alpha = 0.10f),
-                topLeft = Offset(entryX, min(entryY, slY)),
-                size = Size((exitX - entryX).coerceAtLeast(1f), abs(entryY - slY))
-            )
-            drawLine(tpColor, Offset(entryX, tpY), Offset(exitX, tpY), 1.2.dp.toPx(), pathEffect = dashEffect)
-            drawLine(slColor, Offset(entryX, slY), Offset(exitX, slY), 1.2.dp.toPx(), pathEffect = dashEffect)
-            drawLine(entryLineColor, Offset(entryX, entryY), Offset(exitX, entryY), 1.1.dp.toPx(), pathEffect = dashEffect)
-            drawCircle(entryLineColor, 4.dp.toPx(), Offset(entryX, entryY))
-
-            tagPaint.color = android.graphics.Color.rgb(56, 189, 248)
-            drawContext.canvas.nativeCanvas.drawText("IN", (entryX + 4.dp.toPx()).coerceAtMost(chartRight - 20f), entryY - 5f, tagPaint)
-            tagPaint.color = android.graphics.Color.rgb(34, 197, 94)
-            drawContext.canvas.nativeCanvas.drawText("TP", (entryX + 4.dp.toPx()).coerceAtMost(chartRight - 20f), tpY - 3f, tagPaint)
-            tagPaint.color = android.graphics.Color.rgb(244, 63, 94)
-            drawContext.canvas.nativeCanvas.drawText("SL", (entryX + 4.dp.toPx()).coerceAtMost(chartRight - 20f), slY - 3f, tagPaint)
-
-            if (exitIndex in chartCandles.indices && marker.exitCandlePos < visibleCandles.size) {
-                val exitY = yForPrice(trade.exit)
-                val exitColor = when (trade.reason) {
-                    ExitReason.TP -> tpColor
-                    ExitReason.SL -> slColor
-                    else -> AmberGold
-                }
-                drawCircle(exitColor, 4.5.dp.toPx(), Offset(exitX, exitY))
-                tagPaint.color = when (trade.reason) {
-                    ExitReason.TP -> android.graphics.Color.rgb(34, 197, 94)
-                    ExitReason.SL -> android.graphics.Color.rgb(244, 63, 94)
-                    else -> android.graphics.Color.rgb(245, 158, 11)
-                }
-                drawContext.canvas.nativeCanvas.drawText(trade.reason.name, (exitX + 4.dp.toPx()).coerceAtMost(chartRight - 28f), exitY + 11f, tagPaint)
-            }
-        }
-    }
-}
-
-@Composable
-private fun ReplayLegendDot(label: String, color: Color) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(
-            modifier = Modifier
-                .size(8.dp)
-                .background(color, RoundedCornerShape(4.dp))
-        )
-        Spacer(modifier = Modifier.width(4.dp))
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+    var localCursor by remember(currentIndex, window?.windowEndIndex) {
+        androidx.compose.runtime.mutableIntStateOf(
+            trades.getOrNull(currentIndex)?.closeIndex?.plus(4)?.coerceAtLeast(0)
+                ?: (window?.candles?.lastIndex ?: 0)
         )
     }
+    var localFilter by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    var localSpeed by remember { androidx.compose.runtime.mutableIntStateOf(1) }
+    var localSkipGaps by remember { mutableStateOf(true) }
+
+    TradeReplayTabContent(
+        strategyName = strategyName,
+        trades = trades,
+        currentIndex = currentIndex,
+        cursorGlobalBar = localCursor,
+        totalDatasetCandles = window?.totalDatasetCandles ?: (window?.candles?.size ?: 1),
+        skipEmptyGaps = localSkipGaps,
+        window = window,
+        isLoading = isLoading,
+        error = error,
+        outcomeFilter = localFilter,
+        playbackSpeed = localSpeed,
+        batchResults = emptyList(),
+        activeBatchStrategyId = null,
+        onSelectBatchStrategy = {},
+        onSelectFilter = { localFilter = it },
+        onCycleSpeed = {
+            localSpeed = when (localSpeed) {
+                1 -> 2
+                2 -> 4
+                4 -> 8
+                else -> 1
+            }
+        },
+        onToggleSkipEmptyGaps = { localSkipGaps = !localSkipGaps },
+        onUpdateCursorBar = { localCursor = it },
+        onSelectTradeIndex = onSelectTradeIndex,
+        onGoToBacktest = onClose,
+        modifier = modifier
+    )
 }
 
-@Composable
-private fun ReplayMetricRow(
-    label: String,
-    value: String,
-    valueColor: Color = MaterialTheme.colorScheme.onSurface
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 2.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Text(
-            text = value,
-            style = MaterialTheme.typography.bodySmall,
-            fontWeight = FontWeight.Bold,
-            fontFamily = FontFamily.Monospace,
-            color = valueColor
-        )
-    }
-}
+private fun fmtP(value: Double): String = String.format(Locale.US, "%.2f", value)
