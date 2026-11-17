@@ -5,6 +5,7 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
+import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.domain.model.AppThemePreset
 import com.example.domain.model.BottomNavStyle
@@ -24,9 +25,10 @@ import kotlinx.coroutines.launch
         NewsReleaseEntity::class,
         OutlookPredictionEntity::class,
         PythonStrategyEntity::class,
-        BacktestRunEntity::class
+        BacktestRunEntity::class,
+        AccountProfileEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -40,10 +42,39 @@ abstract class TradingDatabase : RoomDatabase() {
     abstract fun outlookDao(): OutlookDao
     abstract fun pythonStrategyDao(): PythonStrategyDao
     abstract fun backtestRunDao(): BacktestRunDao
+    abstract fun accountProfileDao(): AccountProfileDao
 
     companion object {
         @Volatile
         private var INSTANCE: TradingDatabase? = null
+
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `account_profiles` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `name` TEXT NOT NULL,
+                        `accountCategory` TEXT NOT NULL,
+                        `startingBalance` REAL NOT NULL,
+                        `defaultLotSize` REAL NOT NULL,
+                        `leverage` INTEGER NOT NULL,
+                        `commissionPerLot` REAL NOT NULL,
+                        `valuePerPointPerLot` REAL NOT NULL,
+                        `contractSizePerLot` REAL NOT NULL,
+                        `stopOutLevelPct` REAL NOT NULL,
+                        `instrumentLabel` TEXT NOT NULL,
+                        `notes` TEXT NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("ALTER TABLE `user_settings` ADD COLUMN `activeAccountProfileId` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `user_settings` ADD COLUMN `testerLotSize` REAL NOT NULL DEFAULT 0.1")
+                db.execSQL("ALTER TABLE `user_settings` ADD COLUMN `testerLeverage` INTEGER NOT NULL DEFAULT 100")
+            }
+        }
 
         fun getDatabase(context: Context, scope: CoroutineScope): TradingDatabase {
             return INSTANCE ?: synchronized(this) {
@@ -52,6 +83,7 @@ abstract class TradingDatabase : RoomDatabase() {
                     TradingDatabase::class.java,
                     "tradepulse_v2.db"
                 )
+                    .addMigrations(MIGRATION_6_7)
                     .fallbackToDestructiveMigration()
                     .addCallback(DatabaseCallback(scope))
                     .build()
@@ -102,10 +134,14 @@ abstract class TradingDatabase : RoomDatabase() {
                         backtestAiModel = "claude-opus-5-5",
                         isOutlookEnabled = true,
                         newsAlertEnabled = false,
-                        bottomNavStyle = BottomNavStyle.LIQUID_GLASS
+                        bottomNavStyle = BottomNavStyle.LIQUID_GLASS,
+                        activeAccountProfileId = 0L,
+                        testerLotSize = 0.10,
+                        testerLeverage = 100
                     )
                 )
             }
         }
     }
 }
+

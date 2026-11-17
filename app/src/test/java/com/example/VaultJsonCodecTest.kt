@@ -1,5 +1,6 @@
 package com.example
 
+import com.example.data.local.AccountProfileEntity
 import com.example.data.local.BacktestRunEntity
 import com.example.data.local.BotEntity
 import com.example.data.local.DailyReviewEntity
@@ -77,7 +78,10 @@ class VaultJsonCodecTest {
             backtestAiModel = "gpt-6.1-sol",
             isOutlookEnabled = false,
             newsAlertEnabled = true,
-            bottomNavStyle = BottomNavStyle.NEON_ORBIT
+            bottomNavStyle = BottomNavStyle.NEON_ORBIT,
+            activeAccountProfileId = 7L,
+            testerLotSize = 0.35,
+            testerLeverage = 500
         )
 
         val snapshot = VaultSnapshot(
@@ -198,6 +202,24 @@ class VaultJsonCodecTest {
                     equityCurveCsv = "100.0,500.0",
                     createdAt = 1773592000000L
                 )
+            ),
+            accountProfiles = listOf(
+                AccountProfileEntity(
+                    id = 7L,
+                    name = "Raw ECN 25K",
+                    accountCategory = "Raw ECN",
+                    startingBalance = 25000.0,
+                    defaultLotSize = 0.25,
+                    leverage = 500,
+                    commissionPerLot = 7.0,
+                    valuePerPointPerLot = 1.0,
+                    contractSizePerLot = 100.0,
+                    stopOutLevelPct = 30.0,
+                    instrumentLabel = "XAUUSD (0.01 pt)",
+                    notes = "Primary scalping desk",
+                    createdAt = 1773500000000L,
+                    updatedAt = 1773593000000L
+                )
             )
         )
 
@@ -255,6 +277,20 @@ class VaultJsonCodecTest {
         assertEquals(2, decoded.backtestRuns.size)
         assertEquals(2.15, decoded.backtestRuns[0].profitFactor!!, 1e-6)
         assertNull(decoded.backtestRuns[1].profitFactor)
+
+        assertEquals(7L, restoredSettings.activeAccountProfileId)
+        assertEquals(0.35, restoredSettings.testerLotSize, 1e-6)
+        assertEquals(500, restoredSettings.testerLeverage)
+        assertEquals("Raw ECN 25K", decoded.activeAccountProfileName)
+        assertEquals(1, decoded.accountProfiles.size)
+        val restoredProfile = decoded.accountProfiles.single()
+        assertEquals("Raw ECN 25K", restoredProfile.name)
+        assertEquals("Raw ECN", restoredProfile.accountCategory)
+        assertEquals(25000.0, restoredProfile.startingBalance, 1e-6)
+        assertEquals(0.25, restoredProfile.defaultLotSize, 1e-6)
+        assertEquals(500, restoredProfile.leverage)
+        assertEquals(7.0, restoredProfile.commissionPerLot, 1e-6)
+        assertEquals(30.0, restoredProfile.stopOutLevelPct, 1e-6)
     }
 
     @Test
@@ -304,6 +340,8 @@ class VaultJsonCodecTest {
         assertTrue(decoded.pythonStrategies.isEmpty())
         assertTrue(decoded.dailyReviews.isEmpty())
         assertTrue(decoded.backtestRuns.isEmpty())
+        assertTrue(decoded.accountProfiles.isEmpty())
+        assertEquals("", decoded.activeAccountProfileName)
     }
 
     @Test
@@ -359,5 +397,29 @@ class VaultJsonCodecTest {
             )
         )
         assertTrue(VaultJsonCodec.hasMeaningfulData(withPythonStrategy))
+
+        val withAccountProfile = emptySnapshot.copy(
+            accountProfiles = listOf(
+                AccountProfileEntity(
+                    id = 1L,
+                    name = "Funded 100K",
+                    accountCategory = "Prop",
+                    startingBalance = 100_000.0,
+                    defaultLotSize = 1.0,
+                    leverage = 30
+                )
+            )
+        )
+        assertTrue(VaultJsonCodec.hasMeaningfulData(withAccountProfile))
+
+        val withCustomTesterLot = emptySnapshot.copy(
+            settings = defaultSettings().copy(testerLotSize = 0.25)
+        )
+        assertTrue(VaultJsonCodec.hasMeaningfulData(withCustomTesterLot))
+
+        val withCustomTesterLev = emptySnapshot.copy(
+            settings = defaultSettings().copy(testerLeverage = 200)
+        )
+        assertTrue(VaultJsonCodec.hasMeaningfulData(withCustomTesterLev))
     }
 }

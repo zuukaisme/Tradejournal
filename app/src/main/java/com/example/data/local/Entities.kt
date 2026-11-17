@@ -157,7 +157,29 @@ data class UserSettingsEntity(
     val backtestAiModel: String = "claude-opus-5-5",
     val isOutlookEnabled: Boolean,
     val newsAlertEnabled: Boolean,
-    val bottomNavStyle: BottomNavStyle = BottomNavStyle.LIQUID_GLASS
+    val bottomNavStyle: BottomNavStyle = BottomNavStyle.LIQUID_GLASS,
+    val activeAccountProfileId: Long = 0L,
+    val testerLotSize: Double = 0.10,
+    val testerLeverage: Int = 100
+)
+
+@Entity(tableName = "account_profiles")
+data class AccountProfileEntity(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+    val name: String,
+    val accountCategory: String = "Standard",
+    val startingBalance: Double = 10000.0,
+    val defaultLotSize: Double = 0.10,
+    val leverage: Int = 100,
+    val commissionPerLot: Double = 0.0,
+    val valuePerPointPerLot: Double = 1.0,
+    val contractSizePerLot: Double = 100.0,
+    val stopOutLevelPct: Double = 50.0,
+    val instrumentLabel: String = "XAUUSD (0.01 pt)",
+    val notes: String = "",
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
 )
 
 @Entity(tableName = "python_strategies")
@@ -191,4 +213,5 @@ data class BacktestRunEntity(
     val equityCurveCsv: String,
     val createdAt: Long
 )
+
 

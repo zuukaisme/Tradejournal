@@ -28,6 +28,7 @@ import com.example.domain.model.Strategy
 import com.example.domain.model.TimePeriod
 import com.example.domain.model.Trade
 import com.example.domain.model.TradeResult
+import com.example.domain.model.TradingAccountProfile
 import com.example.domain.model.UserSettings
 import com.example.domain.usecase.GoldNewsFeedMapper
 import com.example.domain.usecase.GoldOutlookModel
@@ -75,6 +76,8 @@ enum class AppScreen {
     BOTS,
     OUTLOOK,
     BACKTEST,
+    BACKTEST_ACCOUNT,
+    PROFILE,
     RISK_CALC,
     CHARTS,
     ECONOMIC_CALENDAR,
@@ -156,6 +159,17 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
 
     val settings: StateFlow<UserSettings> = repository.getSettings()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UserSettings())
+
+    val accountProfiles: StateFlow<List<TradingAccountProfile>> = repository.getAllAccountProfiles()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val activeAccountProfile: StateFlow<TradingAccountProfile?> = combine(
+        accountProfiles,
+        settings
+    ) { profiles, currentSettings ->
+        profiles.firstOrNull { it.id == currentSettings.activeAccountProfileId }
+            ?: profiles.firstOrNull()
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     // Local Vault persistence state (on-device Downloads/TradePulse snapshot & fresh-install restore)
     private val _autoVaultEnabled = MutableStateFlow(LocalVaultStorage.isAutoVaultEnabled(application))
@@ -678,6 +692,106 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
                     monthlyProfitTarget = monthlyProfitTarget,
                     maxDailyLossLimit = maxDailyLossLimit,
                     maxTrailingDrawdown = maxTrailingDrawdown
+                )
+            )
+        }
+    }
+
+    // --- Trading Account Profiles & Trade Tester Fixed Lot / Leverage ---
+    fun saveAccountProfile(
+        profile: TradingAccountProfile,
+        makeActive: Boolean = false,
+        syncToTester: Boolean = true
+    ) {
+        viewModelScope.launch {
+            val currentSettings = repository.getSettingsOnce()
+            val savedId = repository.saveAccountProfile(profile)
+            val shouldActivate = makeActive ||
+                currentSettings.activeAccountProfileId == 0L ||
+                currentSettings.activeAccountProfileId == savedId
+            if (shouldActivate) {
+                repository.saveSettings(
+                    currentSettings.copy(
+                        activeAccountProfileId = savedId,
+                        testerLotSize = if (syncToTester) profile.defaultLotSize else currentSettings.testerLotSize,
+                        testerLeverage = if (syncToTester) profile.leverage else currentSettings.testerLeverage
+                    )
+                )
+            }
+        }
+    }
+
+    fun selectActiveAccountProfile(
+        profile: TradingAccountProfile,
+        syncDefaultsToTester: Boolean = true
+    ) {
+        viewModelScope.launch {
+            val current = repository.getSettingsOnce()
+            repository.saveSettings(
+                current.copy(
+                    activeAccountProfileId = profile.id,
+                    testerLotSize = if (syncDefaultsToTester) profile.defaultLotSize else current.testerLotSize,
+                    testerLeverage = if (syncDefaultsToTester) profile.leverage else current.testerLeverage
+                )
+            )
+        }
+    }
+
+    fun deleteAccountProfile(id: Long) {
+        viewModelScope.launch {
+            repository.deleteAccountProfile(id)
+        }
+    }
+
+    fun updateTesterLotSize(lotSize: Double) {
+        val safeLot = lotSize.coerceAtLeast(0.001)
+        viewModelScope.launch {
+            val current = repository.getSettingsOnce()
+            repository.saveSettings(current.copy(testerLotSize = safeLot))
+        }
+    }
+
+    fun updateTesterLeverage(leverage: Int) {
+        val safeLeverage = leverage.coerceIn(1, 5000)
+        viewModelScope.launch {
+            val current = repository.getSettingsOnce()
+            repository.saveSettings(current.copy(testerLeverage = safeLeverage))
+        }
+    }
+
+    fun applyTesterSpecsToActiveProfile(
+        lotSize: Double,
+        leverage: Int,
+        startingBalance: Double? = null,
+        commissionPerLot: Double? = null,
+        valuePerPointPerLot: Double? = null,
+        contractSizePerLot: Double? = null,
+        instrumentLabel: String? = null
+    ) {
+        viewModelScope.launch {
+            val currentSettings = repository.getSettingsOnce()
+            val profiles = accountProfiles.value
+            val existing = profiles.firstOrNull { it.id == currentSettings.activeAccountProfileId }
+                ?: profiles.firstOrNull()
+            val updatedProfile = (existing ?: TradingAccountProfile(name = "Custom Account")).copy(
+                defaultLotSize = lotSize.coerceAtLeast(0.001),
+                leverage = leverage.coerceIn(1, 5000),
+                startingBalance = startingBalance?.coerceAtLeast(1.0)
+                    ?: existing?.startingBalance ?: 10_000.0,
+                commissionPerLot = commissionPerLot?.coerceAtLeast(0.0)
+                    ?: existing?.commissionPerLot ?: 0.0,
+                valuePerPointPerLot = valuePerPointPerLot?.coerceAtLeast(0.0001)
+                    ?: existing?.valuePerPointPerLot ?: 1.0,
+                contractSizePerLot = contractSizePerLot?.coerceAtLeast(0.01)
+                    ?: existing?.contractSizePerLot ?: 100.0,
+                instrumentLabel = instrumentLabel ?: existing?.instrumentLabel ?: "XAUUSD (0.01 pt)"
+            )
+            val savedId = repository.saveAccountProfile(updatedProfile)
+            repository.saveSettings(
+                currentSettings.copy(
+                    activeAccountProfileId = savedId,
+                    testerLotSize = updatedProfile.defaultLotSize,
+                    testerLeverage = updatedProfile.leverage
                 )
             )
         }
@@ -1216,14 +1330,15 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
                 _isVaultLoading.value = false
             }
 
-            // Auto-sync Downloads/TradePulse/tradepulse_vault.json whenever user data/settings change
+            // Auto-sync Downloads/TradePulse/tradepulse_vault.json whenever user data/settings/profiles change
             combine(
                 trades,
                 strategies,
                 pythonStrategies,
                 bots,
                 dailyReviews,
-                settings
+                settings,
+                accountProfiles
             ) { values -> values }
                 .drop(1)
                 .debounce(1500L)

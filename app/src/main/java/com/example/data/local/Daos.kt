@@ -219,4 +219,29 @@ interface BacktestRunDao {
     suspend fun deleteAllRuns()
 }
 
+@Dao
+interface AccountProfileDao {
+    @Query("SELECT * FROM account_profiles ORDER BY updatedAt DESC, id DESC")
+    fun getAllAccountProfiles(): Flow<List<AccountProfileEntity>>
+
+    @Query("SELECT * FROM account_profiles ORDER BY updatedAt DESC, id DESC")
+    suspend fun getAllAccountProfilesOnce(): List<AccountProfileEntity>
+
+    @Query("SELECT * FROM account_profiles WHERE id = :id LIMIT 1")
+    suspend fun getAccountProfileById(id: Long): AccountProfileEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAccountProfile(profile: AccountProfileEntity): Long
+
+    @Update
+    suspend fun updateAccountProfile(profile: AccountProfileEntity)
+
+    @Query("DELETE FROM account_profiles WHERE id = :id")
+    suspend fun deleteAccountProfileById(id: Long)
+
+    @Query("DELETE FROM account_profiles")
+    suspend fun deleteAllAccountProfiles()
+}
+
+
 

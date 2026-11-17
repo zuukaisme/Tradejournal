@@ -1,6 +1,7 @@
 package com.example.data.repository
 
 import com.example.backtest.SavedBacktestRun
+import com.example.data.local.AccountProfileEntity
 import com.example.data.local.BacktestRunEntity
 import com.example.data.local.BotEntity
 import com.example.data.local.BotVersionEntity
@@ -25,6 +26,7 @@ import com.example.domain.model.Strategy
 import com.example.domain.model.Trade
 import com.example.domain.model.TradeDirection
 import com.example.domain.model.TradeResult
+import com.example.domain.model.TradingAccountProfile
 import com.example.domain.model.UserSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -49,6 +51,7 @@ class TradingRepository(
     private val outlookDao = database.outlookDao()
     private val pythonStrategyDao = database.pythonStrategyDao()
     private val backtestRunDao = database.backtestRunDao()
+    private val accountProfileDao = database.accountProfileDao()
 
     companion object {
         private const val INLINE_CODE_CHAR_LIMIT = 12_000
@@ -297,6 +300,49 @@ class TradingRepository(
         settingsDao.saveSettings(settings.toEntity())
     }
 
+    // --- Custom Trading Account Profiles ---
+    fun getAllAccountProfiles(): Flow<List<TradingAccountProfile>> =
+        accountProfileDao.getAllAccountProfiles().map { list ->
+            list.map { it.toDomain() }
+        }
+
+    suspend fun saveAccountProfile(profile: TradingAccountProfile): Long = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        val normalized = profile.copy(
+            name = profile.name.trim().ifBlank { "Custom Account" },
+            accountCategory = profile.accountCategory.trim().ifBlank { "Custom" },
+            startingBalance = profile.startingBalance.coerceAtLeast(1.0),
+            defaultLotSize = profile.defaultLotSize.coerceAtLeast(0.001),
+            leverage = profile.leverage.coerceIn(1, 5000),
+            commissionPerLot = profile.commissionPerLot.coerceAtLeast(0.0),
+            valuePerPointPerLot = profile.valuePerPointPerLot.coerceAtLeast(0.0001),
+            contractSizePerLot = profile.contractSizePerLot.coerceAtLeast(0.01),
+            stopOutLevelPct = profile.stopOutLevelPct.coerceIn(0.0, 200.0),
+            updatedAt = now
+        )
+        if (normalized.id == 0L) {
+            accountProfileDao.insertAccountProfile(normalized.copy(createdAt = now).toEntity())
+        } else {
+            accountProfileDao.updateAccountProfile(normalized.toEntity())
+            normalized.id
+        }
+    }
+
+    suspend fun deleteAccountProfile(id: Long) = withContext(Dispatchers.IO) {
+        accountProfileDao.deleteAccountProfileById(id)
+        val currentSettings = settingsDao.getSettingsOnce()
+        if (currentSettings != null && currentSettings.activeAccountProfileId == id) {
+            val remaining = accountProfileDao.getAllAccountProfilesOnce().firstOrNull()
+            settingsDao.saveSettings(
+                currentSettings.copy(
+                    activeAccountProfileId = remaining?.id ?: 0L,
+                    testerLotSize = remaining?.defaultLotSize ?: currentSettings.testerLotSize,
+                    testerLeverage = remaining?.leverage ?: currentSettings.testerLeverage
+                )
+            )
+        }
+    }
+
     // --- CSV Export ---
     suspend fun exportTradesToCsv(trades: List<Trade>): String = withContext(Dispatchers.Default) {
         val sb = StringBuilder()
@@ -324,7 +370,8 @@ class TradingRepository(
             pythonStrategies = resolvedPy,
             bots = resolvedBots,
             dailyReviews = reviewDao.getAllReviews().first(),
-            backtestRuns = backtestRunDao.getAllRuns().first()
+            backtestRuns = backtestRunDao.getAllRuns().first(),
+            accountProfiles = accountProfileDao.getAllAccountProfilesOnce()
         )
     }
 
@@ -429,6 +476,38 @@ class TradingRepository(
                 }
             }
 
+            val existingProfiles = accountProfileDao.getAllAccountProfilesOnce()
+                .associateBy { it.name.trim().lowercase(java.util.Locale.US) }
+                .toMutableMap()
+            var profilesRestored = 0
+            for (profile in payload.accountProfiles) {
+                val key = profile.name.trim().lowercase(java.util.Locale.US)
+                if (key.isNotEmpty()) {
+                    val existing = existingProfiles[key]
+                    if (existing == null) {
+                        val newId = accountProfileDao.insertAccountProfile(profile)
+                        existingProfiles[key] = profile.copy(id = newId)
+                        profilesRestored++
+                    } else if (profile.updatedAt > existing.updatedAt) {
+                        val updated = profile.copy(id = existing.id)
+                        accountProfileDao.updateAccountProfile(updated)
+                        existingProfiles[key] = updated
+                        profilesRestored++
+                    }
+                }
+            }
+
+            if (payload.hasSettingsSection && payload.settings != null) {
+                val targetNameKey = payload.activeAccountProfileName.trim().lowercase(java.util.Locale.US)
+                val matchedProfileId = existingProfiles[targetNameKey]?.id
+                    ?: payload.settings.activeAccountProfileId
+                        .takeIf { id -> id > 0L && accountProfileDao.getAccountProfileById(id) != null }
+                    ?: 0L
+                settingsDao.saveSettings(
+                    payload.settings.copy(activeAccountProfileId = matchedProfileId)
+                )
+            }
+
             VaultRestoreSummary(
                 success = true,
                 schemaVersion = payload.schemaVersion,
@@ -439,7 +518,8 @@ class TradingRepository(
                 pythonStrategiesRestored = pyRestored,
                 botsRestored = botsRestored,
                 reviewsRestored = reviewsRestored,
-                backtestRunsRestored = runsRestored
+                backtestRunsRestored = runsRestored,
+                accountProfilesRestored = profilesRestored
             )
         } catch (e: Exception) {
             e.printStackTrace()
@@ -463,6 +543,11 @@ class TradingRepository(
         reviewDao.deleteAllReviews()
         outlookDao.deleteAllReleases()
         outlookDao.deleteAllPredictions()
+        accountProfileDao.deleteAllAccountProfiles()
+        val current = settingsDao.getSettingsOnce()
+        if (current != null) {
+            settingsDao.saveSettings(current.copy(activeAccountProfileId = 0L))
+        }
         codeBlobsDir()?.deleteRecursively()
     }
 
@@ -811,7 +896,10 @@ class TradingRepository(
         backtestAiModel = backtestAiModel,
         isOutlookEnabled = isOutlookEnabled,
         newsAlertEnabled = newsAlertEnabled,
-        bottomNavStyle = bottomNavStyle
+        bottomNavStyle = bottomNavStyle,
+        activeAccountProfileId = activeAccountProfileId,
+        testerLotSize = testerLotSize,
+        testerLeverage = testerLeverage
     )
 
     private fun UserSettings.toEntity() = UserSettingsEntity(
@@ -836,7 +924,44 @@ class TradingRepository(
         backtestAiModel = backtestAiModel,
         isOutlookEnabled = isOutlookEnabled,
         newsAlertEnabled = newsAlertEnabled,
-        bottomNavStyle = bottomNavStyle
+        bottomNavStyle = bottomNavStyle,
+        activeAccountProfileId = activeAccountProfileId,
+        testerLotSize = testerLotSize,
+        testerLeverage = testerLeverage
+    )
+
+    private fun AccountProfileEntity.toDomain() = TradingAccountProfile(
+        id = id,
+        name = name,
+        accountCategory = accountCategory,
+        startingBalance = startingBalance,
+        defaultLotSize = defaultLotSize,
+        leverage = leverage,
+        commissionPerLot = commissionPerLot,
+        valuePerPointPerLot = valuePerPointPerLot,
+        contractSizePerLot = contractSizePerLot,
+        stopOutLevelPct = stopOutLevelPct,
+        instrumentLabel = instrumentLabel,
+        notes = notes,
+        createdAt = createdAt,
+        updatedAt = updatedAt
+    )
+
+    private fun TradingAccountProfile.toEntity() = AccountProfileEntity(
+        id = id,
+        name = name,
+        accountCategory = accountCategory,
+        startingBalance = startingBalance,
+        defaultLotSize = defaultLotSize,
+        leverage = leverage,
+        commissionPerLot = commissionPerLot,
+        valuePerPointPerLot = valuePerPointPerLot,
+        contractSizePerLot = contractSizePerLot,
+        stopOutLevelPct = stopOutLevelPct,
+        instrumentLabel = instrumentLabel,
+        notes = notes,
+        createdAt = createdAt,
+        updatedAt = updatedAt
     )
 
     private fun com.example.data.local.NewsReleaseEntity.toDomain() = com.example.domain.model.NewsRelease(

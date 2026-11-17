@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
+import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Bolt
@@ -190,6 +191,38 @@ fun MenuScreen(
             }
         }
 
+        // Profile & Active Trading Account Card
+        item {
+            val activeProf by viewModel.activeAccountProfile.collectAsState()
+            val profTitle = activeProf?.name ?: "Trading Profile & Accounts"
+            val profSubtitle = if (activeProf != null) {
+                String.format(
+                    java.util.Locale.US,
+                    "%s • %s • %.2f lots • 1:%d",
+                    activeProf!!.accountCategory,
+                    com.example.presentation.components.CurrencyFormatter.format(activeProf!!.startingBalance, settings.currency, false),
+                    settings.testerLotSize,
+                    settings.testerLeverage
+                )
+            } else {
+                String.format(
+                    java.util.Locale.US,
+                    "Create custom accounts • Fixed %.2f lots • 1:%d",
+                    settings.testerLotSize,
+                    settings.testerLeverage
+                )
+            }
+            MenuNavigationCard(
+                icon = Icons.Default.AccountBalanceWallet,
+                iconTint = accentColor,
+                title = profTitle,
+                subtitle = profSubtitle,
+                badgeText = "1:${settings.testerLeverage}",
+                testTag = "menu_item_profile",
+                onClick = { viewModel.navigateTo(AppScreen.PROFILE) }
+            )
+        }
+
         // Section 1: Execution & Tools
         item {
             Text(
@@ -270,6 +303,18 @@ fun MenuScreen(
                 badgeText = "Engine",
                 testTag = "menu_item_backtest",
                 onClick = { viewModel.navigateTo(AppScreen.BACKTEST) }
+            )
+        }
+
+        item {
+            MenuNavigationCard(
+                icon = Icons.Default.AccountBalanceWallet,
+                iconTint = Color(0xFFFFB300),
+                title = "Account Profit Simulator",
+                subtitle = "View real currency P&L, margin & itemized cashflow",
+                badgeText = String.format(java.util.Locale.US, "%.2f Lot", settings.testerLotSize),
+                testTag = "menu_item_account_simulator",
+                onClick = { viewModel.navigateTo(AppScreen.BACKTEST_ACCOUNT) }
             )
         }
 

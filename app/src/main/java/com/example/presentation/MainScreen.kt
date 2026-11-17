@@ -31,6 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
 import androidx.compose.material.icons.automirrored.outlined.FormatListBulleted
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CalendarMonth
@@ -75,12 +76,14 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.presentation.components.LiquidGlassNavItem
 import com.example.presentation.components.ThemedBottomNavBar
+import com.example.presentation.screens.AccountSimulatorScreen
 import com.example.presentation.screens.BacktestScreen
 import com.example.presentation.screens.BotsScreen
 import com.example.presentation.screens.CalendarScreen
 import com.example.presentation.screens.DailyReviewBottomSheet
 import com.example.presentation.screens.MenuScreen
 import com.example.presentation.screens.OutlookScreen
+import com.example.presentation.screens.ProfileScreen
 import com.example.presentation.screens.RiskCalculatorScreen
 import com.example.presentation.screens.SettingsScreen
 import com.example.presentation.screens.StatsScreen
@@ -154,6 +157,8 @@ fun MainScreen(
         AppScreen.BOTS,
         AppScreen.OUTLOOK,
         AppScreen.BACKTEST,
+        AppScreen.BACKTEST_ACCOUNT,
+        AppScreen.PROFILE,
         AppScreen.RISK_CALC,
         AppScreen.CHARTS,
         AppScreen.ECONOMIC_CALENDAR,
@@ -172,6 +177,7 @@ fun MainScreen(
     BackHandler(enabled = currentScreen != AppScreen.CALENDAR) {
         when {
             currentScreen == AppScreen.BACKTEST && backtestState.selectedTab == 1 -> backtestViewModel.selectTab(0)
+            currentScreen == AppScreen.BACKTEST_ACCOUNT -> viewModel.navigateTo(AppScreen.BACKTEST)
             currentScreen == AppScreen.STRATEGY_GUIDE -> viewModel.navigateTo(AppScreen.STRATEGIES)
             isSecondaryScreen -> viewModel.navigateTo(AppScreen.MENU)
             else -> viewModel.navigateTo(AppScreen.CALENDAR)
@@ -188,17 +194,21 @@ fun MainScreen(
                     if (isSecondaryScreen) {
                         IconButton(
                             onClick = {
-                                if (currentScreen == AppScreen.STRATEGY_GUIDE) {
-                                    viewModel.navigateTo(AppScreen.STRATEGIES)
-                                } else {
-                                    viewModel.navigateTo(AppScreen.MENU)
+                                when (currentScreen) {
+                                    AppScreen.BACKTEST_ACCOUNT -> viewModel.navigateTo(AppScreen.BACKTEST)
+                                    AppScreen.STRATEGY_GUIDE -> viewModel.navigateTo(AppScreen.STRATEGIES)
+                                    else -> viewModel.navigateTo(AppScreen.MENU)
                                 }
                             },
                             modifier = Modifier.testTag("top_bar_back_button")
                         ) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = if (currentScreen == AppScreen.STRATEGY_GUIDE) "Back to Strategies" else "Back to Menu",
+                                contentDescription = when (currentScreen) {
+                                    AppScreen.BACKTEST_ACCOUNT -> "Back to Backtester"
+                                    AppScreen.STRATEGY_GUIDE -> "Back to Strategies"
+                                    else -> "Back to Menu"
+                                },
                                 tint = MaterialTheme.colorScheme.primary
                             )
                         }
@@ -235,6 +245,8 @@ fun MainScreen(
                                     AppScreen.BOTS -> "MQL5 Bot Library"
                                     AppScreen.OUTLOOK -> "Gold News Outlook"
                                     AppScreen.BACKTEST -> "Strategy Backtester"
+                                    AppScreen.BACKTEST_ACCOUNT -> "Account Profit Simulator"
+                                    AppScreen.PROFILE -> "Trading Profile"
                                     AppScreen.RISK_CALC -> "Risk & Lot Calculator"
                                     AppScreen.CHARTS -> "Trading Charts"
                                     AppScreen.ECONOMIC_CALENDAR -> "Economic Calendar"
@@ -242,7 +254,8 @@ fun MainScreen(
                                     AppScreen.SETTINGS -> "Settings & Storage"
                                 },
                                 style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1
                             )
                             Text(
                                 text = when (currentScreen) {
@@ -255,6 +268,8 @@ fun MainScreen(
                                     AppScreen.BOTS -> "Offline expert advisors & scripts"
                                     AppScreen.OUTLOOK -> "XAUUSD macro event probabilities"
                                     AppScreen.BACKTEST -> "Embedded Python & MT5 simulator"
+                                    AppScreen.BACKTEST_ACCOUNT -> "Fixed-lot balance, leverage & cashflows"
+                                    AppScreen.PROFILE -> "Custom accounts, default lot & Vault sync"
                                     AppScreen.RISK_CALC -> "WLTrade SyntX, Gold & FX sizing"
                                     AppScreen.CHARTS -> "TradingView charts for live markets"
                                     AppScreen.ECONOMIC_CALENDAR -> "News by impact, currency and date"
@@ -262,7 +277,8 @@ fun MainScreen(
                                     AppScreen.SETTINGS -> "Risk limits, backup & API keys"
                                 },
                                 style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1
                             )
                         }
                     }
@@ -388,6 +404,22 @@ fun MainScreen(
                                 )
                             }
                         }
+                    }
+
+                    val isProfileActive = currentScreen == AppScreen.PROFILE
+                    IconButton(
+                        onClick = { viewModel.navigateTo(AppScreen.PROFILE) },
+                        modifier = Modifier.testTag("topbar_shortcut_profile")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AccountCircle,
+                            contentDescription = "Open Trading Profile",
+                            tint = if (isProfileActive) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onBackground
+                            }
+                        )
                     }
 
                     IconButton(
@@ -586,8 +618,16 @@ fun MainScreen(
                     AppScreen.OUTLOOK -> OutlookScreen(viewModel = viewModel)
                     AppScreen.BACKTEST -> BacktestScreen(
                         onOpenStrategies = { viewModel.navigateTo(AppScreen.STRATEGIES) },
+                        backtestViewModel = backtestViewModel,
+                        tradingViewModel = viewModel,
+                        onOpenAccountSimulator = { viewModel.navigateTo(AppScreen.BACKTEST_ACCOUNT) },
+                        onOpenProfile = { viewModel.navigateTo(AppScreen.PROFILE) }
+                    )
+                    AppScreen.BACKTEST_ACCOUNT -> AccountSimulatorScreen(
+                        tradingViewModel = viewModel,
                         backtestViewModel = backtestViewModel
                     )
+                    AppScreen.PROFILE -> ProfileScreen(viewModel = viewModel)
                     AppScreen.RISK_CALC -> RiskCalculatorScreen(viewModel = viewModel)
                     AppScreen.CHARTS -> TradingViewChartsScreen()
                     AppScreen.ECONOMIC_CALENDAR -> EconomicCalendarScreen(viewModel = viewModel)

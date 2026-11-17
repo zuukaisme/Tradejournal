@@ -18,7 +18,8 @@ data class VaultSnapshot(
     val pythonStrategies: List<PythonStrategyEntity>,
     val bots: List<BotEntity>,
     val dailyReviews: List<DailyReviewEntity>,
-    val backtestRuns: List<BacktestRunEntity>
+    val backtestRuns: List<BacktestRunEntity>,
+    val accountProfiles: List<AccountProfileEntity> = emptyList()
 )
 
 data class ParsedVaultPayload(
@@ -31,7 +32,9 @@ data class ParsedVaultPayload(
     val pythonStrategies: List<PythonStrategyEntity>,
     val bots: List<BotEntity>,
     val dailyReviews: List<DailyReviewEntity>,
-    val backtestRuns: List<BacktestRunEntity>
+    val backtestRuns: List<BacktestRunEntity>,
+    val accountProfiles: List<AccountProfileEntity> = emptyList(),
+    val activeAccountProfileName: String = ""
 )
 
 data class VaultRestoreSummary(
@@ -45,6 +48,7 @@ data class VaultRestoreSummary(
     val botsRestored: Int = 0,
     val reviewsRestored: Int = 0,
     val backtestRunsRestored: Int = 0,
+    val accountProfilesRestored: Int = 0,
     val errorMessage: String? = null
 ) {
     fun toUserMessage(): String {
@@ -52,6 +56,7 @@ data class VaultRestoreSummary(
         val parts = mutableListOf<String>()
         if (apiKeysRestoredCount > 0) parts.add("$apiKeysRestoredCount API key(s)")
         if (settingsRestored) parts.add("settings & theme")
+        if (accountProfilesRestored > 0) parts.add("$accountProfilesRestored account profile(s)")
         if (tradesRestored > 0) parts.add("$tradesRestored trade(s)")
         if (strategiesRestored > 0) parts.add("$strategiesRestored checklist(s)")
         if (pythonStrategiesRestored > 0) parts.add("$pythonStrategiesRestored .py strategy(s)")
@@ -68,7 +73,7 @@ data class VaultRestoreSummary(
 
 object VaultJsonCodec {
 
-    const val CURRENT_VERSION = 2
+    const val CURRENT_VERSION = 3
 
     fun countConfiguredApiKeys(settings: UserSettingsEntity): Int {
         return listOf(
@@ -87,6 +92,9 @@ object VaultJsonCodec {
             snapshot.bots.isNotEmpty() ||
             snapshot.dailyReviews.isNotEmpty() ||
             snapshot.backtestRuns.isNotEmpty() ||
+            snapshot.accountProfiles.isNotEmpty() ||
+            snapshot.settings.testerLotSize != 0.10 ||
+            snapshot.settings.testerLeverage != 100 ||
             countConfiguredApiKeys(snapshot.settings) > 0
     }
 
@@ -96,8 +104,12 @@ object VaultJsonCodec {
         root.put("app", "TradePulse")
         root.put("timestamp", timestamp)
 
-        // Settings & API keys
+        // Settings & API keys & Active Tester Profile overrides
         val s = snapshot.settings
+        val activeProfileName = snapshot.accountProfiles
+            .firstOrNull { it.id == s.activeAccountProfileId }
+            ?.name
+            .orEmpty()
         val settingsObj = JSONObject().apply {
             put("currency", s.currency.name)
             put("monthlyProfitTarget", s.monthlyProfitTarget)
@@ -120,8 +132,35 @@ object VaultJsonCodec {
             put("openAiApiKey", s.openAiApiKey)
             put("backtestAiProvider", s.backtestAiProvider)
             put("backtestAiModel", s.backtestAiModel)
+            put("activeAccountProfileId", s.activeAccountProfileId)
+            put("activeAccountProfileName", activeProfileName)
+            put("testerLotSize", s.testerLotSize)
+            put("testerLeverage", s.testerLeverage)
         }
         root.put("settings", settingsObj)
+
+        // Custom Account Profiles
+        val profilesArray = JSONArray()
+        for (p in snapshot.accountProfiles) {
+            profilesArray.put(
+                JSONObject().apply {
+                    put("name", p.name)
+                    put("accountCategory", p.accountCategory)
+                    put("startingBalance", p.startingBalance)
+                    put("defaultLotSize", p.defaultLotSize)
+                    put("leverage", p.leverage)
+                    put("commissionPerLot", p.commissionPerLot)
+                    put("valuePerPointPerLot", p.valuePerPointPerLot)
+                    put("contractSizePerLot", p.contractSizePerLot)
+                    put("stopOutLevelPct", p.stopOutLevelPct)
+                    put("instrumentLabel", p.instrumentLabel)
+                    put("notes", p.notes)
+                    put("createdAt", p.createdAt)
+                    put("updatedAt", p.updatedAt)
+                }
+            )
+        }
+        root.put("accountProfiles", profilesArray)
 
         // Trades
         val tradesArray = JSONArray()
@@ -257,8 +296,10 @@ object VaultJsonCodec {
         val exportedAt = root.optLong("timestamp", System.currentTimeMillis())
 
         val hasSettings = root.has("settings") && !root.isNull("settings")
+        var activeProfileName = ""
         val parsedSettings = if (hasSettings) {
             val obj = root.getJSONObject("settings")
+            activeProfileName = obj.optString("activeAccountProfileName", "")
             fallbackSettings.copy(
                 id = 1,
                 currency = enumOrDefault(obj.optString("currency"), fallbackSettings.currency),
@@ -283,7 +324,10 @@ object VaultJsonCodec {
                 backtestAiProvider = obj.optString("backtestAiProvider", fallbackSettings.backtestAiProvider)
                     .ifBlank { fallbackSettings.backtestAiProvider },
                 backtestAiModel = obj.optString("backtestAiModel", fallbackSettings.backtestAiModel)
-                    .ifBlank { fallbackSettings.backtestAiModel }
+                    .ifBlank { fallbackSettings.backtestAiModel },
+                activeAccountProfileId = obj.optLong("activeAccountProfileId", fallbackSettings.activeAccountProfileId),
+                testerLotSize = obj.optDouble("testerLotSize", fallbackSettings.testerLotSize),
+                testerLeverage = obj.optInt("testerLeverage", fallbackSettings.testerLeverage)
             )
         } else {
             null
@@ -424,6 +468,30 @@ object VaultJsonCodec {
             }
         }
 
+        val accountProfiles = mutableListOf<AccountProfileEntity>()
+        root.optJSONArray("accountProfiles")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                accountProfiles.add(
+                    AccountProfileEntity(
+                        name = obj.optString("name", "Custom Account").ifBlank { "Custom Account" },
+                        accountCategory = obj.optString("accountCategory", "Standard").ifBlank { "Standard" },
+                        startingBalance = obj.optDouble("startingBalance", 10000.0),
+                        defaultLotSize = obj.optDouble("defaultLotSize", 0.10),
+                        leverage = obj.optInt("leverage", 100).coerceAtLeast(1),
+                        commissionPerLot = obj.optDouble("commissionPerLot", 0.0),
+                        valuePerPointPerLot = obj.optDouble("valuePerPointPerLot", 1.0),
+                        contractSizePerLot = obj.optDouble("contractSizePerLot", 100.0),
+                        stopOutLevelPct = obj.optDouble("stopOutLevelPct", 50.0),
+                        instrumentLabel = obj.optString("instrumentLabel", "XAUUSD (0.01 pt)"),
+                        notes = obj.optString("notes", ""),
+                        createdAt = obj.optLong("createdAt", System.currentTimeMillis()),
+                        updatedAt = obj.optLong("updatedAt", System.currentTimeMillis())
+                    )
+                )
+            }
+        }
+
         return ParsedVaultPayload(
             schemaVersion = version,
             exportedAt = exportedAt,
@@ -434,7 +502,9 @@ object VaultJsonCodec {
             pythonStrategies = pythonStrategies,
             bots = bots,
             dailyReviews = reviews,
-            backtestRuns = runs
+            backtestRuns = runs,
+            accountProfiles = accountProfiles,
+            activeAccountProfileName = activeProfileName
         )
     }
 

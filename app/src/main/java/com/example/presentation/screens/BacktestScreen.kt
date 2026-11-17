@@ -33,6 +33,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BookmarkAdd
@@ -48,6 +49,7 @@ import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
@@ -107,6 +109,7 @@ import com.example.backtest.StrategyLiveProgress
 import com.example.backtest.Trade
 import com.example.backtest.worker.WorkerPoolBacktestCoordinator
 import com.example.presentation.BacktestViewModel
+import com.example.presentation.TradingViewModel
 import com.example.presentation.components.LiquidGlassCard
 import com.example.presentation.components.LiquidGlassTabRow
 import com.example.ui.theme.AmberGold
@@ -119,9 +122,18 @@ import org.json.JSONObject
 fun BacktestScreen(
     onOpenStrategies: () -> Unit,
     modifier: Modifier = Modifier,
-    backtestViewModel: BacktestViewModel = viewModel()
+    backtestViewModel: BacktestViewModel = viewModel(),
+    tradingViewModel: TradingViewModel? = null,
+    onOpenAccountSimulator: () -> Unit = {},
+    onOpenProfile: () -> Unit = {}
 ) {
     val state by backtestViewModel.uiState.collectAsState()
+    val settings = tradingViewModel?.settings?.collectAsState()?.value
+    val activeProfile = tradingViewModel?.activeAccountProfile?.collectAsState()?.value
+    val currentLotSize = settings?.testerLotSize ?: 0.10
+    val currentLeverage = settings?.testerLeverage ?: 100
+    var showAccountChipEditor by remember { mutableStateOf(false) }
+
     var strategyMenuExpanded by remember { mutableStateOf(false) }
     var tradeFilter by remember(state.result) { mutableIntStateOf(0) }
     val filteredTrades = remember(state.result?.trades, tradeFilter) {
@@ -748,6 +760,93 @@ fun BacktestScreen(
                             )
                         }
 
+                        if (tradingViewModel != null) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                item {
+                                    FilterChip(
+                                        selected = true,
+                                        onClick = { showAccountChipEditor = true },
+                                        label = {
+                                            Text(
+                                                text = String.format(Locale.US, "Lot: %.2f", currentLotSize),
+                                                fontSize = 11.sp,
+                                                fontFamily = FontFamily.Monospace,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        },
+                                        colors = FilterChipDefaults.filterChipColors(
+                                            selectedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+                                            selectedLabelColor = positiveColor
+                                        ),
+                                        modifier = Modifier.testTag("tester_chip_lot_size")
+                                    )
+                                }
+                                item {
+                                    FilterChip(
+                                        selected = true,
+                                        onClick = { showAccountChipEditor = true },
+                                        label = {
+                                            Text(
+                                                text = "Lev: 1:$currentLeverage",
+                                                fontSize = 11.sp,
+                                                fontFamily = FontFamily.Monospace,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        },
+                                        colors = FilterChipDefaults.filterChipColors(
+                                            selectedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+                                            selectedLabelColor = AmberGold
+                                        ),
+                                        modifier = Modifier.testTag("tester_chip_leverage")
+                                    )
+                                }
+                                item {
+                                    FilterChip(
+                                        selected = false,
+                                        onClick = onOpenProfile,
+                                        label = {
+                                            Text(
+                                                text = activeProfile?.name ?: "Default Profile",
+                                                fontSize = 11.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        },
+                                        modifier = Modifier.testTag("tester_chip_profile")
+                                    )
+                                }
+                                if (state.result != null) {
+                                    item {
+                                        FilterChip(
+                                            selected = true,
+                                            onClick = onOpenAccountSimulator,
+                                            leadingIcon = {
+                                                Icon(
+                                                    imageVector = Icons.Default.AccountBalanceWallet,
+                                                    contentDescription = "Open Account Profit Simulator",
+                                                    modifier = Modifier.size(14.dp)
+                                                )
+                                            },
+                                            label = {
+                                                Text("Account $", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                            },
+                                            colors = FilterChipDefaults.filterChipColors(
+                                                selectedContainerColor = positiveColor,
+                                                selectedLabelColor = onPrimaryColor,
+                                                selectedLeadingIconColor = onPrimaryColor
+                                            ),
+                                            modifier = Modifier.testTag("tester_chip_account_results")
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
                         Spacer(modifier = Modifier.height(12.dp))
 
                         val canRun = !state.isLoading && !state.isQueueRunning && !state.isImportingCsv && state.hasCsvBytes &&
@@ -1289,24 +1388,48 @@ fun BacktestScreen(
                             fontWeight = FontWeight.Bold
                         )
                         if (result.trades.isNotEmpty()) {
-                            OutlinedButton(
-                                onClick = {
-                                    val firstIdx = filteredTrades.firstOrNull()?.index ?: 0
-                                    backtestViewModel.openTradeReplay(firstIdx)
-                                },
-                                modifier = Modifier
-                                    .height(48.dp)
-                                    .testTag("open_trade_replay_button"),
-                                shape = RoundedCornerShape(10.dp),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.CandlestickChart,
-                                    contentDescription = "Replay trades on chart",
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Replay Trades", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                if (tradingViewModel != null) {
+                                    OutlinedButton(
+                                        onClick = onOpenAccountSimulator,
+                                        modifier = Modifier
+                                            .height(48.dp)
+                                            .testTag("open_account_simulator_button"),
+                                        shape = RoundedCornerShape(10.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.AccountBalanceWallet,
+                                            contentDescription = "Open Account & Profit Screen",
+                                            tint = positiveColor,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(5.dp))
+                                        Text("Account $", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        val firstIdx = filteredTrades.firstOrNull()?.index ?: 0
+                                        backtestViewModel.openTradeReplay(firstIdx)
+                                    },
+                                    modifier = Modifier
+                                        .height(48.dp)
+                                        .testTag("open_trade_replay_button"),
+                                    shape = RoundedCornerShape(10.dp),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.CandlestickChart,
+                                        contentDescription = "Replay trades on chart",
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Replay", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                     }
@@ -1403,6 +1526,104 @@ fun BacktestScreen(
             error = state.replayError,
             onSelectTradeIndex = backtestViewModel::selectReplayTradeAt,
             onClose = backtestViewModel::closeTradeReplay
+        )
+    }
+
+    if (showAccountChipEditor && tradingViewModel != null) {
+        var lotDraft by remember(currentLotSize) {
+            mutableStateOf(String.format(Locale.US, "%.2f", currentLotSize))
+        }
+        var leverageDraft by remember(currentLeverage) {
+            mutableStateOf(currentLeverage.toString())
+        }
+        val quickLots = listOf(0.01, 0.05, 0.10, 0.25, 0.50, 1.00)
+        val quickLevs = listOf(30, 50, 100, 200, 500, 1000)
+
+        AlertDialog(
+            onDismissRequest = { showAccountChipEditor = false },
+            title = {
+                Text("Trade Tester Fixed Lot & Leverage", fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "Every change automatically syncs into your Trading Vault.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = lotDraft,
+                        onValueChange = { lotDraft = it },
+                        label = { Text("Fixed Lot Size") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("dialog_tester_lot_input"),
+                        shape = RoundedCornerShape(10.dp)
+                    )
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(quickLots) { lot ->
+                            val lbl = String.format(Locale.US, "%.2f", lot)
+                            FilterChip(
+                                selected = lotDraft.toDoubleOrNull() == lot,
+                                onClick = { lotDraft = lbl },
+                                label = { Text(lbl, fontSize = 11.sp, fontFamily = FontFamily.Monospace) }
+                            )
+                        }
+                    }
+                    OutlinedTextField(
+                        value = leverageDraft,
+                        onValueChange = { leverageDraft = it.filter(Char::isDigit) },
+                        label = { Text("Leverage (1:X)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("dialog_tester_leverage_input"),
+                        shape = RoundedCornerShape(10.dp)
+                    )
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(quickLevs) { lev ->
+                            FilterChip(
+                                selected = leverageDraft.toIntOrNull() == lev,
+                                onClick = { leverageDraft = lev.toString() },
+                                label = { Text("1:$lev", fontSize = 11.sp, fontFamily = FontFamily.Monospace) }
+                            )
+                        }
+                    }
+                    TextButton(
+                        onClick = {
+                            showAccountChipEditor = false
+                            onOpenProfile()
+                        },
+                        modifier = Modifier.align(Alignment.End)
+                    ) {
+                        Text("Edit Custom Account Profiles →", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        lotDraft.toDoubleOrNull()?.takeIf { it > 0.0 }?.let {
+                            tradingViewModel.updateTesterLotSize(it)
+                        }
+                        leverageDraft.toIntOrNull()?.takeIf { it >= 1 }?.let {
+                            tradingViewModel.updateTesterLeverage(it)
+                        }
+                        showAccountChipEditor = false
+                    },
+                    modifier = Modifier.testTag("dialog_tester_save_button")
+                ) {
+                    Text("Save to Vault")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showAccountChipEditor = false }) {
+                    Text("Cancel")
+                }
+            }
         )
     }
     }
