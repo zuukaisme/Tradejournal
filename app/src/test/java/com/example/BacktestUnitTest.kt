@@ -1091,4 +1091,83 @@ class BacktestUnitTest {
             tempDir.deleteRecursively()
         }
     }
+
+    @Test
+    fun chaquopyAssetIntegrity_validatesBootstrapEntriesAndRejectsCorruption() {
+        val tempDir = java.nio.file.Files.createTempDirectory("tradepulse-chaquopy-").toFile()
+        try {
+            val chaquopyDir = File(tempDir, "chaquopy").apply { mkdirs() }
+            val nativeSo = File(chaquopyDir, "bootstrap-native/arm64-v8a/java/chaquopy.so").apply {
+                parentFile?.mkdirs()
+                writeBytes(byteArrayOf(0x7F, 'E'.code.toByte(), 'L'.code.toByte(), 'F'.code.toByte()))
+            }
+            assertTrue(nativeSo.exists())
+            File(chaquopyDir, "cacert.pem").writeText("-----BEGIN CERTIFICATE-----\n", Charsets.UTF_8)
+
+            fun writeZip(target: File, entries: Map<String, ByteArray>) {
+                java.util.zip.ZipOutputStream(target.outputStream()).use { zos ->
+                    entries.forEach { (name, bytes) ->
+                        zos.putNextEntry(java.util.zip.ZipEntry(name))
+                        zos.write(bytes)
+                        zos.closeEntry()
+                    }
+                }
+            }
+
+            val stdlibFile = File(chaquopyDir, "stdlib-common.imy")
+            writeZip(stdlibFile, mapOf("os.pyc" to byteArrayOf(1, 2, 3, 4)))
+
+            val bootstrapFile = File(chaquopyDir, "bootstrap.imy")
+            writeZip(
+                bootstrapFile,
+                mapOf(
+                    "java/__init__.pyc" to byteArrayOf(1, 2, 3),
+                    "java/primitive.pyc" to byteArrayOf(4, 5, 6),
+                    "java/config.pyc" to byteArrayOf(7, 8, 9)
+                )
+            )
+
+            val assetKeys = listOf(
+                "stdlib-common.imy",
+                "bootstrap.imy",
+                "cacert.pem",
+                "bootstrap-native/arm64-v8a/java/chaquopy.so",
+                "bootstrap-native/x86_64/java/chaquopy.so"
+            )
+            val required = com.example.backtest.ChaquopyAssetIntegrity.requiredAssetPaths(assetKeys, "arm64-v8a")
+            assertEquals(4, required.size)
+            assertTrue(com.example.backtest.ChaquopyAssetIntegrity.verifyExtractedAssets(chaquopyDir, required))
+
+            // Case 1: bootstrap.imy missing java/primitive.pyc -> rejected
+            writeZip(
+                bootstrapFile,
+                mapOf(
+                    "java/__init__.pyc" to byteArrayOf(1, 2, 3),
+                    "java/config.pyc" to byteArrayOf(7, 8, 9)
+                )
+            )
+            org.junit.Assert.assertFalse(
+                com.example.backtest.ChaquopyAssetIntegrity.verifyExtractedAssets(chaquopyDir, required)
+            )
+
+            // Case 2: bootstrap.imy truncated/corrupt -> rejected
+            bootstrapFile.writeBytes(byteArrayOf(0x50, 0x4B, 0x03, 0x04))
+            org.junit.Assert.assertFalse(
+                com.example.backtest.ChaquopyAssetIntegrity.verifyExtractedAssets(chaquopyDir, required)
+            )
+
+            // Case 3: restored bootstrap.imy passes again
+            writeZip(
+                bootstrapFile,
+                mapOf(
+                    "java/__init__.pyc" to byteArrayOf(1, 2, 3),
+                    "java/primitive.pyc" to byteArrayOf(4, 5, 6),
+                    "java/config.pyc" to byteArrayOf(7, 8, 9)
+                )
+            )
+            assertTrue(com.example.backtest.ChaquopyAssetIntegrity.verifyExtractedAssets(chaquopyDir, required))
+        } finally {
+            tempDir.deleteRecursively()
+        }
+    }
 }

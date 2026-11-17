@@ -27,6 +27,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.util.UUID
@@ -300,6 +301,9 @@ object WorkerPoolBacktestCoordinator {
 
         var worker: BoundWorker? = null
         try {
+            withContext(Dispatchers.IO) {
+                PythonBacktestRunner.ensureAssetsPrepared(appContext)
+            }
             worker = bindWorkers(appContext, 1).firstOrNull()
             if (worker == null) {
                 val json = PythonBacktestRunner.runWithStrategyFile(
@@ -371,6 +375,9 @@ object WorkerPoolBacktestCoordinator {
         onProgress: (BacktestProgressSnapshot) -> Unit
     ): BacktestParseOutcome? = coroutineScope {
         val appContext = context.applicationContext
+        withContext(Dispatchers.IO) {
+            PythonBacktestRunner.ensureAssetsPrepared(appContext)
+        }
         val desiredWorkers = optimalWorkerCount(workerCount)
         val boundWorkers = bindWorkers(appContext, desiredWorkers)
         if (boundWorkers.size < 2) {
@@ -541,6 +548,9 @@ object WorkerPoolBacktestCoordinator {
         onProgress: (BacktestProgressSnapshot) -> Unit
     ): BatchBacktestParseOutcome? = coroutineScope {
         val appContext = context.applicationContext
+        withContext(Dispatchers.IO) {
+            PythonBacktestRunner.ensureAssetsPrepared(appContext)
+        }
         val desiredWorkers = optimalWorkerCount(workersPerStrategy, specs.size)
         val boundWorkers = bindWorkers(appContext, desiredWorkers)
         if (boundWorkers.size < 2) {
@@ -828,6 +838,9 @@ object WorkerPoolBacktestCoordinator {
         val desiredCount = specs.size.coerceAtMost(MAX_WORKER_PROCESSES)
         var boundWorkers: List<BoundWorker> = emptyList()
         try {
+            withContext(Dispatchers.IO) {
+                PythonBacktestRunner.ensureAssetsPrepared(appContext)
+            }
             boundWorkers = bindWorkers(appContext, desiredCount)
             if (boundWorkers.isEmpty()) {
                 // Fallback to single-pass in-process engine if worker services could not bind
@@ -980,7 +993,8 @@ object WorkerPoolBacktestCoordinator {
         val details = error.details.lowercase()
         return (message.contains("java.io.ioexception") && message.contains("failed to create")) ||
             (details.contains("chaquopy") && details.contains("python.start")) ||
-            (details.contains("androidplatform") && details.contains("python.start"))
+            (details.contains("androidplatform") && details.contains("python.start")) ||
+            message.contains("cannot import name primitive")
     }
 
     private suspend fun bindWorkers(context: Context, count: Int): List<BoundWorker> = coroutineScope {
@@ -1023,7 +1037,7 @@ object WorkerPoolBacktestCoordinator {
             return null
         }
 
-        val messenger = withTimeoutOrNull(4_000L) { ready.await() }
+        val messenger = withTimeoutOrNull(12_000L) { ready.await() }
         if (messenger == null) {
             runCatching { context.unbindService(conn) }
             return null
