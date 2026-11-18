@@ -190,6 +190,7 @@ fun MainScreen(
         topBar = {
             if (!isReplayImmersive) {
             TopAppBar(
+                expandedHeight = 76.dp,
                 navigationIcon = {
                     if (isSecondaryScreen) {
                         IconButton(
@@ -233,7 +234,9 @@ fun MainScreen(
                             }
                             Spacer(modifier = Modifier.width(8.dp))
                         }
-                        Column {
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
                             Text(
                                 text = when (currentScreen) {
                                     AppScreen.CALENDAR -> "TradePulse"
@@ -254,8 +257,11 @@ fun MainScreen(
                                     AppScreen.SETTINGS -> "Settings & Storage"
                                 },
                                 style = MaterialTheme.typography.titleMedium,
+                                fontSize = 16.sp,
+                                lineHeight = 19.sp,
                                 fontWeight = FontWeight.Bold,
-                                maxLines = 1
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                             )
                             Text(
                                 text = when (currentScreen) {
@@ -276,9 +282,13 @@ fun MainScreen(
                                     AppScreen.PSYCHOLOGY -> "Emotions, discipline and execution patterns"
                                     AppScreen.SETTINGS -> "Risk limits, backup & API keys"
                                 },
-                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontSize = 9.sp,
+                                    lineHeight = 11.sp
+                                ),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                             )
                         }
                     }
@@ -292,7 +302,7 @@ fun MainScreen(
                     Box(
                         contentAlignment = Alignment.Center,
                         modifier = Modifier
-                            .minimumInteractiveComponentSize()
+                            .padding(horizontal = 2.dp)
                             .testTag("topbar_shortcut_backtest")
                     ) {
                         Surface(
@@ -313,7 +323,7 @@ fun MainScreen(
                             )
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
@@ -321,11 +331,11 @@ fun MainScreen(
                                     imageVector = Icons.Default.QueryStats,
                                     contentDescription = "Open Strategy Backtester",
                                     tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(15.dp)
+                                    modifier = Modifier.size(14.dp)
                                 )
                                 Text(
                                     text = "Tester",
-                                    fontSize = 11.sp,
+                                    fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = if (isBacktestActive) {
                                         MaterialTheme.colorScheme.primary
@@ -343,7 +353,7 @@ fun MainScreen(
                     Box(
                         contentAlignment = Alignment.Center,
                         modifier = Modifier
-                            .minimumInteractiveComponentSize()
+                            .padding(horizontal = 2.dp)
                             .testTag("topbar_shortcut_outlook")
                     ) {
                         Surface(

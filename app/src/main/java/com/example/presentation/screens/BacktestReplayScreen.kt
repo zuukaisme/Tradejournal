@@ -345,7 +345,32 @@ fun TradeReplayTabContent(
             .testTag("replay_tab_content")
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // Compact two-row replay toolbar keeps strategy, status and controls readable in landscape.
+            val statusTuple = remember(activeLiveTradeIdx, recentClosedTradeIdx, trades) {
+                when {
+                    activeLiveTradeIdx >= 0 -> {
+                        val t = trades[activeLiveTradeIdx]
+                        Triple("#${activeLiveTradeIdx + 1} ${t.side.name} • OPEN", TvEntryColor, Color(0xFF102A3D))
+                    }
+                    recentClosedTradeIdx >= 0 -> {
+                        val t = trades[recentClosedTradeIdx]
+                        val isBe = t.reason == ExitReason.BE || (abs(t.points) <= 1e-6 && abs(t.r) <= 1e-6)
+                        val isWin = !isBe && (t.points > 1e-6 || t.r > 1e-6)
+                        val col = when {
+                            isWin -> TvBullColor
+                            isBe -> SlateBreakEven
+                            else -> TvBearColor
+                        }
+                        val rSign = if (t.r > 0) "+" else ""
+                        Triple(
+                            "#${recentClosedTradeIdx + 1} ${t.reason.name} $rSign${String.format(Locale.US, "%.2f", t.r)}R",
+                            col,
+                            col.copy(alpha = 0.18f)
+                        )
+                    }
+                    else -> Triple("FLAT • No Position", TvTextMuted, Color(0xFF131D2A))
+                }
+            }
+
             Surface(
                 color = TvToolbarBg,
                 border = BorderStroke(0.5.dp, TvSurfaceBorder)
@@ -359,148 +384,129 @@ fun TradeReplayTabContent(
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(7.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Surface(
                             onClick = {
                                 isPlaying = false
                                 onGoToBacktest()
                             },
-                            color = Color(0xFF172334),
+                            color = Color(0xFF1A293A),
                             shape = RoundedCornerShape(9.dp),
+                            border = BorderStroke(1.dp, TvSurfaceBorder),
                             modifier = Modifier
-                                .heightIn(min = 36.dp)
+                                .size(32.dp)
                                 .testTag("replay_back_to_run_button")
                         ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 7.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
+                            Box(contentAlignment = Alignment.Center) {
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                                     contentDescription = "Back to Run tab",
                                     tint = TvTextPrimary,
                                     modifier = Modifier.size(16.dp)
                                 )
-                                Text("Run", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = TvTextPrimary)
-                            }
-                        }
-
-                        Box(modifier = Modifier.weight(1f)) {
-                            Surface(
-                                onClick = { if (successfulBatchRuns.size > 1) strategyMenuOpen = true },
-                                color = Color(0xFF162131),
-                                shape = RoundedCornerShape(9.dp),
-                                border = BorderStroke(1.dp, TvSurfaceBorder),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.CandlestickChart,
-                                        contentDescription = null,
-                                        tint = TvBullColor,
-                                        modifier = Modifier.size(15.dp)
-                                    )
-                                    Text(
-                                        text = strategyName.ifBlank { "Replay" },
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = TvTextPrimary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    if (successfulBatchRuns.size > 1) {
-                                        Text("▾", fontSize = 10.sp, color = TvTextMuted)
-                                    }
-                                }
-                            }
-                            DropdownMenu(
-                                expanded = strategyMenuOpen,
-                                onDismissRequest = { strategyMenuOpen = false }
-                            ) {
-                                successfulBatchRuns.forEach { batchItem ->
-                                    DropdownMenuItem(
-                                        text = {
-                                            Text(
-                                                text = "${batchItem.strategyName} (${batchItem.result?.trades?.size ?: 0})",
-                                                fontWeight = if (batchItem.strategyId == activeBatchStrategyId) FontWeight.Bold else FontWeight.Normal
-                                            )
-                                        },
-                                        onClick = {
-                                            strategyMenuOpen = false
-                                            isPlaying = false
-                                            onSelectBatchStrategy(batchItem.strategyId)
-                                        }
-                                    )
-                                }
                             }
                         }
 
                         Surface(
-                            onClick = { showTradeDrawer = !showTradeDrawer },
-                            color = if (showTradeDrawer) TvBullColor.copy(alpha = 0.22f) else Color(0xFF162131),
-                            shape = RoundedCornerShape(9.dp),
-                            border = BorderStroke(1.dp, if (showTradeDrawer) TvBullColor else TvSurfaceBorder),
-                            modifier = Modifier.testTag("replay_toggle_trades_drawer")
+                            onClick = { if (successfulBatchRuns.size > 1) strategyMenuOpen = true },
+                            color = Color.Transparent,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.weight(1f)
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 8.dp),
+                                modifier = Modifier.padding(vertical = 1.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                horizontalArrangement = Arrangement.spacedBy(7.dp)
                             ) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.FormatListBulleted,
-                                    contentDescription = "Toggle trade list drawer",
-                                    tint = if (showTradeDrawer) TvBullColor else TvTextPrimary,
-                                    modifier = Modifier.size(15.dp)
-                                )
-                                Text(
-                                    text = "${filteredIndexedTrades.size}",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (showTradeDrawer) TvBullColor else TvTextPrimary
-                                )
+                                Surface(
+                                    color = TvBullColor.copy(alpha = 0.14f),
+                                    shape = RoundedCornerShape(7.dp),
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.CandlestickChart,
+                                            contentDescription = null,
+                                            tint = TvBullColor,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(0.dp)
+                                ) {
+                                    Text(
+                                        text = "TRADE REPLAY",
+                                        fontSize = 8.sp,
+                                        lineHeight = 9.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        letterSpacing = 0.7.sp,
+                                        color = TvTextMuted,
+                                        maxLines = 1
+                                    )
+                                    Text(
+                                        text = strategyName.ifBlank { "Replay" },
+                                        fontSize = 11.sp,
+                                        lineHeight = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = TvTextPrimary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                if (successfulBatchRuns.size > 1) {
+                                    Text("▾", fontSize = 11.sp, color = TvTextMuted)
+                                }
                             }
                         }
-                    }
-
-                    val statusTuple = remember(activeLiveTradeIdx, recentClosedTradeIdx, trades) {
-                        when {
-                            activeLiveTradeIdx >= 0 -> {
-                                val t = trades[activeLiveTradeIdx]
-                                Triple("#${activeLiveTradeIdx + 1} ${t.side.name} • OPEN", TvEntryColor, Color(0xFF102A3D))
-                            }
-                            recentClosedTradeIdx >= 0 -> {
-                                val t = trades[recentClosedTradeIdx]
-                                val isBe = t.reason == ExitReason.BE || (abs(t.points) <= 1e-6 && abs(t.r) <= 1e-6)
-                                val isWin = !isBe && (t.points > 1e-6 || t.r > 1e-6)
-                                val col = when {
-                                    isWin -> TvBullColor
-                                    isBe -> SlateBreakEven
-                                    else -> TvBearColor
-                                }
-                                val rSign = if (t.r > 0) "+" else ""
-                                Triple(
-                                    "#${recentClosedTradeIdx + 1} ${t.reason.name} $rSign${String.format(Locale.US, "%.2f", t.r)}R",
-                                    col,
-                                    col.copy(alpha = 0.18f)
+                        DropdownMenu(
+                            expanded = strategyMenuOpen,
+                            onDismissRequest = { strategyMenuOpen = false }
+                        ) {
+                            successfulBatchRuns.forEach { batchItem ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = "${batchItem.strategyName} (${batchItem.result?.trades?.size ?: 0})",
+                                            fontWeight = if (batchItem.strategyId == activeBatchStrategyId) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    },
+                                    onClick = {
+                                        strategyMenuOpen = false
+                                        isPlaying = false
+                                        onSelectBatchStrategy(batchItem.strategyId)
+                                    }
                                 )
                             }
-                            else -> Triple("FLAT • No Position", TvTextMuted, Color(0xFF131D2A))
                         }
                     }
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(7.dp)
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
+                        Surface(
+                            color = statusTuple.third,
+                            shape = RoundedCornerShape(7.dp),
+                            border = BorderStroke(1.dp, statusTuple.second.copy(alpha = 0.22f)),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                text = statusTuple.first,
+                                fontSize = 8.sp,
+                                lineHeight = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace,
+                                color = statusTuple.second,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 6.dp)
+                            )
+                        }
+
                         Box {
                             val filterNames = listOf(
                                 "All (${trades.size})",
@@ -511,7 +517,7 @@ fun TradeReplayTabContent(
                             Surface(
                                 onClick = { filterMenuOpen = true },
                                 color = if (outcomeFilter == 1) TvBearColor.copy(alpha = 0.16f) else Color(0xFF162131),
-                                shape = RoundedCornerShape(8.dp),
+                                shape = RoundedCornerShape(7.dp),
                                 border = BorderStroke(
                                     1.dp,
                                     if (outcomeFilter == 1) TvBearColor.copy(alpha = 0.5f) else TvSurfaceBorder
@@ -520,10 +526,11 @@ fun TradeReplayTabContent(
                             ) {
                                 Text(
                                     text = filterNames.getOrElse(outcomeFilter) { filterNames.first() },
-                                    fontSize = 10.sp,
+                                    fontSize = 8.sp,
+                                    lineHeight = 10.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = if (outcomeFilter == 1) TvBearColor else TvTextPrimary,
-                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp)
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
                                 )
                             }
                             DropdownMenu(
@@ -545,20 +552,33 @@ fun TradeReplayTabContent(
                         }
 
                         Surface(
-                            color = statusTuple.third,
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.weight(1f)
+                            onClick = { showTradeDrawer = !showTradeDrawer },
+                            color = if (showTradeDrawer) TvBullColor.copy(alpha = 0.18f) else Color(0xFF162131),
+                            shape = RoundedCornerShape(7.dp),
+                            border = BorderStroke(1.dp, if (showTradeDrawer) TvBullColor.copy(alpha = 0.55f) else TvSurfaceBorder),
+                            modifier = Modifier
+                                .height(30.dp)
+                                .width(46.dp)
+                                .testTag("replay_toggle_trades_drawer")
                         ) {
-                            Text(
-                                text = statusTuple.first,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                fontFamily = FontFamily.Monospace,
-                                color = statusTuple.second,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp)
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxSize(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.FormatListBulleted,
+                                    contentDescription = "Toggle trade list drawer",
+                                    tint = if (showTradeDrawer) TvBullColor else TvTextPrimary,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Text(
+                                    text = "${filteredIndexedTrades.size}",
+                                    fontSize = 8.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (showTradeDrawer) TvBullColor else TvTextPrimary
+                                )
+                            }
                         }
                     }
                 }
