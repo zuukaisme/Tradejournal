@@ -407,6 +407,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                         it.copy(
                             savedCsvs = remaining,
                             activeSavedCsvId = next.id,
+                            selectedMarketIds = current.selectedMarketIds - datasetId,
                             fileName = next.displayName,
                             estimatedRows = next.estimatedRows,
                             detectedEncoding = next.detectedEncoding,
@@ -430,6 +431,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                         it.copy(
                             savedCsvs = emptyList(),
                             activeSavedCsvId = null,
+                            selectedMarketIds = emptySet(),
                             fileName = null,
                             estimatedRows = 0,
                             detectedEncoding = "",
@@ -447,7 +449,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                     }
                 }
             } else {
-                _uiState.update { it.copy(savedCsvs = remaining) }
+                _uiState.update { it.copy(savedCsvs = remaining, selectedMarketIds = it.selectedMarketIds - datasetId) }
             }
         }
     }
