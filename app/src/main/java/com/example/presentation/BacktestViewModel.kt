@@ -53,6 +53,8 @@ import com.example.backtest.PythonBacktestRunner
 
 data class BacktestQueueItem(val id: String, val strategyId: Long, val strategyName: String, val status: String = "Queued")
 
+data class MarketStrategyPerformance(val marketId: String, val marketName: String, val strategyId: Long, val strategyName: String, val result: BacktestResult)
+
 data class BacktestUiState(
     val selectedTab: Int = 0, // 0 = Run, 1 = Replay, 2 = AI Builder, 3 = Compare
     val fileName: String? = null,
@@ -70,6 +72,9 @@ data class BacktestUiState(
     // Saved persistent CSV datasets
     val savedCsvs: List<SavedCsvDataset> = emptyList(),
     val activeSavedCsvId: String? = null,
+    val selectedMarketIds: Set<String> = emptySet(),
+    val isMultiMarketRunning: Boolean = false,
+    val marketPerformances: List<MarketStrategyPerformance> = emptyList(),
     // Strategies & Multi-strategy execution
     val availableStrategies: List<PythonStrategy> = emptyList(),
     val selectedStrategy: PythonStrategy? = null,
@@ -147,6 +152,8 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
     private var replayLoadJob: Job? = null
     private var activeRunJob: Job? = null
     private var queueJob: Job? = null
+    private var multiMarketJob: Job? = null
+    private var executingMarketBatch = false
     private val resampledCache = mutableMapOf<Pair<String, BacktestTimeframe>, ResampledCsvFileResult>()
     private var latestSettings: UserSettings = UserSettings()
     private var hasHydratedAiPrefs = false
@@ -251,6 +258,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                     it.copy(
                         savedCsvs = items,
                         activeSavedCsvId = active.id,
+                        selectedMarketIds = setOf(active.id),
                         fileName = active.displayName,
                         estimatedRows = active.estimatedRows,
                         detectedEncoding = active.detectedEncoding,
@@ -315,7 +323,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
 
     fun selectSavedCsv(datasetId: String) {
         val snapshot = _uiState.value
-        if (snapshot.activeSavedCsvId == datasetId || snapshot.isLoading || snapshot.isImportingCsv) return
+        if (snapshot.activeSavedCsvId == datasetId || snapshot.isLoading || snapshot.isImportingCsv || snapshot.isMultiMarketRunning) return
         val dataset = snapshot.savedCsvs.firstOrNull { it.id == datasetId } ?: return
         val appContext = getApplication<Application>()
         val root = SavedCsvStore.defaultRootDir(appContext)
@@ -348,6 +356,30 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                 batchResults = emptyList(),
                 activeBatchStrategyId = null
             )
+        }
+    }
+
+    fun toggleMarketSelection(datasetId: String) {
+        _uiState.update { current ->
+            val updated = if (datasetId in current.selectedMarketIds) current.selectedMarketIds - datasetId else current.selectedMarketIds + datasetId
+            current.copy(selectedMarketIds = updated, backtestError = null)
+        }
+    }
+
+    fun selectAllMarkets() {
+        _uiState.update { it.copy(selectedMarketIds = it.savedCsvs.map { dataset -> dataset.id }.toSet()) }
+    }
+
+    fun clearMarketSelection() {
+        _uiState.update { it.copy(selectedMarketIds = emptySet()) }
+    }
+
+    fun updateSavedCsvMarketName(datasetId: String, marketName: String) {
+        val appContext = getApplication<Application>()
+        viewModelScope.launch(Dispatchers.IO) {
+            val root = SavedCsvStore.defaultRootDir(appContext)
+            val updated = SavedCsvStore.updateMarketName(root, datasetId, marketName)
+            _uiState.update { it.copy(savedCsvs = updated) }
         }
     }
 
@@ -605,6 +637,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                     it.copy(
                         savedCsvs = allDatasets,
                         activeSavedCsvId = savedDataset?.id ?: it.activeSavedCsvId,
+                        selectedMarketIds = if (savedDataset != null) it.selectedMarketIds + savedDataset.id else it.selectedMarketIds,
                         fileName = savedDataset?.displayName ?: displayName,
                         estimatedRows = inspection.estimatedRows,
                         detectedEncoding = inspection.detectedEncoding,
@@ -829,6 +862,11 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun run() {
+        val initialSnapshot = _uiState.value
+        if (!executingMarketBatch && initialSnapshot.selectedMarketIds.size > 1) {
+            runMultiMarket()
+            return
+        }
         val snapshot = _uiState.value
         val sourceFile = csvCacheFile
         if (sourceFile == null || !sourceFile.exists() || sourceFile.length() == 0L) {
@@ -1170,8 +1208,64 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
         activeRunJob?.invokeOnCompletion { activeRunJob = null }
     }
 
+    private fun runMultiMarket() {
+        val snapshot = _uiState.value
+        val selectedMarkets = snapshot.savedCsvs.filter { it.id in snapshot.selectedMarketIds }
+        if (selectedMarkets.size < 2 || snapshot.isLoading || snapshot.isMultiMarketRunning) return
+        val strategies = if (snapshot.isMultiStrategyMode) snapshot.availableStrategies.filter { it.id in snapshot.selectedStrategyIds } else listOfNotNull(snapshot.selectedStrategy)
+        if (strategies.isEmpty()) {
+            _uiState.update { it.copy(backtestError = BacktestError("Select at least one strategy before running multiple markets.")) }
+            return
+        }
+        multiMarketJob = viewModelScope.launch {
+            executingMarketBatch = true
+            _uiState.update {
+                it.copy(isMultiMarketRunning = true, marketPerformances = emptyList(), backtestError = null,
+                    runSavedFeedback = "Preparing " + (selectedMarkets.size * strategies.size) + " strategy-market combinations.")
+            }
+            val collected = mutableListOf<MarketStrategyPerformance>()
+            try {
+                selectedMarkets.forEachIndexed { index, market ->
+                    val file = SavedCsvStore.resolveFile(SavedCsvStore.defaultRootDir(getApplication<Application>()), market)
+                    if (!file.exists() || file.length() == 0L) {
+                        _uiState.update { it.copy(backtestError = BacktestError("CSV for " + market.marketName + " is missing.")) }
+                        return@forEachIndexed
+                    }
+                    if (_uiState.value.activeSavedCsvId != market.id) selectSavedCsv(market.id)
+                    _uiState.update { it.copy(isMultiMarketRunning = true, runSavedFeedback = "Market " + (index + 1) + "/" + selectedMarkets.size + ": " + market.marketName) }
+                    run()
+                    val started = uiState.first { it.isLoading || it.backtestError != null }
+                    if (started.isLoading) uiState.first { !it.isLoading }
+                    val finished = _uiState.value
+                    if (finished.batchResults.isNotEmpty()) {
+                        finished.batchResults.forEach { item ->
+                            item.result?.let { result ->
+                                collected += MarketStrategyPerformance(market.id, market.marketName, item.strategyId, item.strategyName, result)
+                            }
+                        }
+                    } else {
+                        val strategy = strategies.firstOrNull()
+                        val result = finished.result
+                        if (strategy != null && result != null) collected += MarketStrategyPerformance(market.id, market.marketName, strategy.id, strategy.name, result)
+                    }
+                    _uiState.update { it.copy(marketPerformances = collected.toList()) }
+                }
+                _uiState.update { it.copy(isMultiMarketRunning = false,
+                    runSavedFeedback = "Completed " + collected.size + " of " + (selectedMarkets.size * strategies.size) + " strategy-market combinations.") }
+            } catch (error: Throwable) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                _uiState.update { it.copy(isMultiMarketRunning = false, backtestError = BacktestError(error.message ?: "Multi-market backtest failed.")) }
+            } finally {
+                executingMarketBatch = false
+                _uiState.update { it.copy(isMultiMarketRunning = false) }
+                multiMarketJob = null
+            }
+        }
+    }
+
     private fun buildCsvLabel(snapshot: BacktestUiState): String {
-        val baseCsvName = snapshot.fileName ?: "candles.csv"
+        val market = snapshot.savedCsvs.firstOrNull { it.id == snapshot.activeSavedCsvId }?.marketName?.ifBlank { "CUSTOM" } ?: "CUSTOM"
+        val baseCsvName = "[" + market + "] " + (snapshot.fileName ?: "candles.csv")
         return if (snapshot.selectedTimeframe == BacktestTimeframe.NATIVE) {
             val detected = snapshot.detectedTimeframeLabel.substringBefore(" ")
             if (detected.isNotBlank() && detected != "Unknown") "$baseCsvName ($detected)" else baseCsvName
