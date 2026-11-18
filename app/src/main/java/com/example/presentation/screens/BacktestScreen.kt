@@ -394,8 +394,11 @@ fun BacktestScreen(
                             SavedCsvLibraryStrip(
                                 datasets = state.savedCsvs,
                                 activeId = state.activeSavedCsvId,
-                                enabled = !state.isLoading && !state.isImportingCsv,
+                                selectedIds = state.selectedMarketIds,
+                                enabled = !state.isLoading && !state.isImportingCsv && !state.isMultiMarketRunning,
                                 onSelect = backtestViewModel::selectSavedCsv,
+                                onToggleMarket = backtestViewModel::toggleMarketSelection,
+                                onRenameMarket = backtestViewModel::updateSavedCsvMarketName,
                                 onDelete = backtestViewModel::deleteSavedCsv
                             )
                         }
@@ -1204,6 +1207,10 @@ fun BacktestScreen(
                     item {
                         BacktestErrorCard(error = err)
                     }
+                }
+
+                if (state.marketPerformances.isNotEmpty()) {
+                    item { MarketPerformanceCard(performances = state.marketPerformances) }
                 }
 
                 if (state.batchResults.isNotEmpty()) {
@@ -2833,90 +2840,70 @@ private fun BacktestEquityCurveCanvas(
 }
 
 @Composable
+@Composable
 private fun SavedCsvLibraryStrip(
     datasets: List<SavedCsvDataset>,
     activeId: String?,
+    selectedIds: Set<String>,
     enabled: Boolean,
     onSelect: (String) -> Unit,
+    onToggleMarket: (String) -> Unit,
+    onRenameMarket: (String, String) -> Unit,
     onDelete: (String) -> Unit
 ) {
     val positiveColor = MaterialTheme.colorScheme.primary
+    var editingDatasetId by remember { mutableStateOf<String?>(null) }
+    var marketDraft by remember { mutableStateOf("") }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(
-            text = "Saved CSV Library (${datasets.size})",
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text(text = "Markets (${selectedIds.size} selected)", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = { datasets.forEach { if (it.id !in selectedIds) onToggleMarket(it.id) } }, enabled = enabled) { Text("All", fontSize = 11.sp) }
+                TextButton(onClick = { selectedIds.toList().forEach(onToggleMarket) }, enabled = enabled) { Text("Clear", fontSize = 11.sp) }
+            }
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             items(datasets, key = { it.id }) { dataset ->
-                val isSelected = dataset.id == activeId
+                val isActive = dataset.id == activeId
+                val isIncluded = dataset.id in selectedIds
                 val tfShort = dataset.detectedTimeframeLabel.substringBefore(" ").ifBlank { "?" }
                 Surface(
-                    color = if (isSelected) {
-                        positiveColor.copy(alpha = 0.14f)
-                    } else {
-                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
-                    },
+                    color = if (isIncluded) positiveColor.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
                     shape = RoundedCornerShape(12.dp),
-                    border = if (isSelected) BorderStroke(1.dp, positiveColor) else null,
-                    modifier = Modifier
-                        .widthIn(min = 165.dp, max = 225.dp)
-                        .clickable(enabled = enabled) { onSelect(dataset.id) }
-                        .testTag("saved_csv_item_${dataset.id}")
+                    border = if (isActive) BorderStroke(1.dp, positiveColor) else null,
+                    modifier = Modifier.widthIn(min = 190.dp, max = 235.dp).testTag("saved_csv_item_${dataset.id}")
                 ) {
-                    Row(
-                        modifier = Modifier.padding(start = 10.dp, end = 2.dp, top = 6.dp, bottom = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                if (isSelected) {
-                                    Icon(
-                                        imageVector = Icons.Default.CheckCircle,
-                                        contentDescription = "Active CSV",
-                                        tint = positiveColor,
-                                        modifier = Modifier.size(13.dp)
-                                    )
-                                }
-                                Text(
-                                    text = dataset.displayName,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                    Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = isIncluded, onCheckedChange = { onToggleMarket(dataset.id) }, enabled = enabled, modifier = Modifier.size(34.dp))
+                            Column(modifier = Modifier.weight(1f).clickable(enabled = enabled) { onSelect(dataset.id) }) {
+                                Text(text = dataset.marketName.ifBlank { "CUSTOM" }, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(text = dataset.displayName, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
-                            Text(
-                                text = "${formatBytesCompact(dataset.fileSizeBytes)} • ${dataset.estimatedRows} rows • $tfShort",
-                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                            IconButton(onClick = { onDelete(dataset.id) }, enabled = enabled, modifier = Modifier.size(30.dp)) {
+                                Icon(Icons.Default.DeleteOutline, contentDescription = "Delete ${dataset.displayName}", modifier = Modifier.size(15.dp))
+                            }
                         }
-                        IconButton(
-                            onClick = { onDelete(dataset.id) },
-                            enabled = enabled,
-                            modifier = Modifier.testTag("delete_saved_csv_${dataset.id}")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.DeleteOutline,
-                                contentDescription = "Delete saved CSV ${dataset.displayName}",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(16.dp)
-                            )
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text(text = "${formatBytesCompact(dataset.fileSizeBytes)} • ${dataset.estimatedRows} rows • $tfShort", style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp), color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                            TextButton(onClick = { editingDatasetId = dataset.id; marketDraft = dataset.marketName.ifBlank { "CUSTOM" } }, enabled = enabled, contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)) { Text("Rename", fontSize = 10.sp) }
                         }
                     }
                 }
             }
         }
+    }
+    val editing = datasets.firstOrNull { it.id == editingDatasetId }
+    if (editing != null) {
+        AlertDialog(
+            onDismissRequest = { editingDatasetId = null },
+            title = { Text("Name market") },
+            text = {
+                OutlinedTextField(value = marketDraft, onValueChange = { marketDraft = it.uppercase().filter { ch -> ch.isLetterOrDigit() || ch == '_' || ch == '-' }.take(20) }, singleLine = true, label = { Text("Symbol (e.g. EURUSD)") })
+            },
+            confirmButton = { TextButton(onClick = { onRenameMarket(editing.id, marketDraft.ifBlank { "CUSTOM" }); editingDatasetId = null }) { Text("Save") } },
+            dismissButton = { TextButton(onClick = { editingDatasetId = null }) { Text("Cancel") } }
+        )
     }
 }
 
