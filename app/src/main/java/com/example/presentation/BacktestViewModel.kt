@@ -323,7 +323,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
 
     fun selectSavedCsv(datasetId: String) {
         val snapshot = _uiState.value
-        if (snapshot.activeSavedCsvId == datasetId || snapshot.isLoading || snapshot.isImportingCsv || snapshot.isMultiMarketRunning) return
+        if (snapshot.activeSavedCsvId == datasetId || snapshot.isLoading || snapshot.isImportingCsv ) return
         val dataset = snapshot.savedCsvs.firstOrNull { it.id == datasetId } ?: return
         val appContext = getApplication<Application>()
         val root = SavedCsvStore.defaultRootDir(appContext)
