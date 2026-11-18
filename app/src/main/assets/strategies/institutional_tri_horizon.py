@@ -392,8 +392,8 @@ class InstitutionalTriHorizonStrategy(Strategy):
         self.rejection_close_fraction: float = 0.68
         self.ote_retracement_min: float = 0.62
         self.ote_retracement_max: float = 0.79
-        self.last_entry_diagnostics: dict = {}
-        self.last_management_diagnostics: dict = {}
+        self._last_entry_diagnostics: dict = {}
+        self._last_management_diagnostics: dict = {}
 
         # Catch-up & clock state (Rule 9: never miss candles skipped while trade is open)
         self._last_processed_index: int = -1
@@ -793,7 +793,7 @@ class InstitutionalTriHorizonStrategy(Strategy):
         )
         displacement_ok = not self.require_displacement_confirmation or self._has_recent_displacement(side, atr)
         rejection_ok = not self.require_rejection_confirmation or price_action or micro_shift or swept
-        self.last_entry_diagnostics = {
+        self._last_entry_diagnostics = {
             "side": side,
             "displacement": displacement_ok,
             "rejection_or_structure": rejection_ok,
@@ -1350,7 +1350,7 @@ class InstitutionalTriHorizonStrategy(Strategy):
         if target_progress >= 0.50:
             reversal_confirmed, reversal_evidence = self._confirmed_reversal(trade.side, atr)
         if target_progress >= 0.95 and reversal_confirmed:
-            self.last_management_diagnostics = {
+            self._last_management_diagnostics = {
                 "index": i,
                 "target_progress": target_progress,
                 "action": "confirmed_reversal_exit",
@@ -1385,7 +1385,7 @@ class InstitutionalTriHorizonStrategy(Strategy):
                 if trail > close and trail < trade.sl:
                     trade.sl = trail
 
-        self.last_management_diagnostics = {
+        self._last_management_diagnostics = {
             "index": i,
             "target_progress": target_progress,
             "reversal_monitoring": target_progress >= 0.50,
