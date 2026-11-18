@@ -918,14 +918,17 @@ fun BacktestScreen(
 
                         Spacer(modifier = Modifier.height(12.dp))
 
-                        val canRun = !state.isLoading && !state.isQueueRunning && !state.isImportingCsv && state.hasCsvBytes &&
+                        val canRun = !state.isLoading && !state.isMultiMarketRunning && !state.isQueueRunning && !state.isImportingCsv && state.hasCsvBytes && state.selectedMarketIds.isNotEmpty() &&
                             (if (state.isMultiStrategyMode) state.selectedStrategyIds.isNotEmpty() else state.selectedStrategy != null)
                         val multiCount = state.selectedStrategyIds.size
                         val totalLiveStrategies = state.liveProgress?.totalStrategies ?: 0
                         val runButtonText = when {
+                            state.isMultiMarketRunning && !state.isLoading -> "Preparing Next Market..."
+                            state.isMultiMarketRunning -> "Running Market Combinations..."
                             state.isLoading && totalLiveStrategies > 1 ->
                                 "Running $totalLiveStrategies Strategies..."
                             state.isLoading -> "Running Python Engine..."
+                            state.selectedMarketIds.size > 1 -> "Run ${multiCount.coerceAtLeast(1) * state.selectedMarketIds.size} Market Combinations"
                             state.isMultiStrategyMode && multiCount > 1 -> "Run $multiCount Strategies Together"
                             else -> "Run Backtest"
                         }
@@ -944,7 +947,7 @@ fun BacktestScreen(
                                 .testTag("run_backtest_button"),
                             shape = RoundedCornerShape(12.dp)
                         ) {
-                            if (state.isLoading) {
+                            if (state.isLoading || state.isMultiMarketRunning) {
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(18.dp),
                                     strokeWidth = 2.dp,
@@ -3031,6 +3034,52 @@ private fun BatchLeaderboardCard(
                                 )
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MarketPerformanceCard(performances: List<com.example.presentation.MarketStrategyPerformance>) {
+    val positiveColor = MaterialTheme.colorScheme.primary
+    val negativeColor = MaterialTheme.colorScheme.error
+    val sorted = remember(performances) {
+        performances.sortedWith(compareByDescending<com.example.presentation.MarketStrategyPerformance> { it.result.summary.netR })
+    }
+    LiquidGlassCard(testTag = "market_performance_card") {
+        Text("Strategy Performance by Market", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+        Text(
+            text = "${sorted.size} completed combinations • ranked by net R",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            sorted.forEachIndexed { index, item ->
+                val result = item.result
+                val color = if (result.summary.netR >= 0.0) positiveColor else negativeColor
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("${index + 1}. ${item.strategyName}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                "${item.marketName} • ${result.summary.totalTrades} trades • WR ${formatOneDec(result.summary.winRatePct)}% • PF ${result.summary.profitFactor?.let(::formatTwoDec) ?: "--"} • DD ${formatTwoDec(result.risk.maxDrawdownR)}R",
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(formatSignedR(result.summary.netR), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = color, fontFamily = FontFamily.Monospace)
                     }
                 }
             }
