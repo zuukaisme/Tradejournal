@@ -214,6 +214,13 @@ fun StrategiesScreen(
                     Text("Upload .py Strategy", fontWeight = FontWeight.Bold)
                 }
 
+                Text(
+                    text = "Auto-import folder: Downloads/Tradepulse/strategies",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
+
                 if (uploadReadError != null) {
                     Spacer(modifier = Modifier.height(8.dp))
                     Surface(

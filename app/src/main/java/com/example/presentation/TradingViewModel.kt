@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.LocalVaultStorage
+import com.example.backtest.PythonStrategyFolder
 import com.example.data.local.TradingDatabase
 import com.example.data.local.VaultJsonCodec
 import com.example.data.local.VaultRestoreSummary
@@ -45,6 +46,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -379,6 +381,58 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun importPythonStrategiesFromDownloads() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val folder = PythonStrategyFolder.ensureDirectory() ?: return@launch
+            val files = folder.listFiles { file ->
+                file.isFile && file.extension.equals("py", ignoreCase = true)
+            }?.sortedBy { it.name.lowercase(Locale.ROOT) }.orEmpty()
+            if (files.isEmpty()) return@launch
+
+            val existingNames = repository.getAllPythonStrategies()
+                .first()
+                .mapTo(mutableSetOf()) { it.name.trim().lowercase(Locale.ROOT) }
+            var importedCount = 0
+
+            for (file in files) {
+                val imported = runCatching {
+                    if (file.length() <= 0L || file.length() > 64L * 1024L * 1024L) {
+                        false
+                    } else {
+                        val code = file.readText(Charsets.UTF_8).removePrefix("\uFEFF")
+                        val name = file.nameWithoutExtension.trim()
+                        val normalizedName = name.lowercase(Locale.ROOT)
+                        if (code.isBlank() || name.isBlank() || normalizedName in existingNames) {
+                            false
+                        } else {
+                            val className = Regex("(?m)^\\s*class\\s+([A-Za-z_]\\w*)\\s*(?:\\(\\s*Strategy\\s*\\))").find(code)?.groupValues?.getOrNull(1).orEmpty()
+                            repository.insertPythonStrategy(
+                                PythonStrategy(
+                                    name = name,
+                                    className = className,
+                                    code = code,
+                                    updatedAt = file.lastModified().takeIf { it > 0L } ?: System.currentTimeMillis()
+                                )
+                            )
+                            existingNames.add(normalizedName)
+                            true
+                        }
+                    }
+                }.getOrDefault(false)
+                if (imported) importedCount++
+            }
+
+            if (importedCount > 0) {
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(
+                        getApplication(),
+                        "Imported $importedCount Python strategies",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        }
+    }
     // Python Backtest Strategy actions
     fun savePythonStrategy(name: String, className: String, code: String) {
         viewModelScope.launch {

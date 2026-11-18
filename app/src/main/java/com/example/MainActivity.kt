@@ -26,6 +26,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.example.domain.model.AppThemePreset
 import com.example.backtest.BinaryCandleCache
+import com.example.backtest.PythonStrategyFolder
 import com.example.notifications.EveningReminderScheduler
 import com.example.presentation.MainScreen
 import com.example.presentation.TradingViewModel
@@ -39,6 +40,8 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         hasCacheStorageAccess = BinaryCandleCache.hasCacheStorageAccess()
+        if (hasCacheStorageAccess) PythonStrategyFolder.ensureDirectory()
+        viewModel.importPythonStrategiesFromDownloads()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
