@@ -382,5 +382,115 @@ class BacktestRegressionTests(unittest.TestCase):
         ))
         self.assertIn("maximum is 10", payload["error"])
 
+
+class TriHorizonStrategyTests(unittest.TestCase):
+    @staticmethod
+    def _strategy_code():
+        here = os.path.dirname(os.path.abspath(__file__))
+        asset_path = os.path.normpath(
+            os.path.join(here, "..", "..", "main", "assets", "strategies", "institutional_tri_horizon.py")
+        )
+        with open(asset_path, "r", encoding="utf-8") as fh:
+            return fh.read()
+
+    @staticmethod
+    def _write_realistic_m15_csv(count=4800):
+        import math
+        import random
+        from datetime import datetime, timedelta
+
+        rng = random.Random(99)
+        t0 = datetime(2025, 1, 2, 0, 0)
+        price = 2850.0
+        fd, csv_path = tempfile.mkstemp(suffix=".csv")
+        os.close(fd)
+        with open(csv_path, "w", encoding="utf-8") as fh:
+            fh.write("<DATE>\t<TIME>\t<OPEN>\t<HIGH>\t<LOW>\t<CLOSE>\t<TICKVOL>\n")
+            for k in range(count):
+                dt = t0 + timedelta(minutes=15 * k)
+                macro = 0.25 * math.sin(k / 320.0)
+                vol = 2.8 if (8 <= dt.hour <= 11 or 14 <= dt.hour <= 17) else 1.1
+                o = price
+                c = max(100.0, o + macro + rng.gauss(0, vol))
+                h = max(o, c) + abs(rng.gauss(0, vol * 0.7))
+                l = min(o, c) - abs(rng.gauss(0, vol * 0.7))
+                fh.write(
+                    f"{dt.strftime('%Y.%m.%d')}\t{dt.strftime('%H:%M:%S')}\t"
+                    f"{o:.2f}\t{h:.2f}\t{l:.2f}\t{c:.2f}\t100\n"
+                )
+                price = c
+        return csv_path
+
+    def test_all_three_horizons_and_auto_execute_cleanly(self):
+        from backtest import load_candles, _compile_and_find_strategy
+
+        csv_path = self._write_realistic_m15_csv(5600)
+        try:
+            code = self._strategy_code()
+            durations = {}
+            for cls_name in (
+                "InstitutionalTriHorizonStrategy",
+                "ScalpKillZoneStrategy",
+                "IntradayLondonExpressStrategy",
+                "SwingMultiDayOrderBlockStrategy",
+            ):
+                res = json.loads(run_with_strategy_file(csv_path, code, cls_name, point_size=0.1))
+                self.assertNotIn("error", res, f"{cls_name} failed: {res}")
+                trades = res["trades"]
+                self.assertGreater(len(trades), 0, f"{cls_name} took zero trades")
+                durations[cls_name] = res["timing"]["avgTradeDurationCandles"]
+
+            # Holding horizons should cleanly scale Scalp < Intraday Hours < Swing Days
+            self.assertLess(durations["ScalpKillZoneStrategy"], durations["IntradayLondonExpressStrategy"])
+            self.assertLess(durations["IntradayLondonExpressStrategy"], durations["SwingMultiDayOrderBlockStrategy"])
+
+            # Verify CandleSeries vs regular list parity for the default Auto class
+            series = load_candles(csv_path)
+            raw_list = list(series)
+            cls, err = _compile_and_find_strategy(code, "InstitutionalTriHorizonStrategy")
+            self.assertIsNone(err)
+            t_series, _ = run_backtest(series, cls())
+            t_list, _ = run_backtest(raw_list, cls())
+            self.assertEqual(
+                [(t.open_i, t.close_i, t.side, round(t.r, 6)) for t in t_series],
+                [(t.open_i, t.close_i, t.side, round(t.r, 6)) for t in t_list],
+            )
+        finally:
+            if os.path.exists(csv_path):
+                os.remove(csv_path)
+            if os.path.exists(csv_path + ".btbin"):
+                os.remove(csv_path + ".btbin")
+
+    def test_demo_candles_and_optimizer_integration(self):
+        from backtest import demo_candles, _compile_and_find_strategy, run_optimizer_with_strategy_file
+
+        code = self._strategy_code()
+        cls, err = _compile_and_find_strategy(code, "")
+        self.assertIsNone(err)
+        self.assertEqual(cls.__name__, "InstitutionalTriHorizonStrategy")
+
+        # Synthetic non-timestamped candles should run safely without raising
+        trades, _ = run_backtest(demo_candles(600), cls())
+        self.assertIsInstance(trades, list)
+
+        csv_path = self._write_realistic_m15_csv(1200)
+        try:
+            opt = json.loads(
+                run_optimizer_with_strategy_file(
+                    csv_path,
+                    code,
+                    "InstitutionalTriHorizonStrategy",
+                    json.dumps([{"name": "horizon_profile", "min": 1, "max": 3, "step": 1}]),
+                )
+            )
+            self.assertNotIn("error", opt)
+            self.assertEqual(opt["combinationsTested"], 3)
+        finally:
+            if os.path.exists(csv_path):
+                os.remove(csv_path)
+            if os.path.exists(csv_path + ".btbin"):
+                os.remove(csv_path + ".btbin")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -26,11 +26,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MenuBook
@@ -90,6 +92,35 @@ import java.util.Locale
 private data class PendingPythonUpload(
     val suggestedName: String,
     val code: String
+)
+
+private data class BuiltInPythonPreset(
+    val title: String,
+    val subtitle: String,
+    val className: String
+)
+
+private val BUILT_IN_TEXTBOOK_PRESETS = listOf(
+    BuiltInPythonPreset(
+        title = "Textbook Tri-Horizon (Auto)",
+        subtitle = "Scalp + Hold Hours + Hold Days",
+        className = "InstitutionalTriHorizonStrategy"
+    ),
+    BuiltInPythonPreset(
+        title = "Tri-Horizon: Scalp Kill-Zone",
+        subtitle = "Minutes–2h sweeps & ModMACD",
+        className = "ScalpKillZoneStrategy"
+    ),
+    BuiltInPythonPreset(
+        title = "Tri-Horizon: Hold for Hours",
+        subtitle = "London/NY H1 OB + 25/240 MA",
+        className = "IntradayLondonExpressStrategy"
+    ),
+    BuiltInPythonPreset(
+        title = "Tri-Horizon: Hold for Days",
+        subtitle = "Multi-day HTF OB + 18/40 EMA",
+        className = "SwingMultiDayOrderBlockStrategy"
+    )
 )
 
 @Composable
@@ -197,21 +228,128 @@ fun StrategiesScreen(
 
             if (selectedTab == 0) {
                 // Python Backtest Strategies Tab
-                Button(
-                    onClick = { pyFilePicker.launch(arrayOf("*/*")) },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary
-                    ),
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = { pyFilePicker.launch(arrayOf("*/*")) },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp)
+                            .testTag("upload_python_strategy_button"),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Upload .py", fontWeight = FontWeight.Bold)
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            scope.launch {
+                                val loadRes = withContext(Dispatchers.IO) {
+                                    runCatching {
+                                        context.assets.open("strategies/institutional_tri_horizon.py")
+                                            .bufferedReader(Charsets.UTF_8)
+                                            .use { it.readText() }
+                                    }
+                                }
+                                loadRes.onSuccess { bundledCode ->
+                                    val baseTitle = "Textbook Tri-Horizon"
+                                    val existingNames = pythonStrategies.map { it.name.trim().lowercase() }.toSet()
+                                    val uniqueName = if (baseTitle.lowercase() !in existingNames) {
+                                        baseTitle
+                                    } else {
+                                        var idx = 2
+                                        while ("$baseTitle ($idx)".lowercase() in existingNames) idx++
+                                        "$baseTitle ($idx)"
+                                    }
+                                    viewModel.savePythonStrategy(
+                                        name = uniqueName,
+                                        className = "InstitutionalTriHorizonStrategy",
+                                        code = bundledCode
+                                    )
+                                    uploadReadError = null
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        "Added \"$uniqueName\" (.py) to Strategies",
+                                        android.widget.Toast.LENGTH_SHORT
+                                    ).show()
+                                }.onFailure { err ->
+                                    uploadReadError = err.message ?: "Failed to load bundled .py strategy."
+                                }
+                            }
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp)
+                            .testTag("install_textbook_tri_horizon_button"),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Add Tri-Horizon", fontWeight = FontWeight.SemiBold)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                val quickPresetModes = remember {
+                    BUILT_IN_TEXTBOOK_PRESETS.drop(1)
+                }
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp)
-                        .testTag("upload_python_strategy_button"),
-                    shape = RoundedCornerShape(12.dp)
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Upload .py Strategy", fontWeight = FontWeight.Bold)
+                    quickPresetModes.forEach { preset ->
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
+                                    val loadRes = withContext(Dispatchers.IO) {
+                                        runCatching {
+                                            context.assets.open("strategies/institutional_tri_horizon.py")
+                                                .bufferedReader(Charsets.UTF_8)
+                                                .use { it.readText() }
+                                        }
+                                    }
+                                    loadRes.onSuccess { bundledCode ->
+                                        val existingNames = pythonStrategies.map { it.name.trim().lowercase() }.toSet()
+                                        val uniqueName = if (preset.title.lowercase() !in existingNames) {
+                                            preset.title
+                                        } else {
+                                            var idx = 2
+                                            while ("${preset.title} ($idx)".lowercase() in existingNames) idx++
+                                            "${preset.title} ($idx)"
+                                        }
+                                        viewModel.savePythonStrategy(
+                                            name = uniqueName,
+                                            className = preset.className,
+                                            code = bundledCode
+                                        )
+                                        uploadReadError = null
+                                        android.widget.Toast.makeText(
+                                            context,
+                                            "Added \"${preset.title}\" (${preset.subtitle})",
+                                            android.widget.Toast.LENGTH_SHORT
+                                        ).show()
+                                    }.onFailure { err ->
+                                        uploadReadError = err.message ?: "Failed to load bundled preset."
+                                    }
+                                }
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.height(48.dp)
+                        ) {
+                            Text(preset.title.removePrefix("Tri-Horizon: "), fontSize = 11.sp)
+                        }
+                    }
                 }
 
                 Text(
@@ -832,9 +970,40 @@ private fun PythonCodeViewerSheet(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val clipboardManager = LocalClipboardManager.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var copied by remember { mutableStateOf(false) }
     val lines = remember(strategy.code) { strategy.code.lines() }
     val horizontalScroll = rememberScrollState()
+
+    val exportPyLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/x-python")
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val res = withContext(Dispatchers.IO) {
+                    runCatching {
+                        context.contentResolver.openOutputStream(uri)?.use { out ->
+                            out.write(strategy.code.toByteArray(Charsets.UTF_8))
+                        } ?: error("Cannot open destination file.")
+                    }
+                }
+                res.onSuccess {
+                    android.widget.Toast.makeText(
+                        context,
+                        "Saved .py strategy file.",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }.onFailure { err ->
+                    android.widget.Toast.makeText(
+                        context,
+                        err.message ?: "Failed to export .py file.",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -863,7 +1032,26 @@ private fun PythonCodeViewerSheet(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                val context = LocalContext.current
+                OutlinedButton(
+                    onClick = {
+                        val safeName = strategy.name
+                            .lowercase()
+                            .replace(Regex("[^a-z0-9]+"), "_")
+                            .trim('_')
+                            .ifBlank { "strategy" }
+                        exportPyLauncher.launch("$safeName.py")
+                    },
+                    modifier = Modifier.testTag("export_python_strategy_button")
+                ) {
+                    Icon(
+                        Icons.Default.Download,
+                        contentDescription = "Export .py",
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(".py", fontSize = 12.sp)
+                }
+                Spacer(modifier = Modifier.width(6.dp))
                 OutlinedButton(
                     onClick = {
                         if (strategy.code.length > 250_000) {
