@@ -407,7 +407,7 @@ class BacktestViewModel(application: Application) : AndroidViewModel(application
                         it.copy(
                             savedCsvs = remaining,
                             activeSavedCsvId = next.id,
-                            selectedMarketIds = current.selectedMarketIds - datasetId,
+                            selectedMarketIds = it.selectedMarketIds - datasetId,
                             fileName = next.displayName,
                             estimatedRows = next.estimatedRows,
                             detectedEncoding = next.detectedEncoding,
