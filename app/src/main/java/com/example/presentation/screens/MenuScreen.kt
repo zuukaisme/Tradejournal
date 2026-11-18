@@ -84,9 +84,12 @@ fun MenuScreen(
                 LiquidGlassCard(
                     onClick = { viewModel.navigateTo(AppScreen.BACKTEST) },
                     testTag = "menu_quick_backtest",
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f).height(154.dp)
                 ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -136,9 +139,12 @@ fun MenuScreen(
                 LiquidGlassCard(
                     onClick = { viewModel.navigateTo(AppScreen.OUTLOOK) },
                     testTag = "menu_gold_outlook_hero",
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f).height(154.dp)
                 ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,

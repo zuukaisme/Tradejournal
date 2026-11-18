@@ -259,7 +259,7 @@ fun TradeReplayTabContent(
     var filterMenuOpen by remember { mutableStateOf(false) }
 
     // Continuous TradingView viewport state: default pitch 22.dp = large crisp candles!
-    var candlePitchDp by remember { mutableFloatStateOf(22f) }
+    var candlePitchDp by remember { mutableFloatStateOf(12f) }
     var isFollowingCursor by remember { mutableStateOf(true) }
     var panCenterBarFloat by remember { mutableFloatStateOf(safeCursor.toFloat()) }
 
@@ -345,156 +345,131 @@ fun TradeReplayTabContent(
             .testTag("replay_tab_content")
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // 1) Compact Top Studio Strip (~44dp)
+            // Compact two-row replay toolbar keeps strategy, status and controls readable in landscape.
             Surface(
                 color = TvToolbarBg,
                 border = BorderStroke(0.5.dp, TvSurfaceBorder)
             ) {
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 6.dp, vertical = 3.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        .padding(horizontal = 8.dp, vertical = 5.dp),
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
-                    // Back to Run tab (also restores portrait)
-                    Surface(
-                        onClick = {
-                            isPlaying = false
-                            onGoToBacktest()
-                        },
-                        color = Color(0xFF172334),
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier
-                            .heightIn(min = 38.dp)
-                            .testTag("replay_back_to_run_button")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(7.dp)
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(3.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back to Run tab",
-                                tint = TvTextPrimary,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Text(
-                                text = "Run",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = TvTextPrimary
-                            )
-                        }
-                    }
-
-                    // Strategy Switcher Chip
-                    Box {
                         Surface(
-                            onClick = { if (successfulBatchRuns.size > 1) strategyMenuOpen = true },
-                            color = Color(0xFF162131),
-                            shape = RoundedCornerShape(8.dp),
-                            border = BorderStroke(1.dp, TvSurfaceBorder)
+                            onClick = {
+                                isPlaying = false
+                                onGoToBacktest()
+                            },
+                            color = Color(0xFF172334),
+                            shape = RoundedCornerShape(9.dp),
+                            modifier = Modifier
+                                .heightIn(min = 36.dp)
+                                .testTag("replay_back_to_run_button")
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 7.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.CandlestickChart,
-                                    contentDescription = null,
-                                    tint = TvBullColor,
-                                    modifier = Modifier.size(14.dp)
+                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                    contentDescription = "Back to Run tab",
+                                    tint = TvTextPrimary,
+                                    modifier = Modifier.size(16.dp)
                                 )
-                                Text(
-                                    text = strategyName.ifBlank { "Replay" },
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = TvTextPrimary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                if (successfulBatchRuns.size > 1) {
+                                Text("Run", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = TvTextPrimary)
+                            }
+                        }
+
+                        Box(modifier = Modifier.weight(1f)) {
+                            Surface(
+                                onClick = { if (successfulBatchRuns.size > 1) strategyMenuOpen = true },
+                                color = Color(0xFF162131),
+                                shape = RoundedCornerShape(9.dp),
+                                border = BorderStroke(1.dp, TvSurfaceBorder),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.CandlestickChart,
+                                        contentDescription = null,
+                                        tint = TvBullColor,
+                                        modifier = Modifier.size(15.dp)
+                                    )
                                     Text(
-                                        text = "▼",
-                                        fontSize = 8.sp,
-                                        color = TvTextMuted
+                                        text = strategyName.ifBlank { "Replay" },
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = TvTextPrimary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    if (successfulBatchRuns.size > 1) {
+                                        Text("▾", fontSize = 10.sp, color = TvTextMuted)
+                                    }
+                                }
+                            }
+                            DropdownMenu(
+                                expanded = strategyMenuOpen,
+                                onDismissRequest = { strategyMenuOpen = false }
+                            ) {
+                                successfulBatchRuns.forEach { batchItem ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = "${batchItem.strategyName} (${batchItem.result?.trades?.size ?: 0})",
+                                                fontWeight = if (batchItem.strategyId == activeBatchStrategyId) FontWeight.Bold else FontWeight.Normal
+                                            )
+                                        },
+                                        onClick = {
+                                            strategyMenuOpen = false
+                                            isPlaying = false
+                                            onSelectBatchStrategy(batchItem.strategyId)
+                                        }
                                     )
                                 }
                             }
                         }
-                        DropdownMenu(
-                            expanded = strategyMenuOpen,
-                            onDismissRequest = { strategyMenuOpen = false }
-                        ) {
-                            successfulBatchRuns.forEach { batchItem ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            text = "${batchItem.strategyName} (${batchItem.result?.trades?.size ?: 0})",
-                                            fontWeight = if (batchItem.strategyId == activeBatchStrategyId) FontWeight.Bold else FontWeight.Normal
-                                        )
-                                    },
-                                    onClick = {
-                                        strategyMenuOpen = false
-                                        isPlaying = false
-                                        onSelectBatchStrategy(batchItem.strategyId)
-                                    }
-                                )
-                            }
-                        }
-                    }
 
-                    // Filter Pill
-                    Box {
-                        val filterNames = listOf(
-                            "All (${trades.size})",
-                            "Losses ($totalLosses)",
-                            "Wins ($totalWins)",
-                            "BE ($totalBe)"
-                        )
                         Surface(
-                            onClick = { filterMenuOpen = true },
-                            color = if (outcomeFilter == 1) TvBearColor.copy(alpha = 0.16f) else Color(0xFF162131),
-                            shape = RoundedCornerShape(8.dp),
-                            border = BorderStroke(
-                                1.dp,
-                                if (outcomeFilter == 1) TvBearColor.copy(alpha = 0.5f) else TvSurfaceBorder
-                            ),
-                            modifier = Modifier.testTag("replay_filter_pill")
+                            onClick = { showTradeDrawer = !showTradeDrawer },
+                            color = if (showTradeDrawer) TvBullColor.copy(alpha = 0.22f) else Color(0xFF162131),
+                            shape = RoundedCornerShape(9.dp),
+                            border = BorderStroke(1.dp, if (showTradeDrawer) TvBullColor else TvSurfaceBorder),
+                            modifier = Modifier.testTag("replay_toggle_trades_drawer")
                         ) {
-                            Text(
-                                text = filterNames.getOrElse(outcomeFilter) { filterNames.first() },
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = if (outcomeFilter == 1) TvBearColor else TvTextPrimary,
-                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp)
-                            )
-                        }
-                        DropdownMenu(
-                            expanded = filterMenuOpen,
-                            onDismissRequest = { filterMenuOpen = false }
-                        ) {
-                            filterNames.forEachIndexed { idx, label ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            text = label,
-                                            fontWeight = if (outcomeFilter == idx) FontWeight.Bold else FontWeight.Normal
-                                        )
-                                    },
-                                    onClick = {
-                                        filterMenuOpen = false
-                                        onSelectFilter(idx)
-                                    }
+                            Row(
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.FormatListBulleted,
+                                    contentDescription = "Toggle trade list drawer",
+                                    tint = if (showTradeDrawer) TvBullColor else TvTextPrimary,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Text(
+                                    text = "${filteredIndexedTrades.size}",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (showTradeDrawer) TvBullColor else TvTextPrimary
                                 )
                             }
                         }
                     }
 
-                    // Live Trade / Flat HUD Status Pill
                     val statusTuple = remember(activeLiveTradeIdx, recentClosedTradeIdx, trades) {
                         when {
                             activeLiveTradeIdx >= 0 -> {
@@ -510,60 +485,79 @@ fun TradeReplayTabContent(
                                     isBe -> SlateBreakEven
                                     else -> TvBearColor
                                 }
-                                val bg = col.copy(alpha = 0.18f)
                                 val rSign = if (t.r > 0) "+" else ""
                                 Triple(
                                     "#${recentClosedTradeIdx + 1} ${t.reason.name} $rSign${String.format(Locale.US, "%.2f", t.r)}R",
                                     col,
-                                    bg
+                                    col.copy(alpha = 0.18f)
                                 )
                             }
                             else -> Triple("FLAT • No Position", TvTextMuted, Color(0xFF131D2A))
                         }
                     }
-                    Surface(
-                        color = statusTuple.third,
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.weight(1f, fill = false)
-                    ) {
-                        Text(
-                            text = statusTuple.first,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace,
-                            color = statusTuple.second,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp)
-                        )
-                    }
 
-                    Spacer(modifier = Modifier.weight(1f))
-
-                    // Slide-Over Trade List Toggle
-                    Surface(
-                        onClick = { showTradeDrawer = !showTradeDrawer },
-                        color = if (showTradeDrawer) TvBullColor.copy(alpha = 0.22f) else Color(0xFF162131),
-                        shape = RoundedCornerShape(8.dp),
-                        border = BorderStroke(1.dp, if (showTradeDrawer) TvBullColor else TvSurfaceBorder),
-                        modifier = Modifier.testTag("replay_toggle_trades_drawer")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(7.dp)
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.FormatListBulleted,
-                                contentDescription = "Toggle trade list drawer",
-                                tint = if (showTradeDrawer) TvBullColor else TvTextPrimary,
-                                modifier = Modifier.size(15.dp)
+                        Box {
+                            val filterNames = listOf(
+                                "All (${trades.size})",
+                                "Losses ($totalLosses)",
+                                "Wins ($totalWins)",
+                                "BE ($totalBe)"
                             )
+                            Surface(
+                                onClick = { filterMenuOpen = true },
+                                color = if (outcomeFilter == 1) TvBearColor.copy(alpha = 0.16f) else Color(0xFF162131),
+                                shape = RoundedCornerShape(8.dp),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (outcomeFilter == 1) TvBearColor.copy(alpha = 0.5f) else TvSurfaceBorder
+                                ),
+                                modifier = Modifier.testTag("replay_filter_pill")
+                            ) {
+                                Text(
+                                    text = filterNames.getOrElse(outcomeFilter) { filterNames.first() },
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (outcomeFilter == 1) TvBearColor else TvTextPrimary,
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp)
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = filterMenuOpen,
+                                onDismissRequest = { filterMenuOpen = false }
+                            ) {
+                                filterNames.forEachIndexed { idx, label ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(label, fontWeight = if (outcomeFilter == idx) FontWeight.Bold else FontWeight.Normal)
+                                        },
+                                        onClick = {
+                                            filterMenuOpen = false
+                                            onSelectFilter(idx)
+                                        }
+                                    )
+                                }
+                            }
+                        }
+
+                        Surface(
+                            color = statusTuple.third,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
                             Text(
-                                text = "Trades (${filteredIndexedTrades.size})",
-                                fontSize = 11.sp,
+                                text = statusTuple.first,
+                                fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = if (showTradeDrawer) TvBullColor else TvTextPrimary
+                                fontFamily = FontFamily.Monospace,
+                                color = statusTuple.second,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp)
                             )
                         }
                     }
@@ -620,7 +614,7 @@ fun TradeReplayTabContent(
                                 onEnsureSliceCovers(clamped.roundToInt())
                             },
                             onZoom = { scaleFactor ->
-                                candlePitchDp = (candlePitchDp * scaleFactor).coerceIn(10f, 48f)
+                                candlePitchDp = (candlePitchDp * scaleFactor).coerceIn(7f, 28f)
                             },
                             modifier = Modifier
                                 .fillMaxSize()
@@ -1164,10 +1158,8 @@ private fun ContinuousTradingViewCanvas(
                 openBar <= min(viewMaxBar, cursorGlobalBar) && closeBar >= viewMinBar
             }
 
-            overlappingMarkers.forEach { m ->
-                minPrice = minOf(minPrice, m.trade.sl, m.trade.tp, m.trade.entry, m.trade.exit)
-                maxPrice = maxOf(maxPrice, m.trade.sl, m.trade.tp, m.trade.entry, m.trade.exit)
-            }
+            // Keep the price scale anchored to visible OHLC data. Distant SL/TP values
+            // must not compress ordinary candle bodies into horizontal-looking lines.
 
             if (!minPrice.isFinite() || !maxPrice.isFinite()) return@Canvas
             val rawSpan = (maxPrice - minPrice).takeIf { it > 1e-9 } ?: 1.0
@@ -1328,8 +1320,8 @@ private fun ContinuousTradingViewCanvas(
             }
 
             // 3) Draw Large Crisp 1:1 Native Candlesticks
-            val candleBodyWidth = (slotPx * 0.70f).coerceIn(4.dp.toPx(), 32.dp.toPx())
-            val wickWidth = (slotPx * 0.14f).coerceIn(1.5.dp.toPx(), 3.dp.toPx())
+            val candleBodyWidth = (slotPx * 0.48f).coerceIn(2.5.dp.toPx(), 9.dp.toPx())
+            val wickWidth = (slotPx * 0.10f).coerceIn(1.1.dp.toPx(), 1.6.dp.toPx())
             val timeTickStride = max(4, (72.dp.toPx() / slotPx).roundToInt())
             timeAxisPaint.textSize = 9.sp.toPx()
             timeAxisPaint.color = android.graphics.Color.argb(185, 148, 163, 184)
@@ -1355,13 +1347,18 @@ private fun ContinuousTradingViewCanvas(
                 // Body (clipped cleanly within chart)
                 val openY = yForPrice(candle.open)
                 val closeY = yForPrice(candle.close)
-                val topY = min(openY, closeY)
-                val bodyH = max(abs(closeY - openY), 2.dp.toPx())
+                val rawBodyHeight = abs(closeY - openY)
+                val bodyH = max(rawBodyHeight, 2.6.dp.toPx())
+                val topY = (min(openY, closeY) - (bodyH - rawBodyHeight) / 2f)
+                    .coerceIn(padTop, (chartBottom - bodyH).coerceAtLeast(padTop))
                 drawRoundRect(
                     color = candleColor,
                     topLeft = Offset((centerX - candleBodyWidth / 2f).coerceAtLeast(0f), topY),
-                    size = Size(candleBodyWidth.coerceAtMost((chartRight - (centerX - candleBodyWidth / 2f)).coerceAtLeast(1f)), bodyH),
-                    cornerRadius = CornerRadius(1.5.dp.toPx(), 1.5.dp.toPx())
+                    size = Size(
+                        candleBodyWidth.coerceAtMost((chartRight - (centerX - candleBodyWidth / 2f)).coerceAtLeast(1f)),
+                        bodyH
+                    ),
+                    cornerRadius = CornerRadius(1.dp.toPx(), 1.dp.toPx())
                 )
 
                 // Vertical time grid ticks
