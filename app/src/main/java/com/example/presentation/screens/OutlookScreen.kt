@@ -143,6 +143,72 @@ fun OutlookScreen(
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
+        item {
+            LiquidGlassCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(96.dp),
+                backgroundColor = AmberGold.copy(alpha = 0.08f),
+                testTag = "gold_outlook_screen_hero"
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = AmberGold.copy(alpha = 0.16f),
+                        modifier = Modifier.size(46.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.TrendingUp,
+                                contentDescription = null,
+                                tint = AmberGold,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    }
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        Text(
+                            text = "XAUUSD • MARKET INTELLIGENCE",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = AmberGold,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                        Text(
+                            text = "Gold Outlook",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Macro events, release odds and live catalysts",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Surface(
+                        color = AmberGold.copy(alpha = 0.16f),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(
+                            text = "XAUUSD",
+                            color = AmberGold,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
+                        )
+                    }
+                }
+            }
+        }
+
         // Liquid Glass Event Type Tabs (NFP vs CPI)
         item {
             LiquidGlassTabRow(

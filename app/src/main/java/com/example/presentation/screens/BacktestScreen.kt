@@ -170,6 +170,72 @@ fun BacktestScreen(
             )
     ) {
         if (!isReplayTab) {
+            LiquidGlassCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(96.dp),
+                backgroundColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.82f),
+                testTag = "backtest_screen_hero"
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = positiveColor.copy(alpha = 0.16f),
+                        modifier = Modifier.size(46.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.CandlestickChart,
+                                contentDescription = null,
+                                tint = positiveColor,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    }
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        Text(
+                            text = "BACKTEST LAB",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = positiveColor,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                        Text(
+                            text = "Strategy testing",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Run, replay and compare strategies",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Surface(
+                        color = positiveColor.copy(alpha = 0.14f),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(
+                            text = "ENGINE",
+                            color = positiveColor,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
             val replayLabel = if (state.replaySourceTrades.isEmpty()) "Replay" else "Replay (${state.replaySourceTrades.size})"
             val compareLabel = if (state.savedRuns.isEmpty()) "Compare" else "Compare (${state.savedRuns.size})"
             LiquidGlassTabRow(
