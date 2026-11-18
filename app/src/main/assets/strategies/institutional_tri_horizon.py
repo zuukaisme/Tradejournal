@@ -1309,6 +1309,7 @@ class InstitutionalTriHorizonStrategy(Strategy):
     def manage_trade(self, i: int, candles: List, trade) -> Optional[str]:
         """Horizon-aware trade lifecycle manager (Scalp vs Hold-for-Hours vs Hold-for-Days)."""
         _, gmt_min, _ = self._sync_to(i, candles)
+        self._prev_close_i = i
 
         key = (trade.open_i, trade.side)
         if self._active_trade_key != key:
@@ -1346,16 +1347,16 @@ class InstitutionalTriHorizonStrategy(Strategy):
         reversal_confirmed = False
         reversal_evidence = {}
 
-        if target_progress >= 0.95:
+        if target_progress >= 0.50:
             reversal_confirmed, reversal_evidence = self._confirmed_reversal(trade.side, atr)
-            if reversal_confirmed:
-                self.last_management_diagnostics = {
-                    "index": i,
-                    "target_progress": target_progress,
-                    "action": "confirmed_reversal_exit",
-                    "evidence": reversal_evidence,
-                }
-                return "exit"
+        if target_progress >= 0.95 and reversal_confirmed:
+            self.last_management_diagnostics = {
+                "index": i,
+                "target_progress": target_progress,
+                "action": "confirmed_reversal_exit",
+                "evidence": reversal_evidence,
+            }
+            return "exit"
 
         if trade.side == "buy":
             if target_progress >= 0.65:
