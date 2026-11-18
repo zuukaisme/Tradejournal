@@ -386,6 +386,14 @@ class InstitutionalTriHorizonStrategy(Strategy):
         self.swing_rr: float = 5.0
         self.be_trigger_r: float = 1.0
         self.min_confluence: int = 3
+        self.require_displacement_confirmation: bool = True
+        self.require_rejection_confirmation: bool = True
+        self.displacement_atr: float = 0.55
+        self.rejection_close_fraction: float = 0.68
+        self.ote_retracement_min: float = 0.62
+        self.ote_retracement_max: float = 0.79
+        self.last_entry_diagnostics: dict = {}
+        self.last_management_diagnostics: dict = {}
 
         # Catch-up & clock state (Rule 9: never miss candles skipped while trade is open)
         self._last_processed_index: int = -1
@@ -757,19 +765,93 @@ class InstitutionalTriHorizonStrategy(Strategy):
         bear_pa = bear_pin or bear_rrt or bear_tweezer
         return bull_pa, bear_pa, bull_cross, bear_cross
 
+    def _has_recent_displacement(self, side: str, atr: float) -> bool:
+        if atr <= 0.0 or not self._ltf_bars:
+            return False
+        threshold = max(0.1, float(self.displacement_atr)) * atr
+        close_fraction = min(0.95, max(0.55, float(self.rejection_close_fraction)))
+        for o, h, l, c, _ in list(self._ltf_bars)[-4:]:
+            candle_range = max(1e-9, h - l)
+            body = abs(c - o)
+            if side == "buy":
+                if c > o and body >= threshold and (c - l) / candle_range >= close_fraction:
+                    return True
+            else:
+                if c < o and body >= threshold and (h - c) / candle_range >= close_fraction:
+                    return True
+        return False
+
+    def _entry_confirmation(self, side: str, atr: float, price_action: bool, swept: bool) -> bool:
+        direction = 1 if side == "buy" else -1
+        idx = self._ltf_bars[-1][4] if self._ltf_bars else -1
+        micro_shift = (
+            self._ltf_struct.last_choch_dir == direction
+            and 0 <= idx - self._ltf_struct.last_choch_idx <= 5
+        ) or (
+            self._ltf_struct.last_bos_dir == direction
+            and 0 <= idx - self._ltf_struct.last_bos_idx <= 5
+        )
+        displacement_ok = not self.require_displacement_confirmation or self._has_recent_displacement(side, atr)
+        rejection_ok = not self.require_rejection_confirmation or price_action or micro_shift or swept
+        self.last_entry_diagnostics = {
+            "side": side,
+            "displacement": displacement_ok,
+            "rejection_or_structure": rejection_ok,
+            "sweep": bool(swept),
+            "micro_shift": bool(micro_shift),
+        }
+        return displacement_ok and rejection_ok
+
+    def _confirmed_reversal(self, side: str, atr: float) -> Tuple[bool, dict]:
+        opposite = "sell" if side == "buy" else "buy"
+        direction = -1 if side == "buy" else 1
+        idx = self._ltf_bars[-1][4] if self._ltf_bars else -1
+        displacement = False
+        if self._ltf_bars and atr > 0.0:
+            o, h, l, c, _ = self._ltf_bars[-1]
+            candle_range = max(1e-9, h - l)
+            body = abs(c - o)
+            if side == "buy":
+                displacement = c < o and body >= 0.65 * atr and (h - c) / candle_range >= 0.65
+            else:
+                displacement = c > o and body >= 0.65 * atr and (c - l) / candle_range >= 0.65
+        choch = (
+            self._ltf_struct.last_choch_dir == direction
+            and 0 <= idx - self._ltf_struct.last_choch_idx <= 5
+        )
+        macd_reversal = (
+            (self._prev_mod_macd >= 0.0 > self._mod_macd) if side == "buy"
+            else (self._prev_mod_macd <= 0.0 < self._mod_macd)
+        )
+        macd_softening = (
+            self._std_hist < self._prev_std_hist and self._mod_macd < self._prev_mod_macd
+            if side == "buy"
+            else self._std_hist > self._prev_std_hist and self._mod_macd > self._prev_mod_macd
+        )
+        macd = macd_reversal or macd_softening
+        sweep, _ = self._sweep_detected(opposite, lookback=8)
+        evidence = {
+            "opposite_displacement": bool(displacement),
+            "micro_choch": bool(choch),
+            "macd_reversal_or_deterioration": bool(macd),
+            "opposite_liquidity_sweep": bool(sweep),
+        }
+        return sum(evidence.values()) >= 2, evidence
+
     def _check_ote_zone(self, tracker: _StructureTracker, price: float, side: str) -> Tuple[bool, bool]:
-        """Returns (in_discount_or_premium_half, in_deep_ote_62_79)."""
         rl = tracker.range_low
         rh = tracker.range_high
         if rl is None or rh is None or rh <= rl:
             return True, False
         pos = (price - rl) / (rh - rl)
+        retracement_min = min(0.95, max(0.0, float(self.ote_retracement_min)))
+        retracement_max = min(0.99, max(retracement_min, float(self.ote_retracement_max)))
         if side == "buy":
             in_half = pos <= 0.52
-            in_ote = 0.16 <= pos <= 0.42  # 58%..84% retracement around OTE 62%..79%
+            in_ote = (1.0 - retracement_max) <= pos <= (1.0 - retracement_min)
             return in_half, in_ote
         in_half = pos >= 0.48
-        in_ote = 0.58 <= pos <= 0.84
+        in_ote = retracement_min <= pos <= retracement_max
         return in_half, in_ote
 
     def _in_zone(self, zones: Deque[_Zone], low: float, high: float, close: float, is_bull: bool, atr: float) -> Tuple[bool, bool, Optional[_Zone]]:
@@ -867,7 +949,14 @@ class InstitutionalTriHorizonStrategy(Strategy):
             return None
 
         bull_pa, bear_pa, bull_cross, bear_cross = self._price_action_trigger(atr)
-        recent_ltf_bull = (i - self._ltf_struct.last_choch_idx <= 4) or (i - self._ltf_struct.last_bos_idx <= 4)
+        recent_ltf_bull = (
+            (self._ltf_struct.last_choch_dir == 1 and 0 <= i - self._ltf_struct.last_choch_idx <= 4)
+            or (self._ltf_struct.last_bos_dir == 1 and 0 <= i - self._ltf_struct.last_bos_idx <= 4)
+        )
+        recent_ltf_bear = (
+            (self._ltf_struct.last_choch_dir == -1 and 0 <= i - self._ltf_struct.last_choch_idx <= 4)
+            or (self._ltf_struct.last_bos_dir == -1 and 0 <= i - self._ltf_struct.last_bos_idx <= 4)
+        )
         recent_h4_bull = self._h4_struct.trend_bias == 1 or self._d1_struct.trend_bias == 1
         recent_h4_bear = self._h4_struct.trend_bias == -1 or self._d1_struct.trend_bias == -1
 
@@ -926,7 +1015,7 @@ class InstitutionalTriHorizonStrategy(Strategy):
             if (is_bull and (bull_pa or bull_cross)) or ((not is_bull) and (bear_pa or bear_cross)):
                 score += 1
             if (is_bull and recent_ltf_bull and self._ltf_struct.trend_bias == 1) or (
-                (not is_bull) and recent_ltf_bull and self._ltf_struct.trend_bias == -1
+                (not is_bull) and recent_ltf_bear and self._ltf_struct.trend_bias == -1
             ):
                 score += 1
 
@@ -935,10 +1024,13 @@ class InstitutionalTriHorizonStrategy(Strategy):
                 score += 1
 
             # Trigger gate: HTF POI/OTE confluence + reversal/momentum confirmation
+            directional_pa = (bull_pa or bull_cross) if is_bull else (bear_pa or bear_cross)
             trigger_ok = (htf_ob or htf_fvg or in_ote_h4 or swept) and (
-                (is_bull and (bull_pa or bull_cross or self._std_hist > self._prev_std_hist))
-                or ((not is_bull) and (bear_pa or bear_cross or self._std_hist < self._prev_std_hist))
+                directional_pa or
+                (is_bull and self._std_hist > self._prev_std_hist)
+                or ((not is_bull) and self._std_hist < self._prev_std_hist)
             )
+            trigger_ok = trigger_ok and self._entry_confirmation(side, atr, directional_pa, swept)
             if not trigger_ok or score < max(4, int(self.min_confluence) + 1):
                 continue
 
@@ -1050,6 +1142,8 @@ class InstitutionalTriHorizonStrategy(Strategy):
                 continue
             if not (trigger or macd_ok):
                 continue
+            if not self._entry_confirmation(side, atr, trigger, swept):
+                continue
 
             min_sl_dist = max(1.35 * atr, 0.9 * h1_atr)
             if is_bull:
@@ -1118,7 +1212,7 @@ class InstitutionalTriHorizonStrategy(Strategy):
                     continue
 
             trigger = (is_bull and (bull_pa or bull_cross)) or ((not is_bull) and (bear_pa or bear_cross))
-            if not trigger:
+            if not trigger or not self._entry_confirmation(side, atr, trigger, swept):
                 continue
 
             score = 0
@@ -1215,7 +1309,6 @@ class InstitutionalTriHorizonStrategy(Strategy):
     def manage_trade(self, i: int, candles: List, trade) -> Optional[str]:
         """Horizon-aware trade lifecycle manager (Scalp vs Hold-for-Hours vs Hold-for-Days)."""
         _, gmt_min, _ = self._sync_to(i, candles)
-        self._prev_close_i = i
 
         key = (trade.open_i, trade.side)
         if self._active_trade_key != key:
@@ -1244,7 +1337,63 @@ class InstitutionalTriHorizonStrategy(Strategy):
         if trade.side == "buy":
             favorable_r = (c.high - trade.entry) / risk
             close_r = (close - trade.entry) / risk
+        else:
+            favorable_r = (trade.entry - c.low) / risk
+            close_r = (trade.entry - close) / risk
 
+        target_r = abs(trade.tp - trade.entry) / risk if getattr(trade, "tp", None) is not None else 0.0
+        target_progress = max(0.0, close_r / target_r) if target_r > 0.0 else 0.0
+        reversal_confirmed = False
+        reversal_evidence = {}
+
+        if target_progress >= 0.95:
+            reversal_confirmed, reversal_evidence = self._confirmed_reversal(trade.side, atr)
+            if reversal_confirmed:
+                self.last_management_diagnostics = {
+                    "index": i,
+                    "target_progress": target_progress,
+                    "action": "confirmed_reversal_exit",
+                    "evidence": reversal_evidence,
+                }
+                return "exit"
+
+        if trade.side == "buy":
+            if target_progress >= 0.65:
+                lock = trade.entry + 0.5 * risk
+                if lock < close and lock > trade.sl:
+                    trade.sl = lock
+            if target_progress >= 0.80:
+                lock = trade.entry + 1.0 * risk
+                if lock < close and lock > trade.sl:
+                    trade.sl = lock
+            if target_progress >= 0.90:
+                trail = max(trade.entry + risk, close - 0.85 * atr)
+                if trail < close and trail > trade.sl:
+                    trade.sl = trail
+        else:
+            if target_progress >= 0.65:
+                lock = trade.entry - 0.5 * risk
+                if lock > close and lock < trade.sl:
+                    trade.sl = lock
+            if target_progress >= 0.80:
+                lock = trade.entry - 1.0 * risk
+                if lock > close and lock < trade.sl:
+                    trade.sl = lock
+            if target_progress >= 0.90:
+                trail = min(trade.entry - risk, close + 0.85 * atr)
+                if trail > close and trail < trade.sl:
+                    trade.sl = trail
+
+        self.last_management_diagnostics = {
+            "index": i,
+            "target_progress": target_progress,
+            "reversal_monitoring": target_progress >= 0.50,
+            "reversal_evidence": reversal_evidence,
+            "stop": trade.sl,
+        }
+        self._prev_close_i = i
+
+        if trade.side == "buy":
             if horizon == "SCALP":
                 # Move SL to BE at +0.85R; trail half-R above entry after +1.25R
                 if favorable_r >= 0.85 and trade.sl < trade.entry:
