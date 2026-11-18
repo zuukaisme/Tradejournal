@@ -18,7 +18,8 @@ data class SavedCsvDataset(
     val detectedDelimiter: String,
     val detectedTimeframeLabel: String,
     val detectedTimeframeMinutes: Int?,
-    val importedAt: Long
+    val importedAt: Long,
+    val marketName: String = ""
 )
 
 /**
@@ -77,7 +78,8 @@ object SavedCsvStore {
         tempCsvFile: File,
         displayName: String,
         inspection: CsvStreamInspection,
-        detectedTimeframe: DetectedTimeframe
+        detectedTimeframe: DetectedTimeframe,
+        marketName: String = inferMarketName(displayName)
     ): SavedCsvDataset {
         rootDir.mkdirs()
         val id = UUID.randomUUID().toString()
@@ -103,7 +105,8 @@ object SavedCsvStore {
             detectedDelimiter = inspection.detectedDelimiter,
             detectedTimeframeLabel = detectedTimeframe.label,
             detectedTimeframeMinutes = detectedTimeframe.minutes,
-            importedAt = System.currentTimeMillis()
+            importedAt = System.currentTimeMillis(),
+            marketName = marketName.trim().ifBlank { "CUSTOM" }.uppercase()
         )
 
         val currentList = listDatasets(rootDir)
@@ -145,6 +148,29 @@ object SavedCsvStore {
         val remaining = current.filterNot { it.id == datasetId }
         writeIndexJson(File(rootDir, INDEX_FILE), remaining)
         return remaining
+    }
+
+
+    @Synchronized
+    fun updateMarketName(rootDir: File, datasetId: String, marketName: String): List<SavedCsvDataset> {
+        val current = listDatasets(rootDir)
+        val normalized = marketName.trim().uppercase().ifBlank { "CUSTOM" }
+        val updated = current.map { dataset ->
+            if (dataset.id == datasetId) dataset.copy(marketName = normalized) else dataset
+        }
+        writeIndexJson(File(rootDir, INDEX_FILE), updated)
+        return updated
+    }
+
+    fun inferMarketName(fileName: String): String {
+        val normalized = fileName.uppercase().replace(Regex("[^A-Z0-9]"), "")
+        val symbols = listOf(
+            "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "USDCAD", "AUDUSD", "NZDUSD",
+            "EURGBP", "EURJPY", "GBPJPY", "XAUUSD", "XAGUSD", "USOIL", "UKOIL",
+            "WTI", "BRENT", "BTCUSD", "ETHUSD", "NAS100", "US30", "SPX500",
+            "GER40", "UK100", "JP225"
+        )
+        return symbols.firstOrNull { normalized.contains(it) } ?: "CUSTOM"
     }
 
     private fun decodeIndexJson(raw: String): List<SavedCsvDataset> {
