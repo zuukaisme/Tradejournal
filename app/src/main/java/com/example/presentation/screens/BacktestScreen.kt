@@ -921,6 +921,7 @@ fun BacktestScreen(
                         val canRun = !state.isLoading && !state.isMultiMarketRunning && !state.isQueueRunning && !state.isImportingCsv && state.hasCsvBytes && state.selectedMarketIds.isNotEmpty() &&
                             (if (state.isMultiStrategyMode) state.selectedStrategyIds.isNotEmpty() else state.selectedStrategy != null)
                         val multiCount = state.selectedStrategyIds.size
+                        val runStrategyCount = if (state.isMultiStrategyMode) multiCount else if (state.selectedStrategy != null) 1 else 0
                         val totalLiveStrategies = state.liveProgress?.totalStrategies ?: 0
                         val runButtonText = when {
                             state.isMultiMarketRunning && !state.isLoading -> "Preparing Next Market..."
@@ -928,7 +929,7 @@ fun BacktestScreen(
                             state.isLoading && totalLiveStrategies > 1 ->
                                 "Running $totalLiveStrategies Strategies..."
                             state.isLoading -> "Running Python Engine..."
-                            state.selectedMarketIds.size > 1 -> "Run ${multiCount.coerceAtLeast(1) * state.selectedMarketIds.size} Market Combinations"
+                            state.selectedMarketIds.size > 1 -> "Run ${runStrategyCount * state.selectedMarketIds.size} Market Combinations"
                             state.isMultiStrategyMode && multiCount > 1 -> "Run $multiCount Strategies Together"
                             else -> "Run Backtest"
                         }
@@ -2842,7 +2843,6 @@ private fun BacktestEquityCurveCanvas(
     }
 }
 
-@Composable
 @Composable
 private fun SavedCsvLibraryStrip(
     datasets: List<SavedCsvDataset>,
