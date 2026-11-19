@@ -57,8 +57,7 @@ class Mt5ConnectorClient(
     }
 
     fun symbols(): List<Mt5Symbol> {
-        val array = getJson("/symbols").optJSONArray("symbols")
-            ?: throw IOException("Connector returned an invalid symbols response.")
+        val array = getJsonArray("/symbols")
         return (0 until array.length()).mapNotNull { index ->
             array.optJSONObject(index)?.let {
                 Mt5Symbol(
@@ -90,6 +89,21 @@ class Mt5ConnectorClient(
                 throw IOException(detail.ifBlank { "Connector request failed (HTTP ${response.code})." })
             }
             return response.body?.bytes() ?: throw IOException("Connector returned an empty response.")
+        }
+    }
+
+    private fun getJsonArray(path: String): org.json.JSONArray {
+        val request = Request.Builder()
+            .url("$baseUrl$path")
+            .header("Authorization", "Bearer $token")
+            .get()
+            .build()
+        http.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                val detail = response.body?.string().orEmpty()
+                throw IOException(detail.ifBlank { "Connector request failed (HTTP ${response.code})." })
+            }
+            return org.json.JSONArray(response.body?.string().orEmpty())
         }
     }
 
