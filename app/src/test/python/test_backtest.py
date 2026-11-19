@@ -44,6 +44,36 @@ def make_series(candles):
 
 
 class BacktestRegressionTests(unittest.TestCase):
+    def test_headerless_date_time_csv_and_common_header_variants(self):
+        from backtest import parse_candles
+
+        headerless = (
+            "2018.02.01,00:00,1.24125,1.24125,1.24090,1.24102,41\n"
+            "2018.02.01,00:01,1.24108,1.24108,1.24068,1.24068,46\n"
+        )
+        parsed = parse_candles(headerless)
+        self.assertEqual(len(parsed), 2)
+        self.assertEqual(parsed[0].time, "2018.02.01 00:00")
+        self.assertAlmostEqual(parsed[0].open, 1.24125)
+        self.assertEqual(parsed[1].volume, 46.0)
+
+        separated = (
+            "date;time;open;high;low;close;tick_volume\n"
+            "2025-01-02;09:30:00;100;102;99;101;500\n"
+        )
+        parsed = parse_candles(separated)
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0].time, "2025-01-02 09:30:00")
+        self.assertEqual(parsed[0].volume, 500.0)
+
+        standard = (
+            "Timestamp,Open,High,Low,Close,Volume\n"
+            "2025-01-02 09:30:00,100,102,99,101,500\n"
+        )
+        parsed = parse_candles(standard)
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0].close, 101.0)
+
     def test_more_than_ten_trades_per_day_are_allowed(self):
         candles = make_candles(3000)
         trades, skipped = run_backtest(candles, FrequentSignalStrategy())

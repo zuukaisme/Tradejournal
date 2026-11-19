@@ -37,6 +37,7 @@ import com.example.domain.usecase.Mt5ImportResult
 import com.example.domain.usecase.Mt5TradeHistoryImporter
 import com.example.domain.usecase.StatsCalculator
 import com.example.notifications.EveningReminderScheduler
+import com.example.notifications.NewsEventNotificationScheduler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -659,6 +660,7 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
             economicCalendarRepository.fetchEvents()
                 .onSuccess { events ->
                     economicCalendarEvents.value = events
+                    NewsEventNotificationScheduler.sync(getApplication(), events)
                     if (events.isEmpty()) economicCalendarStatus.value = "No events were returned for this week."
                 }
                 .onFailure { error ->

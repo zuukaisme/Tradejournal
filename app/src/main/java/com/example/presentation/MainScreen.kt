@@ -246,8 +246,8 @@ fun MainScreen(
                                     AppScreen.STRATEGIES -> "Strategies & Rules"
                                     AppScreen.STRATEGY_GUIDE -> "Strategy Guide"
                                     AppScreen.BOTS -> "MQL5 Bot Library"
-                                    AppScreen.OUTLOOK -> "Gold News Outlook"
-                                    AppScreen.BACKTEST -> "Strategy Backtester"
+                                    AppScreen.OUTLOOK -> "Gold Outlook"
+                                    AppScreen.BACKTEST -> "Backtester"
                                     AppScreen.BACKTEST_ACCOUNT -> "Account Profit Simulator"
                                     AppScreen.PROFILE -> "Trading Profile"
                                     AppScreen.RISK_CALC -> "Risk & Lot Calculator"
@@ -272,8 +272,8 @@ fun MainScreen(
                                     AppScreen.STRATEGIES -> "Python scripts & entry checklists"
                                     AppScreen.STRATEGY_GUIDE -> "Python contract, example & AI prompt"
                                     AppScreen.BOTS -> "Offline expert advisors & scripts"
-                                    AppScreen.OUTLOOK -> "XAUUSD macro event probabilities"
-                                    AppScreen.BACKTEST -> "Embedded Python & MT5 simulator"
+                                    AppScreen.OUTLOOK -> "XAUUSD news & market outlook"
+                                    AppScreen.BACKTEST -> "Python strategy lab"
                                     AppScreen.BACKTEST_ACCOUNT -> "Fixed-lot balance, leverage & cashflows"
                                     AppScreen.PROFILE -> "Custom accounts, default lot & Vault sync"
                                     AppScreen.RISK_CALC -> "WLTrade SyntX, Gold & FX sizing"
@@ -323,7 +323,7 @@ fun MainScreen(
                             )
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
@@ -374,7 +374,7 @@ fun MainScreen(
                             )
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(3.dp)
                             ) {
@@ -382,11 +382,11 @@ fun MainScreen(
                                     imageVector = Icons.Default.Bolt,
                                     contentDescription = "Open Gold News Outlook",
                                     tint = goldColor,
-                                    modifier = Modifier.size(15.dp)
+                                    modifier = Modifier.size(14.dp)
                                 )
                                 Text(
                                     text = "Gold",
-                                    fontSize = 11.sp,
+                                    fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = if (isOutlookActive) goldColor else MaterialTheme.colorScheme.onSurface
                                 )
