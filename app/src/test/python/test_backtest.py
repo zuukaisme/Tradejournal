@@ -48,8 +48,8 @@ class BacktestRegressionTests(unittest.TestCase):
         from backtest import parse_candles
 
         headerless = (
-            "2018.02.01,00:00,1.24125,1.24125,1.24090,1.24102,41\\n"
-            "2018.02.01,00:01,1.24108,1.24108,1.24068,1.24068,46\\n"
+            "2018.02.01,00:00,1.24125,1.24125,1.24090,1.24102,41\n"
+            "2018.02.01,00:01,1.24108,1.24108,1.24068,1.24068,46\n"
         )
         parsed = parse_candles(headerless)
         self.assertEqual(len(parsed), 2)
@@ -58,8 +58,8 @@ class BacktestRegressionTests(unittest.TestCase):
         self.assertEqual(parsed[1].volume, 46.0)
 
         separated = (
-            "date;time;open;high;low;close;tick_volume\\n"
-            "2025-01-02;09:30:00;100;102;99;101;500\\n"
+            "date;time;open;high;low;close;tick_volume\n"
+            "2025-01-02;09:30:00;100;102;99;101;500\n"
         )
         parsed = parse_candles(separated)
         self.assertEqual(len(parsed), 1)
@@ -67,8 +67,8 @@ class BacktestRegressionTests(unittest.TestCase):
         self.assertEqual(parsed[0].volume, 500.0)
 
         standard = (
-            "Timestamp,Open,High,Low,Close,Volume\\n"
-            "2025-01-02 09:30:00,100,102,99,101,500\\n"
+            "Timestamp,Open,High,Low,Close,Volume\n"
+            "2025-01-02 09:30:00,100,102,99,101,500\n"
         )
         parsed = parse_candles(standard)
         self.assertEqual(len(parsed), 1)
