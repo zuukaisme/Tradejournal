@@ -52,7 +52,7 @@ def parse_utc(value: str) -> datetime:
 
 def rates_to_csv(rates) -> str:
     output = io.StringIO(newline="")
-    writer = csv.writer(output, lineterminator="\\n")
+    writer = csv.writer(output, lineterminator="\n")
     writer.writerow(["time", "open", "high", "low", "close", "tick_volume", "spread", "real_volume"])
     for rate in rates:
         writer.writerow([
