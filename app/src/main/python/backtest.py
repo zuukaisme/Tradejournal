@@ -180,12 +180,13 @@ def _resolve_header(first: str):
 
     try:
         values = [value.strip() for value in row]
-        if len(values) >= 7 and len(values[0]) >= 8 and ":" in values[1]:
+        if len(values) >= 6 and len(values[0]) >= 8 and ":" in values[1]:
             float(values[2]); float(values[3]); float(values[4]); float(values[5])
-            volume_index = 6
-            float(values[volume_index])
+            volume_index = 6 if len(values) > 6 else None
+            if volume_index is not None:
+                float(values[volume_index])
             return delim, 2, 3, 4, 5, volume_index, True, 0, 1, 0, False
-        if len(values) >= 6 and (":" in values[0] or "-" in values[0] or "/" in values[0]):
+        if len(values) >= 5 and (":" in values[0] or "-" in values[0] or "/" in values[0]):
             float(values[1]); float(values[2]); float(values[3]); float(values[4])
             volume_index = 5 if len(values) > 5 else None
             if volume_index is not None:
