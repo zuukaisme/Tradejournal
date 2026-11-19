@@ -23,7 +23,7 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-Sign in to the MT5 desktop terminal first. Use the broker-provided MT5 account login and server there. The connector intentionally does not accept or store the trading password; MT5 manages its own authenticated terminal session.
+Sign in to the MT5 desktop terminal first. Use the broker-provided MT5 account login and server there. The connector intentionally does not accept or store the trading password; MT5 manages its own authenticated terminal session. In MT5 terminal settings, enable **Disable automatic trading via external Python API**. The connector only calls read-only account, symbol and candle functions, but this terminal setting provides an additional safety barrier.
 
 Generate a strong API token:
 
