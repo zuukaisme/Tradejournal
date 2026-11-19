@@ -10,9 +10,8 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-import MetaTrader5 as mt5
-
-TIMEFRAMES = {
+def timeframe_map(mt5):
+    return {
     "M1": mt5.TIMEFRAME_M1,
     "M2": mt5.TIMEFRAME_M2,
     "M3": mt5.TIMEFRAME_M3,
@@ -34,7 +33,14 @@ TIMEFRAMES = {
     "D1": mt5.TIMEFRAME_D1,
     "W1": mt5.TIMEFRAME_W1,
     "MN1": mt5.TIMEFRAME_MN1,
-}
+    }
+
+
+def get_mt5():
+    import MetaTrader5 as mt5
+    return mt5
+
+
 MAX_BARS = 500_000
 
 
@@ -84,6 +90,8 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/health":
             self.respond(200, {"ok": True, "connector": self.server_version})
             return
+        mt5 = get_mt5()
+        timeframes = timeframe_map(mt5)
         if not mt5.initialize():
             self.respond(503, {"error": "Could not initialize the MT5 terminal", "detail": str(mt5.last_error())})
             return
@@ -119,7 +127,7 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/rates.csv":
                 symbol = query.get("symbol", [""])[0].strip()
                 timeframe = query.get("timeframe", [""])[0].upper()
-                if not symbol or timeframe not in TIMEFRAMES:
+                if not symbol or timeframe not in timeframes:
                     self.respond(400, {"error": "Provide a valid symbol and timeframe"})
                     return
                 start = parse_utc(query.get("from", [""])[0])
@@ -130,7 +138,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not mt5.symbol_select(symbol, True):
                     self.respond(404, {"error": f"Symbol unavailable: {symbol}", "detail": str(mt5.last_error())})
                     return
-                rates = mt5.copy_rates_range(symbol, TIMEFRAMES[timeframe], start, end)
+                rates = mt5.copy_rates_range(symbol, timeframes[timeframe], start, end)
                 if rates is None:
                     self.respond(503, {"error": "MT5 could not retrieve historical candles", "detail": str(mt5.last_error())})
                     return
