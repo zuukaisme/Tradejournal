@@ -374,7 +374,7 @@ fun MainScreen(
                             )
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp),,
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(3.dp)
                             ) {
@@ -382,11 +382,11 @@ fun MainScreen(
                                     imageVector = Icons.Default.Bolt,
                                     contentDescription = "Open Gold News Outlook",
                                     tint = goldColor,
-                                    modifier = Modifier.size(15.dp)
+                                    modifier = Modifier.size(14.dp)
                                 )
                                 Text(
                                     text = "Gold",
-                                    fontSize = 11.sp,
+                                    fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = if (isOutlookActive) goldColor else MaterialTheme.colorScheme.onSurface
                                 )
