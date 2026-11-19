@@ -6,6 +6,8 @@ import android.security.keystore.KeyProperties
 import android.util.Base64
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import java.net.URLEncoder
 import java.security.KeyStore
@@ -71,7 +73,7 @@ class Mt5ConnectorClient(
         }.filter { it.name.isNotBlank() }
     }
 
-    fun downloadRates(symbol: String, timeframe: String, from: String, to: String): ByteArray {
+    fun downloadRatesToFile(\n        symbol: String,\n        timeframe: String,\n        from: String,\n        to: String,\n        destination: File,\n        onProgress: (Long) -> Unit = {}\n    ): File {
         val query = listOf(
             "symbol" to symbol,
             "timeframe" to timeframe,
@@ -88,7 +90,7 @@ class Mt5ConnectorClient(
                 val detail = response.body?.string().orEmpty()
                 throw IOException(detail.ifBlank { "Connector request failed (HTTP ${response.code})." })
             }
-            return response.body?.bytes() ?: throw IOException("Connector returned an empty response.")
+            val body = response.body ?: throw IOException("Connector returned an empty response.")\n            destination.parentFile?.mkdirs()\n            var totalBytes = 0L\n            body.byteStream().use { input ->\n                FileOutputStream(destination).buffered(65_536).use { output ->\n                    val buffer = ByteArray(65_536)\n                    while (true) {\n                        val count = input.read(buffer)\n                        if (count < 0) break\n                        output.write(buffer, 0, count)\n                        totalBytes += count\n                        onProgress(totalBytes)\n                    }\n                }\n            }\n            if (totalBytes == 0L) {\n                destination.delete()\n                throw IOException("MT5 returned no candle data for this symbol, timeframe and date range.")\n            }\n            return destination
         }
     }
 
