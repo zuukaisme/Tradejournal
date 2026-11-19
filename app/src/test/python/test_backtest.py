@@ -48,8 +48,8 @@ class BacktestRegressionTests(unittest.TestCase):
         from backtest import parse_candles
 
         headerless = (
-            "2018.02.01 00:00,00:00,1.24125,1.24125,1.24090,1.24102,41\\n"
-            "2018.02.01 00:01,00:01,1.24108,1.24108,1.24068,1.24068,46\\n"
+            "2018.02.01,00:00,1.24125,1.24125,1.24090,1.24102,41\\n"
+            "2018.02.01,00:01,1.24108,1.24108,1.24068,1.24068,46\\n"
         )
         parsed = parse_candles(headerless)
         self.assertEqual(len(parsed), 2)
