@@ -47,6 +47,17 @@ python mt5_connector.py
 
 Create a Windows Firewall rule limited to your private network and only the chosen port. Do not expose this HTTP service directly to the public internet. A LAN connection is not encrypted; use it only on a trusted network. The bearer token protects the endpoints but is not a substitute for TLS on untrusted networks.
 
+## TradePulse Android workflow
+
+1. Start this connector beside the signed-in MT5 desktop terminal.
+2. Open TradePulse Settings and enter the connector URL and bearer token.
+3. Test the connection, then load symbols from the broker.
+4. Select the exact broker symbol, timeframe and UTC date range.
+5. Download candles. TradePulse streams the CSV to app storage, inspects the rows/timeframe, and registers it in Backtester Saved CSVs.
+6. Open Backtester and select the imported dataset if it is not already active.
+
+The Android app does not run the MetaQuotes Python package or MT5 terminal itself. A compatible MT5 desktop terminal must be running on the computer/server hosting this connector. The phone only communicates with the read-only HTTP API.
+
 ## API
 
 All endpoints require `Authorization: Bearer <TRADEPULSE_MT5_TOKEN>`.
