@@ -34,6 +34,10 @@
             android:name=".notifications.EveningReminderReceiver"
             android:exported="false" />
 
+        <receiver
+            android:name=".notifications.NewsEventNotificationReceiver"
+            android:exported="false" />
+
         <service
             android:name=".backtest.worker.BacktestWorkerService1"
             android:exported="false"
