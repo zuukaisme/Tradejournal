@@ -3,7 +3,6 @@ package com.example.presentation.screens
 import android.app.ActivityManager
 import android.content.Context
 import android.os.Build
-import android.os.Environment
 import android.os.StatFs
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -15,7 +14,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Memory
-import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
