@@ -13,6 +13,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
@@ -50,6 +51,9 @@ fun Mt5ConnectorSettingsCard() {
     val saved = remember { runCatching { store.load() }.getOrDefault("" to "") }
     var url by remember { mutableStateOf(saved.first) }
     var token by remember { mutableStateOf(saved.second) }
+    var allowInsecureHttp by remember { mutableStateOf(false) }
+    val usesHttp = url.trim().startsWith("http://", ignoreCase = true)
+    val transportAllowed = !usesHttp || allowInsecureHttp
     var symbols by remember { mutableStateOf(emptyList<Mt5Symbol>()) }
     var selected by remember { mutableStateOf(emptySet<String>()) }
     var selectedSymbol by remember { mutableStateOf("") }
@@ -65,6 +69,10 @@ fun Mt5ConnectorSettingsCard() {
 
     fun runConnection(loadSymbols: Boolean) {
         if (busy) return
+        if (!transportAllowed) {
+            status = "Enable the local HTTP warning checkbox only when using a trusted private Wi-Fi network."
+            return
+        }
         busy = true
         status = if (loadSymbols) "Loading broker symbols…" else "Testing connector…"
         scope.launch {
@@ -102,6 +110,10 @@ fun Mt5ConnectorSettingsCard() {
 
     fun downloadHistory() {
         if (busy) return
+        if (!transportAllowed) {
+            status = "Enable the local HTTP warning checkbox only when using a trusted private Wi-Fi network."
+            return
+        }
         val datePattern = Regex("\\d{4}-\\d{2}-\\d{2}")
         if (selectedSymbol.isBlank() || selectedSymbol !in selected) {
             status = "Select a broker symbol before downloading."
@@ -196,10 +208,23 @@ fun Mt5ConnectorSettingsCard() {
                 visualTransformation = PasswordVisualTransformation(),
                 label = { Text("Connector access token") }
             )
+            if (usesHttp) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(
+                        checked = allowInsecureHttp,
+                        onCheckedChange = { allowInsecureHttp = it }
+                    )
+                    Text(
+                        "Allow unencrypted HTTP on trusted private Wi-Fi only",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = { runConnection(false) },
-                    enabled = !busy && url.isNotBlank() && token.isNotBlank(),
+                    enabled = !busy && url.isNotBlank() && token.isNotBlank() && transportAllowed,
                     modifier = Modifier.weight(1f)
                 ) {
                     Text("Test connection")
@@ -313,7 +338,7 @@ fun Mt5ConnectorSettingsCard() {
                 }
                 Button(
                     onClick = { downloadHistory() },
-                    enabled = !busy && selectedSymbol.isNotBlank() && selectedSymbol in selected &&
+                    enabled = !busy && transportAllowed && selectedSymbol.isNotBlank() && selectedSymbol in selected &&
                         fromDate.isNotBlank() && toDate.isNotBlank() && url.isNotBlank() && token.isNotBlank(),
                     modifier = Modifier.fillMaxWidth()
                 ) {
