@@ -150,160 +150,103 @@ _FILE_CACHE: Optional[Tuple[Tuple[str, int, int], Sequence]] = None
 
 
 def _resolve_header(first: str):
-    delim = "\t" if "\t" in first else (";" if ";" in first else ",")
-    if '"' in first:
-        header_raw = next(csv.reader([first], delimiter=delim))
-    else:
-        header_raw = first.split(delim)
+    delim = next((candidate for candidate in ("\\t", ",", ";", "|") if candidate in first), ",")
+    row = next(csv.reader([first], delimiter=delim))
+    normalized = [value.strip().strip("<>").strip().lower().replace(" ", "").replace("_", "") for value in row]
+    aliases = {
+        "datetime": "datetime", "timestamp": "datetime", "date/time": "datetime",
+        "date": "date", "time": "time", "open": "open", "o": "open",
+        "high": "high", "h": "high", "low": "low", "l": "low",
+        "close": "close", "c": "close", "volume": "volume", "vol": "volume",
+        "tickvol": "volume", "tickvolume": "volume", "realvolume": "volume",
+    }
+    idx = {}
+    for col_i, name in enumerate(normalized):
+        mapped = aliases.get(name)
+        if mapped and mapped not in idx:
+            idx[mapped] = col_i
 
-    header = [h.strip().strip("<>").lower() for h in header_raw]
-    idx: Dict[str, int] = {}
-    for col_i, name in enumerate(header):
-        if name and name not in idx:
-            idx[name] = col_i
-
-    missing = [k for k in ("open", "high", "low", "close") if k not in idx]
-    time_keys = [k for k in ("datetime", "timestamp", "date", "time") if k in idx]
-    if missing or not time_keys:
-        raise ValueError(
-            "This does not look like a candle CSV. It needs date or time plus open, "
-            "high, low, close columns. First header found: " + first[:80]
+    has_header = all(key in idx for key in ("open", "high", "low", "close")) and (
+        "datetime" in idx or "date" in idx or "time" in idx
+    )
+    if has_header:
+        has_date_time = "date" in idx and "time" in idx
+        ts_i = idx.get("datetime", idx.get("date", idx.get("time", -1)))
+        return (
+            delim, idx["open"], idx["high"], idx["low"], idx["close"],
+            idx.get("volume"), has_date_time, idx.get("date", -1),
+            idx.get("time", -1), ts_i, True
         )
 
-    o_i = idx["open"]
-    h_i = idx["high"]
-    l_i = idx["low"]
-    c_i = idx["close"]
-    vol_i = idx.get("tickvol", idx.get("volume"))
-    has_date_time = ("date" in idx and "time" in idx)
-    date_i = idx.get("date", -1)
-    time_i = idx.get("time", -1)
-    ts_i = idx[time_keys[0]]
-    return delim, o_i, h_i, l_i, c_i, vol_i, has_date_time, date_i, time_i, ts_i
+    try:
+        values = [value.strip() for value in row]
+        if len(values) >= 7 and len(values[0]) >= 8 and ":" in values[1]:
+            float(values[2]); float(values[3]); float(values[4]); float(values[5])
+            volume_index = 6
+            float(values[volume_index])
+            return delim, 2, 3, 4, 5, volume_index, True, 0, 1, 0, False
+        if len(values) >= 6 and (":" in values[0] or "-" in values[0] or "/" in values[0]):
+            float(values[1]); float(values[2]); float(values[3]); float(values[4])
+            volume_index = 5 if len(values) > 5 else None
+            if volume_index is not None:
+                float(values[volume_index])
+            return delim, 1, 2, 3, 4, volume_index, False, -1, -1, 0, False
+    except (ValueError, IndexError):
+        pass
+
+    raise ValueError(
+        "Unsupported candle CSV. Expected timestamp/date plus open, high, low, close "
+        "columns, or headerless date,time,open,high,low,close,volume data. "
+        "First row: " + first[:100]
+    )
 
 
 def _populate_from_stream(stream, use_compact_series: bool):
     first = ""
     for raw_line in stream:
-        stripped = raw_line.strip()
-        if stripped:
-            first = stripped
+        if raw_line.strip():
+            first = raw_line.strip()
             break
     if not first:
         raise ValueError("The CSV file is empty")
 
-    delim, o_i, h_i, l_i, c_i, vol_i, has_date_time, date_i, time_i, ts_i = _resolve_header(first)
+    layout = _resolve_header(first)
+    delim, o_i, h_i, l_i, c_i, vol_i, has_date_time, date_i, time_i, ts_i, has_header = layout
+    series = CandleSeries() if use_compact_series else None
+    candles = [] if series is None else None
+    append_candle = candles.append if candles is not None else None
 
-    if use_compact_series:
-        series = CandleSeries()
-        opens = series.opens
-        highs = series.highs
-        lows = series.lows
-        closes = series.closes
-        volumes = series.volumes
-        tbuf = series._time_buf
-        toff = series._time_offsets
-        tbuf_extend = tbuf.extend
-        toff_append = toff.append
-        o_app = opens.append
-        h_app = highs.append
-        l_app = lows.append
-        c_app = closes.append
-        v_app = volumes.append
-        flt = float
-        split_fn = str.split
-        reader = csv.reader
-
-        if has_date_time:
-            if vol_i is not None:
-                for raw_line in stream:
-                    line = raw_line.strip()
-                    if not line:
-                        continue
-                    row = next(reader([line], delimiter=delim)) if '"' in line else split_fn(line, delim)
-                    tbuf_extend((row[date_i] + " " + row[time_i]).encode("utf-8", "replace"))
-                    toff_append(len(tbuf))
-                    o_app(flt(row[o_i])); h_app(flt(row[h_i])); l_app(flt(row[l_i])); c_app(flt(row[c_i])); v_app(flt(row[vol_i]))
+    def append_row(row):
+        if len(row) <= max(o_i, h_i, l_i, c_i, date_i if has_date_time else ts_i, time_i if has_date_time else -1, vol_i if vol_i is not None else 0):
+            return
+        try:
+            timestamp = (row[date_i].strip() + " " + row[time_i].strip()) if has_date_time else row[ts_i].strip()
+            opening = float(row[o_i].strip())
+            high = float(row[h_i].strip())
+            low = float(row[l_i].strip())
+            close = float(row[c_i].strip())
+            volume = float(row[vol_i].strip()) if vol_i is not None else 0.0
+            if not timestamp or not all(map(lambda value: value == value and abs(value) != float("inf"), (opening, high, low, close, volume))):
+                return
+            if high < max(opening, close, low) or low > min(opening, close, high):
+                return
+            if series is not None:
+                series.append_row(timestamp, opening, high, low, close, volume)
             else:
-                for raw_line in stream:
-                    line = raw_line.strip()
-                    if not line:
-                        continue
-                    row = next(reader([line], delimiter=delim)) if '"' in line else split_fn(line, delim)
-                    tbuf_extend((row[date_i] + " " + row[time_i]).encode("utf-8", "replace"))
-                    toff_append(len(tbuf))
-                    o_app(flt(row[o_i])); h_app(flt(row[h_i])); l_app(flt(row[l_i])); c_app(flt(row[c_i])); v_app(0.0)
-        else:
-            if vol_i is not None:
-                for raw_line in stream:
-                    line = raw_line.strip()
-                    if not line:
-                        continue
-                    row = next(reader([line], delimiter=delim)) if '"' in line else split_fn(line, delim)
-                    tbuf_extend(row[ts_i].encode("utf-8", "replace"))
-                    toff_append(len(tbuf))
-                    o_app(flt(row[o_i])); h_app(flt(row[h_i])); l_app(flt(row[l_i])); c_app(flt(row[c_i])); v_app(flt(row[vol_i]))
-            else:
-                for raw_line in stream:
-                    line = raw_line.strip()
-                    if not line:
-                        continue
-                    row = next(reader([line], delimiter=delim)) if '"' in line else split_fn(line, delim)
-                    tbuf_extend(row[ts_i].encode("utf-8", "replace"))
-                    toff_append(len(tbuf))
-                    o_app(flt(row[o_i])); h_app(flt(row[h_i])); l_app(flt(row[l_i])); c_app(flt(row[c_i])); v_app(0.0)
-        return series
+                append_candle(Candle(timestamp, opening, high, low, close, volume))
+        except (ValueError, IndexError, TypeError):
+            return
 
-    candles: List[Candle] = []
-    append = candles.append
-    candle_cls = Candle
-    flt = float
-    split_fn = str.split
-    reader = csv.reader
-
-    if has_date_time:
-        if vol_i is not None:
-            for raw_line in stream:
-                line = raw_line.strip()
-                if not line:
-                    continue
-                row = next(reader([line], delimiter=delim)) if '"' in line else split_fn(line, delim)
-                append(candle_cls(
-                    row[date_i] + " " + row[time_i],
-                    flt(row[o_i]), flt(row[h_i]), flt(row[l_i]), flt(row[c_i]), flt(row[vol_i]),
-                ))
-        else:
-            for raw_line in stream:
-                line = raw_line.strip()
-                if not line:
-                    continue
-                row = next(reader([line], delimiter=delim)) if '"' in line else split_fn(line, delim)
-                append(candle_cls(
-                    row[date_i] + " " + row[time_i],
-                    flt(row[o_i]), flt(row[h_i]), flt(row[l_i]), flt(row[c_i]), 0.0,
-                ))
-    else:
-        if vol_i is not None:
-            for raw_line in stream:
-                line = raw_line.strip()
-                if not line:
-                    continue
-                row = next(reader([line], delimiter=delim)) if '"' in line else split_fn(line, delim)
-                append(candle_cls(
-                    row[ts_i],
-                    flt(row[o_i]), flt(row[h_i]), flt(row[l_i]), flt(row[c_i]), flt(row[vol_i]),
-                ))
-        else:
-            for raw_line in stream:
-                line = raw_line.strip()
-                if not line:
-                    continue
-                row = next(reader([line], delimiter=delim)) if '"' in line else split_fn(line, delim)
-                append(candle_cls(
-                    row[ts_i],
-                    flt(row[o_i]), flt(row[h_i]), flt(row[l_i]), flt(row[c_i]), 0.0,
-                ))
-    return candles
+    if not has_header:
+        append_row(next(csv.reader([first], delimiter=delim)))
+    for raw_line in stream:
+        line = raw_line.strip()
+        if line:
+            append_row(next(csv.reader([line], delimiter=delim)))
+    result = series if series is not None else candles
+    if not result:
+        raise ValueError("No valid OHLC candle rows were found in this CSV")
+    return result
 
 
 _BTBIN_MAGIC = b"BTBN"
