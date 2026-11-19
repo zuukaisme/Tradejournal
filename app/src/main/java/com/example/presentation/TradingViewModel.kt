@@ -940,6 +940,7 @@ class TradingViewModel(application: Application) : AndroidViewModel(application)
             val calendarEvents = calendarResult.getOrElse { emptyList() }
             if (calendarEvents.isNotEmpty()) {
                 economicCalendarEvents.value = calendarEvents
+                NewsEventNotificationScheduler.sync(getApplication(), calendarEvents)
                 lastEconomicCalendarFetchAt = System.currentTimeMillis()
                 goldNewsEvents.value = GoldNewsFeedMapper.filterGoldMovingEvents(calendarEvents, now)
             }
