@@ -150,7 +150,7 @@ _FILE_CACHE: Optional[Tuple[Tuple[str, int, int], Sequence]] = None
 
 
 def _resolve_header(first: str):
-    delim = next((candidate for candidate in ("\\t", ",", ";", "|") if candidate in first), ",")
+    delim = next((candidate for candidate in ("\t", ",", ";", "|") if candidate in first), ",")
     row = next(csv.reader([first], delimiter=delim))
     normalized = [value.strip().strip("<>").strip().lower().replace(" ", "").replace("_", "") for value in row]
     aliases = {
