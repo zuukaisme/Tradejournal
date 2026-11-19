@@ -259,6 +259,10 @@ fun SettingsScreen(
             }
         }
 
+        item {
+            Mt5ConnectorSettingsCard()
+        }
+
         // 1. Currency Selector
         item {
             LiquidGlassCard {
