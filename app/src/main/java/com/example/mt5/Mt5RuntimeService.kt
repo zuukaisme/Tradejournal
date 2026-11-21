@@ -24,7 +24,7 @@ class Mt5RuntimeService : Service() {
                 stopSelf()
                 return START_NOT_STICKY
             }
-            ACTION_START -> startRuntime()
+            ACTION_START, null -> startRuntime()
             else -> stopSelf()
         }
         return START_STICKY
