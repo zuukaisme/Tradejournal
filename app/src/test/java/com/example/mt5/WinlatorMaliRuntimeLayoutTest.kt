@@ -73,6 +73,22 @@ class WinlatorMaliRuntimeLayoutTest {
         assertTrue(inspection.missingComponents.contains("Valid MetaTrader 5 terminal64.exe inside the Wine prefix"))
     }
 
+    @Test
+    fun discoversTheWinePrefixInsideAWinlatorContainer() {
+        val root = temporaryFolder.root
+        createFile(root, ".winlator/.img_version", "21")
+        createArm64Elf(root, "usr/bin/box64")
+        createFile(root, "opt/proton-10-arm64ec/bin/wine")
+        createFile(root, "home/xuser-3/.wine/drive_c/windows/system32/wowbox64.dll")
+        createFile(root, "home/xuser-3/.wine/drive_c/Program Files/MetaTrader 5/terminal64.exe", "MZ")
+
+        val inspection = WinlatorMaliRuntimeLayout.inspect(root)
+
+        assertTrue(inspection.runtimeFilesReady)
+        assertEquals("xuser-3", inspection.winePrefix?.parentFile?.name)
+        assertEquals("terminal64.exe", inspection.terminal?.name)
+    }
+
     private fun createArm64Elf(root: File, relativePath: String): File {
         val file = File(root, relativePath)
         file.parentFile?.mkdirs()
