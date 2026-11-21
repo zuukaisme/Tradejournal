@@ -83,6 +83,14 @@ jobs:
               -dname "CN=Android Debug,O=Android,C=US"
           fi
 
+      - name: Bundle Winlator Mali ARM64EC runtime
+        run: |
+          mkdir -p app/src/main/assets
+          curl --fail --location --retry 5 --retry-all-errors "https://github.com/GunaCharanTeja/Winlator-Extras/releases/download/Sd/imagefs.tzst" --output app/src/main/assets/imagefs.tzst
+          curl --fail --location --retry 5 --retry-all-errors "https://github.com/GunaCharanTeja/Winlator-Extras/releases/download/Sd/proton-10-arm64ec.tzst" --output app/src/main/assets/proton-10-arm64ec.tzst
+          test "$(stat -c%s app/src/main/assets/imagefs.tzst)" -gt 190000000
+          test "$(stat -c%s app/src/main/assets/proton-10-arm64ec.tzst)" -gt 190000000
+
       - name: Run Python backtester regression tests
         run: PYTHONPATH=app/src/main/python python -m unittest discover -s app/src/test/python -v
 

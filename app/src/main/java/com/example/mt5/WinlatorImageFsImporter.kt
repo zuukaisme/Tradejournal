@@ -24,12 +24,10 @@ object WinlatorImageFsImporter {
     private const val MAX_ENTRIES = 1_000_000
 
     fun bundledAssetAvailable(context: Context): Boolean = runCatching {
-        context.createPackageContext(WINLATOR_PACKAGE, 0)
-            .assets.open(IMAGE_FS_ASSET).use { true }
+        context.assets.open(IMAGE_FS_ASSET).use { true }
     }.getOrDefault(false)
 
     fun importBundledImageFs(context: Context): Result<WinlatorImageFsImportResult> = runCatching {
-        val packageContext = context.createPackageContext(WINLATOR_PACKAGE, 0)
         val stage = File(context.filesDir, "imagefs-importing")
         val destination = File(context.filesDir, "imagefs")
         val backup = File(context.filesDir, "imagefs-previous")
@@ -41,7 +39,7 @@ object WinlatorImageFsImporter {
         val expandedBytes = AtomicLong(0L)
 
         try {
-            packageContext.assets.open(IMAGE_FS_ASSET).use { asset ->
+            context.assets.open(IMAGE_FS_ASSET).use { asset ->
                 ZstdInputStream(BufferedInputStream(asset)).use { zstd ->
                     TarArchiveInputStream(zstd).use { tar ->
                         while (true) {
@@ -107,6 +105,55 @@ object WinlatorImageFsImporter {
             check(File(stage, "usr/bin/box64").isFile) {
                 "The ImageFS archive does not contain the expected Box64 runtime."
             }
+            val protonDirectory = File(stage, "opt/proton-10-arm64ec")
+            check(protonDirectory.mkdirs() || protonDirectory.isDirectory) {
+                "Unable to create the bundled Proton runtime directory."
+            }
+            context.assets.open("proton-10-arm64ec.tzst").use { asset ->
+                ZstdInputStream(BufferedInputStream(asset)).use { zstd ->
+                    TarArchiveInputStream(zstd).use { tar ->
+                        while (true) {
+                            val entry = tar.nextTarEntry ?: break
+                            val relativePath = safeRelativePath(entry.name) ?: continue
+                            if (relativePath.isEmpty()) continue
+                            val output = File(protonDirectory, relativePath)
+                            val rootPath = protonDirectory.canonicalFile.path
+                            check(output.canonicalFile.path.startsWith(rootPath + File.separator)) {
+                                "Proton archive contains an unsafe path."
+                            }
+                            if (entry.isDirectory) {
+                                check(output.mkdirs() || output.isDirectory)
+                                continue
+                            }
+                            output.parentFile?.let { check(it.mkdirs() || it.isDirectory) }
+                            if (entry.isSymbolicLink) {
+                                val target = entry.linkName
+                                check(target.isNotBlank() && !target.startsWith("/") && !target.startsWith("\\\\"))
+                                val resolved = File(output.parentFile, target).canonicalFile.path
+                                check(resolved.startsWith(rootPath + File.separator))
+                                Os.symlink(target, output.absolutePath)
+                                continue
+                            }
+                            if (!entry.isFile) continue
+                            FileOutputStream(output).use { sink ->
+                                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                                while (true) {
+                                    val count = tar.read(buffer)
+                                    if (count < 0) break
+                                    check(expandedBytes.addAndGet(count.toLong()) <= MAX_EXPANDED_BYTES)
+                                    sink.write(buffer, 0, count)
+                                }
+                                sink.fd.sync()
+                            }
+                            if ((entry.mode and 0b001001001) != 0) output.setExecutable(true, false)
+                        }
+                    }
+                }
+            }
+            check(File(protonDirectory, "bin/wine").isFile || File(protonDirectory, "bin/wine64").isFile) {
+                "The bundled Proton archive is missing its Wine executable."
+            }
+
             val configDirectory = File(stage, ".winlator")
             check(configDirectory.mkdirs() || configDirectory.isDirectory) {
                 "Unable to create the Winlator ImageFS metadata directory."
