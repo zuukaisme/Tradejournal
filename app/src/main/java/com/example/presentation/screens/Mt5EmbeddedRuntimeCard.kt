@@ -44,6 +44,8 @@ fun Mt5EmbeddedRuntimeCard() {
     val clipboardManager = LocalClipboardManager.current
     val bridgeStatus by Mt5LocalBridgeServer.status.collectAsState()
     val bridgeToken by Mt5LocalBridgeServer.token.collectAsState()
+    val account by Mt5LocalBridgeServer.account.collectAsState()
+    val positions by Mt5LocalBridgeServer.positions.collectAsState()
     var installed by remember { mutableStateOf(Mt5RuntimeManager.isInstalled(context)) }
     var busy by remember { mutableStateOf(false) }
     var status by remember {
@@ -159,6 +161,26 @@ fun Mt5EmbeddedRuntimeCard() {
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+            if (account != null) {
+                Text(
+                    "Account ${account!!.login} · ${account!!.server}",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    "Balance ${account!!.balance} ${account!!.currency} · Equity ${account!!.equity} · Free margin ${account!!.freeMargin}",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text("Open positions: ${positions.size}", style = MaterialTheme.typography.bodySmall)
+                positions.take(5).forEach { position ->
+                    Text(
+                        "${position.symbol} · ${if (position.type == 0) "Buy" else "Sell"} · ${position.volume} · P/L ${position.profit}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (position.profit < 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+
             Text(
                 "Only import runtime binaries from a source you trust. They run with TradePulse's app permissions. A successful import does not mean MT5 can launch. The package must be built for Android ARM64 and include an x86_64 Wine environment. Keep the foreground notification enabled while MT5 is running.",
                 style = MaterialTheme.typography.labelSmall,
