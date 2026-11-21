@@ -76,7 +76,6 @@ object WinlatorMaliLaunchConfigurationBuilder {
             put("WINE_NO_DUPLICATE_EXPLORER", "1")
             put("WINE_DISABLE_FULLSCREEN_HACK", "1")
             put("WINE_GST_NO_GL", "1")
-            put("WINE_X11FORCEGLX", "1")
             put("GST_PLUGIN_FEATURE_RANK", "ximagesink:3000")
             put("WINE_NEW_NDIS", "1")
             put("BOX64_MMAP32", "0")
