@@ -21,7 +21,8 @@ object WinlatorMaliLaunchConfigurationBuilder {
         displaySocket: File = File(imageFs, "usr/tmp/.X11-unix/X0"),
         displayAddress: String = ":0",
         xAuthorityFile: File? = null,
-        displayAvailable: Boolean = displaySocket.exists()
+        displayAvailable: Boolean = displaySocket.exists(),
+        wineProbeOnly: Boolean = false
     ): WinlatorMaliLaunchConfiguration {
         val prefix = inspection.winePrefix
         val wine = inspection.wine
@@ -32,24 +33,30 @@ object WinlatorMaliLaunchConfigurationBuilder {
         val hostDll = inspection.hostDll
 
         val blockers = buildList {
-            addAll(inspection.missingComponents)
-            if (wine == null || !isArm64Elf(wine)) {
-                add("Proton Wine launcher must be an executable Android ARM64 ELF")
-            }
-            if (home == null || !home.isDirectory) {
-                add("The selected Wine home directory is missing")
-            }
-            if (prefix == null || !prefix.isDirectory) {
-                add("The selected Wine prefix is missing")
-            }
-            if (terminal == null || !terminal.isFile) {
-                add("MetaTrader 5 terminal executable is missing")
-            }
-            if (hostDll == null) {
-                add("The ARM64EC host DLL is missing")
+            if (wineProbeOnly) {
+                if (wine == null || !isArm64Elf(wine)) {
+                    add("Proton Wine launcher must be an executable Android ARM64 ELF")
+                }
+            } else {
+                addAll(inspection.missingComponents)
+                if (wine == null || !isArm64Elf(wine)) {
+                    add("Proton Wine launcher must be an executable Android ARM64 ELF")
+                }
+                if (home == null || !home.isDirectory) {
+                    add("The selected Wine home directory is missing")
+                }
+                if (prefix == null || !prefix.isDirectory) {
+                    add("The selected Wine prefix is missing")
+                }
+                if (terminal == null || !terminal.isFile) {
+                    add("MetaTrader 5 terminal executable is missing")
+                }
+                if (hostDll == null) {
+                    add("The ARM64EC host DLL is missing")
+                }
             }
             if (!displayAvailable) {
-                add("A live headless X11 server is required at ${displaySocket.absolutePath}")
+                add("A live headless X11 server is required at " + displaySocket.absolutePath)
             }
             if (!File(root, "usr/lib").isDirectory) {
                 add("Winlator ImageFS usr/lib directory is missing")
@@ -90,7 +97,7 @@ object WinlatorMaliLaunchConfigurationBuilder {
         return WinlatorMaliLaunchConfiguration(
             executable = wine,
             workingDirectory = root,
-            arguments = terminal?.let { listOf(it.absolutePath, "/portable") }.orEmpty(),
+            arguments = if (wineProbeOnly) listOf("--version") else terminal?.let { listOf(it.absolutePath, "/portable") }.orEmpty(),
             environment = environment,
             blockers = blockers
         )

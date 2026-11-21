@@ -47,6 +47,25 @@ class WinlatorMaliLaunchConfigurationTest {
     }
 
     @Test
+    fun allowsWineVersionProbeBeforePrefixAndMt5AreInstalled() {
+        val root = temporaryFolder.root
+        createArm64Elf(root, "opt/proton-10-arm64ec/bin/wine")
+        createFile(root, "usr/lib/.keep")
+        val inspection = WinlatorMaliRuntimeLayout.inspect(root)
+
+        val config = WinlatorMaliLaunchConfigurationBuilder.build(
+            root,
+            inspection,
+            displayAvailable = true,
+            wineProbeOnly = true
+        )
+
+        assertTrue(config.ready)
+        assertEquals(listOf("--version"), config.arguments)
+        assertFalse(config.environment.containsKey("WINEPREFIX"))
+    }
+
+    @Test
     fun refusesToLaunchWithoutAnArm64WineExecutableAndLiveDisplaySocket() {
         val root = temporaryFolder.root
         createFile(root, ".winlator/.img_version", "21")

@@ -47,9 +47,16 @@ class Mt5RuntimeService : Service() {
             createNotificationChannel()
             startForeground(NOTIFICATION_ID, buildNotification("Checking Winlator Mali runtime"))
             val inspection = Mt5RuntimeManager.winlatorMaliInspection(this)
+            val imageFs = File(filesDir, "imagefs")
             val launchConfiguration = WinlatorMaliLaunchConfigurationBuilder.build(
-                File(filesDir, "imagefs"),
+                imageFs,
                 inspection
+            )
+            val wineProbeConfiguration = WinlatorMaliLaunchConfigurationBuilder.build(
+                imageFs,
+                inspection,
+                displayAvailable = true,
+                wineProbeOnly = true
             )
             val details = buildList {
                 addAll(launchConfiguration.blockers)
@@ -79,9 +86,7 @@ class Mt5RuntimeService : Service() {
             )
             val hasTermuxControl = TermuxHeadlessX11Bridge.isInstalled(this) &&
                 TermuxHeadlessX11Bridge.hasRunCommandPermission(this)
-            val canProbeWine = hasTermuxControl &&
-                launchConfiguration.executable != null &&
-                launchConfiguration.blockers.all { it.startsWith("A live headless X11 server") }
+            val canProbeWine = hasTermuxControl && wineProbeConfiguration.ready
             if (canProbeWine) {
                 handedOffToProbe = true
                 runWineVersionProbe()
@@ -129,7 +134,8 @@ class Mt5RuntimeService : Service() {
                     File(imageFs, "usr/tmp/.X11-unix/X0"),
                     "127.0.0.1:0",
                     authorization.file,
-                    true
+                    true,
+                    wineProbeOnly = true
                 )
                 check(resolvedConfiguration.blockers.isEmpty()) {
                     resolvedConfiguration.blockers.joinToString()
@@ -137,7 +143,7 @@ class Mt5RuntimeService : Service() {
                 val executable = resolvedConfiguration.executable ?: error("Wine executable is unavailable.")
                 val processId = nativeLauncher.start(
                     executable,
-                    listOf("--version"),
+                    resolvedConfiguration.arguments,
                     resolvedConfiguration.environment,
                     resolvedConfiguration.workingDirectory,
                     File(filesDir, "mt5-wine-probe.log")
