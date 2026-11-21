@@ -29,6 +29,7 @@ object Mt5LocalBridgeServer {
     private val mutableAccount = MutableStateFlow<Mt5AccountSnapshot?>(null)
     private val mutablePositions = MutableStateFlow<List<Mt5PositionSnapshot>>(emptyList())
     private val mutableBars = MutableStateFlow<List<Mt5CandleSnapshot>>(emptyList())
+    private val mutableLastResult = MutableStateFlow<String?>(null)
     private val pendingPositions = mutableListOf<Mt5PositionSnapshot>()
     private val pendingBars = mutableListOf<Mt5CandleSnapshot>()
     private val mutableToken = MutableStateFlow("")
@@ -43,6 +44,7 @@ object Mt5LocalBridgeServer {
     val account = mutableAccount.asStateFlow()
     val positions = mutablePositions.asStateFlow()
     val bars = mutableBars.asStateFlow()
+    val lastResult = mutableLastResult.asStateFlow()
     val token = mutableToken.asStateFlow()
 
     @Synchronized
@@ -119,6 +121,7 @@ object Mt5LocalBridgeServer {
         mutableAccount.value = null
         mutablePositions.value = emptyList()
         mutableBars.value = emptyList()
+        mutableLastResult.value = null
         synchronized(pendingPositions) { pendingPositions.clear() }
         synchronized(pendingBars) { pendingBars.clear() }
     }
@@ -158,6 +161,12 @@ object Mt5LocalBridgeServer {
                 client = connection
                 writer = connectionWriter
             }
+            mutableAccount.value = null
+            mutablePositions.value = emptyList()
+            mutableBars.value = emptyList()
+            mutableLastResult.value = null
+            synchronized(pendingPositions) { pendingPositions.clear() }
+            synchronized(pendingBars) { pendingBars.clear() }
             runCatching {
                 connectionWriter.write("AUTH_OK")
                 connectionWriter.newLine()
@@ -179,6 +188,11 @@ object Mt5LocalBridgeServer {
                 }
             }
             runCatching { connection.close() }
+            mutableAccount.value = null
+            mutablePositions.value = emptyList()
+            mutableBars.value = emptyList()
+            synchronized(pendingPositions) { pendingPositions.clear() }
+            synchronized(pendingBars) { pendingBars.clear() }
             if (running.get()) mutableStatus.value = "Waiting for authenticated MT5 Expert Advisor"
         }
 
@@ -192,6 +206,20 @@ object Mt5LocalBridgeServer {
         mutableEvents.tryEmit(line)
         val fields = line.split('|')
         when (fields.firstOrNull()) {
+            "HELLO" -> if (fields.size >= 4) {
+                mutableLastResult.value = "Connected: ${fields[1]} · ${fields[2]} · ${fields[3]}"
+            }
+            "PONG" -> mutableLastResult.value = "MT5 bridge heartbeat received"
+            "ORDER_RESULT" -> if (fields.size >= 6) {
+                mutableLastResult.value = "${fields[1]} ${fields[2]}: ${fields[3]} · ${fields[4]} · ${fields[5]}"
+            }
+            "CLOSE_RESULT" -> if (fields.size >= 4) {
+                mutableLastResult.value = "Close ${fields[1]}: ${fields[2]} · ${fields[3]}"
+            }
+            "CLOSE_ALL_RESULT" -> if (fields.size >= 3) {
+                mutableLastResult.value = "Close all: ${fields[1]} closed · ${fields[2]} failed"
+            }
+            "ERROR" -> mutableLastResult.value = fields.drop(1).joinToString(" · ")
             "ACCOUNT" -> if (fields.size >= 8) {
                 mutableAccount.value = Mt5AccountSnapshot(
                     login = fields[1].toLongOrNull() ?: 0L,
