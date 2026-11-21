@@ -17,7 +17,8 @@ object HeadlessX11RuntimeManager {
         val root = runtimeDirectory(context)
         return isArm64Elf(File(root, "bin/Xvfb")) &&
             File(root, "lib").isDirectory &&
-            File(root, "share/X11/xkb").isDirectory
+            File(root, "share/X11/xkb").isDirectory &&
+            File(root, "share/fonts/misc").isDirectory
     }
 
     @Synchronized
@@ -77,6 +78,9 @@ object HeadlessX11RuntimeManager {
         require(File(staging, "lib").isDirectory) { "The Xvfb bundle is missing its lib directory." }
         require(File(staging, "share/X11/xkb").isDirectory) {
             "The Xvfb bundle is missing share/X11/xkb."
+        }
+        require(File(staging, "share/fonts/misc").isDirectory) {
+            "The Xvfb bundle is missing the Xorg misc fonts."
         }
 
         File(staging, "bin/Xvfb").setExecutable(true, false)
