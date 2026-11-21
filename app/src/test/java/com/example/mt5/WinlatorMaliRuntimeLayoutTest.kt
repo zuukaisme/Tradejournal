@@ -70,6 +70,7 @@ class WinlatorMaliRuntimeLayoutTest {
 
         assertFalse(inspection.runtimeFilesReady)
         assertTrue(inspection.missingComponents.contains("Valid ARM64 Box64 ELF at usr/bin/box64"))
+        assertEquals("wowbox64.dll", inspection.hostDll?.name)
         assertTrue(inspection.missingComponents.contains("Valid MetaTrader 5 terminal64.exe inside a Wine prefix"))
     }
 
