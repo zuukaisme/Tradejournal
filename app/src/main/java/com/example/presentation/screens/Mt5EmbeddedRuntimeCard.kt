@@ -35,6 +35,7 @@ import com.example.mt5.Mt5InstallerManager
 import com.example.mt5.Mt5RuntimeManager
 import com.example.mt5.TermuxHeadlessX11Bridge
 import com.example.mt5.WinlatorImageFsImporter
+import com.example.mt5.WinlatorRuntimeTransferImporter
 import com.example.mt5.ProotRuntimeLayout
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -67,6 +68,25 @@ fun Mt5EmbeddedRuntimeCard() {
             if (installed) "Generic prototype bundle detected. It is not yet a runnable MT5 desktop runtime."
             else "No runnable MT5 desktop runtime is installed."
         )
+    }
+
+    val runtimeTransferPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            busy = true
+            status = "Importing Winlator Proton runtime and host DLL…"
+            scope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    WinlatorRuntimeTransferImporter.importFromTree(context, uri)
+                }
+                result.onSuccess { imported ->
+                    runtimeRevision++
+                    status = "Imported " + imported.wineRuntime.name + " and " + imported.hostDll.name + " (" + imported.filesCopied + " entries, " + imported.bytesCopied / (1024L * 1024L) + " MiB). A clean Wine prefix still needs initialization."
+                }.onFailure {
+                    status = it.message ?: "Winlator runtime transfer import failed."
+                }
+                busy = false
+            }
+        }
     }
 
     val installerPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -165,6 +185,19 @@ fun Mt5EmbeddedRuntimeCard() {
             Text(
                 if (winlatorAssetAvailable) "Uses the imagefs.tzst asset already bundled in the installed Winlator Mali app; no runtime download is started."
                 else "No bundled imagefs.tzst asset was found. Install the compatible Winlator Mali build with its ImageFS asset included.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            OutlinedButton(
+                onClick = { runtimeTransferPicker.launch(null) },
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Import Winlator Proton + host DLL")
+            }
+            Text(
+                "In Winlator Mali File Manager, open Drive Z (RootFS). Create a shared folder named TradePulseRuntime/imagefs. Copy the installed opt/proton-* runtime folder into its opt folder. Then copy only home/xuser/.wine/drive_c/windows/system32/wowbox64.dll (or libwow64fex.dll) into TradePulseRuntime/imagefs/home/xuser/.wine/drive_c/windows/system32. Do not copy the entire Wine prefix. Select TradePulseRuntime here. Base ImageFS and Box64 are imported separately.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
