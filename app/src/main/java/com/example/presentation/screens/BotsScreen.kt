@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -48,6 +49,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -76,6 +78,7 @@ import com.example.domain.model.Bot
 import com.example.domain.model.BotStatus
 import com.example.domain.model.BotType
 import com.example.presentation.TradingViewModel
+import com.example.mt5.Mt5LocalBridgeServer
 import com.example.presentation.components.CurrencyFormatter
 import com.example.presentation.components.LiquidGlassCard
 import com.example.presentation.components.LiquidGlassPill
@@ -102,6 +105,30 @@ fun BotsScreen(
     var searchQuery by remember { mutableStateOf("") }
     var selectedTypeFilter by remember { mutableStateOf<BotType?>(null) }
     var selectedStatusFilter by remember { mutableStateOf<BotStatus?>(null) }
+    var runTarget by remember { mutableStateOf<Bot?>(null) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val mt5BridgeStatus by Mt5LocalBridgeServer.status.collectAsState()
+
+    val botExportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
+        val target = runTarget
+        if (uri != null && target != null) {
+            scope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    runCatching {
+                        context.contentResolver.openOutputStream(uri)?.use { output ->
+                            output.write(target.code.toByteArray(Charsets.UTF_8))
+                        } ?: error("Unable to create the bot source file.")
+                    }
+                }
+                Toast.makeText(
+                    context,
+                    if (result.isSuccess) "${target.name} exported" else result.exceptionOrNull()?.message ?: "Export failed",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
 
     val filteredBots = remember(bots, searchQuery, selectedTypeFilter, selectedStatusFilter) {
         bots.filter { bot ->
@@ -242,7 +269,8 @@ fun BotsScreen(
                             winRate = botWinRate,
                             totalPnL = botPnL,
                             currency = settings.currency,
-                            onClick = { viewModel.openBotDetails(bot) }
+                            onClick = { viewModel.openBotDetails(bot) },
+                            onRun = { runTarget = bot }
                         )
                     }
 
@@ -266,6 +294,47 @@ fun BotsScreen(
         }
     }
 
+    runTarget?.let { bot ->
+        val isLibrary = bot.type == BotType.LIBRARY
+        val sourceReady = bot.code.isNotBlank()
+        AlertDialog(
+            onDismissRequest = { runTarget = null },
+            title = { Text("Run ${bot.name}") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("MT5 bridge: $mt5BridgeStatus", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        when {
+                            isLibrary -> "MQL5 libraries cannot run by themselves. An Expert Advisor, indicator or script must load or call the library."
+                            !sourceReady -> "This bot has no source code to prepare."
+                            mt5BridgeStatus == "MT5 Expert Advisor authenticated" -> "The terminal bridge is connected, but automatic bot deployment and launch are not implemented yet."
+                            else -> "The MT5 terminal is not connected. You can still prepare and export this bot's source while the Wine runtime is being completed."
+                        },
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        "Exporting prepares the source file; it does not start a trade or mark the bot as running.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val extension = if (isLibrary) "mqh" else "mq5"
+                        val safeName = bot.name.replace(Regex("[^A-Za-z0-9_-]"), "_").take(48).ifBlank { "TradePulseBot" }
+                        botExportLauncher.launch("$safeName.$extension")
+                    },
+                    enabled = sourceReady && !isLibrary
+                ) { Text("Export for MT5") }
+            },
+            dismissButton = {
+                TextButton(onClick = { runTarget = null }) { Text("Close") }
+            }
+        )
+    }
+
     if (isBotEditorOpen) {
         BotEditorBottomSheet(
             bot = selectedBot,
@@ -282,7 +351,8 @@ fun BotItemCard(
     winRate: Double,
     totalPnL: Double,
     currency: com.example.domain.model.CurrencyCode,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onRun: () -> Unit
 ) {
     LiquidGlassCard(
         onClick = onClick,
@@ -390,6 +460,16 @@ fun BotItemCard(
                     color = if (totalPnL >= 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
                 )
             }
+        }
+
+        OutlinedButton(
+            onClick = onRun,
+            modifier = Modifier.fillMaxWidth().testTag("run_bot_${bot.id}"),
+            shape = RoundedCornerShape(9.dp)
+        ) {
+            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(17.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("Run")
         }
     }
 }
