@@ -13,6 +13,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 class Mt5RuntimeService : Service() {
     private val stopping = AtomicBoolean(false)
+    private val starting = AtomicBoolean(false)
     private val nativeLauncher by lazy { NativeProcessLauncher() }
 
     @Volatile
@@ -38,12 +39,17 @@ class Mt5RuntimeService : Service() {
 
     private fun startRuntime() {
         if (terminalPid?.let(nativeLauncher::isAlive) == true) return
+        if (!starting.compareAndSet(false, true)) return
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification("Preparing embedded MT5 runtime"))
         stopping.set(false)
 
         Thread({
-            runRuntime()
+            try {
+                runRuntime()
+            } finally {
+                starting.set(false)
+            }
         }, "TradePulse-MT5-Launcher").apply {
             isDaemon = true
             start()
