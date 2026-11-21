@@ -80,10 +80,8 @@ object Mt5RuntimeManager {
             "This is not a supported TradePulse MT5 runtime bundle. Missing: ${missing.joinToString()}"
         }
 
-        File(runtimeRoot, "launch-mt5.sh").setExecutable(true, false)
-        File(runtimeRoot, "bin/proot").setExecutable(true, false)
-        File(runtimeRoot, "rootfs/usr/bin/box64").setExecutable(true, false)
-        File(runtimeRoot, "rootfs/usr/bin/wine").setExecutable(true, false)
+        File(runtimeRoot, "bin/box64").setExecutable(true, false)
+        File(runtimeRoot, "rootfs/usr/bin/wine64").setExecutable(true, false)
         File(runtimeRoot, "rootfs/usr/bin/Xvfb").setExecutable(true, false)
 
         val installed = runtimeDirectory(context)
@@ -100,10 +98,8 @@ object Mt5RuntimeManager {
     }
 
     private fun requiredFiles(root: File): List<File> = listOf(
-        File(root, "launch-mt5.sh"),
-        File(root, "bin/proot"),
-        File(root, "rootfs/usr/bin/box64"),
-        File(root, "rootfs/usr/bin/wine"),
+        File(root, "bin/box64"),
+        File(root, "rootfs/usr/bin/wine64"),
         File(root, "rootfs/usr/bin/Xvfb"),
         File(root, "mt5/terminal64.exe")
     )
