@@ -34,7 +34,7 @@ object HeadlessX11RuntimeManager {
             ZipInputStream(BufferedInputStream(source)).use { zip ->
                 while (true) {
                     val entry = zip.nextEntry ?: break
-                    val relativePath = entry.name.replace('\\\\', '/').trimStart('/')
+                    val relativePath = entry.name.replace(92.toChar(), '/').trimStart('/')
                     require(relativePath.isNotBlank()) { "The Xvfb bundle contains an empty path." }
                     require(relativePath.split('/').none { it == ".." || it == "." }) {
                         "The Xvfb bundle contains an unsafe file path."
