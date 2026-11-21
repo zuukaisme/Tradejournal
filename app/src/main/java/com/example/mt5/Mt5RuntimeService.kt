@@ -53,6 +53,9 @@ class Mt5RuntimeService : Service() {
                 "Embedded MT5 launch preflight\n" +
                     "ImageFS version: ${inspection.imageFsVersion ?: "not found"}\n" +
                     "Runtime files ready: ${inspection.runtimeFilesReady}\n" +
+                    "Wine executable: ${inspection.wine?.absolutePath ?: "not found"}\n" +
+                    "Selected Wine prefix: ${inspection.winePrefix?.absolutePath ?: "not found"}\n" +
+                    "MT5 terminal: ${inspection.terminal?.absolutePath ?: "not found"}\n" +
                     "Terminal launch enabled: false\n" +
                     details.joinToString("\n") { "- $it" }
             )
