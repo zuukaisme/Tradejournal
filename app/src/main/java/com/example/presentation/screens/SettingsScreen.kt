@@ -267,6 +267,10 @@ fun SettingsScreen(
             Mt5RuntimeDiagnosticsCard()
         }
 
+        item {
+            AiInstructionsSettingsCard()
+        }
+
         // 1. Currency Selector
         item {
             LiquidGlassCard {
