@@ -31,12 +31,10 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import com.example.mt5.Mt5LocalBridgeServer
 import com.example.mt5.Mt5InstallerManager
 import com.example.mt5.Mt5RuntimeManager
 import com.example.mt5.ProotRuntimeLayout
-import com.example.mt5.Mt5RuntimeService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -104,29 +102,7 @@ fun Mt5EmbeddedRuntimeCard() {
         }
     }
 
-    val bundlePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            busy = true
-            status = "Installing runtime bundle into TradePulse private storage…"
-            scope.launch {
-                val result = withContext(Dispatchers.IO) {
-                    runCatching {
-                        context.contentResolver.takePersistableUriPermission(
-                            uri,
-                            Intent.FLAG_GRANT_READ_URI_PERMISSION
-                        )
-                    }
-                    Mt5RuntimeManager.installBundle(context, uri)
-                }
-                installed = result.isSuccess
-                status = result.fold(
-                    { "Generic prototype bundle imported. It does not include the required PRoot/X11 desktop integration." },
-                    { it.message ?: "Runtime installation failed." }
-                )
-                busy = false
-            }
-        }
-    }
+
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -144,8 +120,8 @@ fun Mt5EmbeddedRuntimeCard() {
                     tint = MaterialTheme.colorScheme.primary
                 )
                 Column {
-                    Text("Experimental MT5 runtime", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    Text("Generic runtime loader — Winlator Mali adapter still pending", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Embedded MT5 runtime", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text("Winlator Mali integration in progress", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
 
@@ -203,36 +179,17 @@ fun Mt5EmbeddedRuntimeCard() {
                 Text("Export MT5 bridge Expert Advisor")
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = { bundlePicker.launch(arrayOf("application/zip", "application/octet-stream")) },
-                    enabled = !busy,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text(if (installed) "Replace runtime" else "Import runtime")
-                }
-                OutlinedButton(
-                    onClick = {
-                        val intent = Intent(context, Mt5RuntimeService::class.java).setAction(Mt5RuntimeService.ACTION_START)
-                        ContextCompat.startForegroundService(context, intent)
-                        status = "MT5 runtime start requested. Check the runtime log if startup fails."
-                    },
-                    enabled = false,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("MT5 launch pending")
-                }
-            }
-
-            OutlinedButton(
-                onClick = {
-                    context.startService(Intent(context, Mt5RuntimeService::class.java).setAction(Mt5RuntimeService.ACTION_STOP))
-                    status = "MT5 runtime stop requested."
-                },
-                enabled = installed && !busy,
-                modifier = Modifier.fillMaxWidth()
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f)
             ) {
-                Text("Stop MT5")
+                Text(
+                    "MT5 desktop launch is not available yet. Importing a generic ZIP here would not install the required Winlator Mali ImageFS, Proton ARM64EC, or embedded X11 display. The app will enable Run only after those components are integrated and tested.",
+                    modifier = Modifier.padding(12.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
             }
 
             if (busy) androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth())
