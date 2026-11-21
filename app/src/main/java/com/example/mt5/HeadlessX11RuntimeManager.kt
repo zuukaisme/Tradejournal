@@ -99,6 +99,7 @@ object HeadlessX11RuntimeManager {
             error("Unable to finish installing the headless X11 runtime.")
         }
         backup.deleteRecursively()
+        Unit
     }.onFailure {
         File(context.filesDir, "headless-x11-staging").deleteRecursively()
     }
