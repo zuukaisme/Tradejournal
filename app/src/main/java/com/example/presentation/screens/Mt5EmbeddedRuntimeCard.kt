@@ -1,6 +1,7 @@
 package com.example.presentation.screens
 
 import android.content.Intent
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -53,6 +54,27 @@ fun Mt5EmbeddedRuntimeCard() {
             if (installed) "Runtime bundle installed. MT5 terminal files are ready to launch."
             else "Runtime not installed. Import a compatible Wine + Box64 bundle to continue."
         )
+    }
+
+    val eaExporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    runCatching {
+                        context.assets.open("mt5/TradePulseBridge.mq5").use { input ->
+                            context.contentResolver.openOutputStream(uri)?.use { output ->
+                                input.copyTo(output)
+                            } ?: error("Unable to create the EA source file.")
+                        }
+                    }
+                }
+                Toast.makeText(
+                    context,
+                    if (result.isSuccess) "TradePulseBridge.mq5 exported" else result.exceptionOrNull()?.message ?: "Export failed",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
     }
 
     val bundlePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -110,6 +132,13 @@ fun Mt5EmbeddedRuntimeCard() {
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+
+            OutlinedButton(
+                onClick = { eaExporter.launch("TradePulseBridge.mq5") },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Export MT5 bridge Expert Advisor")
+            }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
