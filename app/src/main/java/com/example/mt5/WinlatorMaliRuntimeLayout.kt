@@ -55,7 +55,7 @@ object WinlatorMaliRuntimeLayout {
             hostDll = hostDll,
             terminal = terminal,
             missingComponents = missing,
-            launchBlockers = listOf("TradePulse Android X server, Surface rendering and touch-input integration is not implemented.")
+            launchBlockers = listOf("Headless Box64/Wine process supervision and virtual-display startup/shutdown are not implemented.")
         )
     }
 
