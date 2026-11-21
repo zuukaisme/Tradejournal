@@ -18,7 +18,12 @@ if ! command -v ldd >/dev/null 2>&1; then
 fi
 
 cp -L "$PREFIX/bin/Xvfb" "$ROOT/bin/Xvfb"
-QUEUE=("$PREFIX/bin/Xvfb")
+if [ ! -x "$PREFIX/bin/xkbcomp" ]; then
+    printf '%s\\n' "The xkbcomp executable is missing. Install xorg-xkbcomp in Termux and retry."
+    exit 1
+fi
+cp -L "$PREFIX/bin/xkbcomp" "$ROOT/bin/xkbcomp"
+QUEUE=("$PREFIX/bin/Xvfb" "$PREFIX/bin/xkbcomp")
 declare -A SEEN=()
 
 while [ "${#QUEUE[@]}" -gt 0 ]; do

@@ -156,6 +156,7 @@ class Mt5RuntimeService : Service() {
         val environment = buildMap {
             put("HOME", runtime.absolutePath)
             put("PREFIX", runtime.absolutePath)
+            put("PATH", "${File(runtime, "bin").absolutePath}:/system/bin")
             put("TMPDIR", temporaryDirectory.absolutePath)
             put("DISPLAY", ":0")
             put("XKB_CONFIG_ROOT", File(runtime, "share/X11/xkb").absolutePath)

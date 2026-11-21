@@ -16,6 +16,7 @@ object HeadlessX11RuntimeManager {
     fun isInstalled(context: Context): Boolean {
         val root = runtimeDirectory(context)
         return isArm64Elf(File(root, "bin/Xvfb")) &&
+            isArm64Elf(File(root, "bin/xkbcomp")) &&
             File(root, "lib").isDirectory &&
             File(root, "share/X11/xkb").isDirectory &&
             File(root, "share/fonts/misc").isDirectory
@@ -74,6 +75,9 @@ object HeadlessX11RuntimeManager {
 
         require(isArm64Elf(File(staging, "bin/Xvfb"))) {
             "bin/Xvfb must be an Android ARM64 executable."
+        }
+        require(isArm64Elf(File(staging, "bin/xkbcomp"))) {
+            "bin/xkbcomp must be an Android ARM64 executable."
         }
         require(File(staging, "lib").isDirectory) { "The Xvfb bundle is missing its lib directory." }
         require(File(staging, "share/X11/xkb").isDirectory) {
