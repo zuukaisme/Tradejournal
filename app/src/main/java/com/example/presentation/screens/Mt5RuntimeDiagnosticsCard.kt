@@ -2,6 +2,7 @@ package com.example.presentation.screens
 
 import android.app.ActivityManager
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.os.StatFs
 import androidx.compose.foundation.layout.Arrangement
@@ -14,15 +15,27 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import com.example.mt5.Mt5RuntimeManager
+import com.example.mt5.Mt5RuntimeService
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.example.presentation.components.LiquidGlassCard
 import java.util.Locale
 
@@ -30,6 +43,9 @@ import java.util.Locale
 fun Mt5RuntimeDiagnosticsCard() {
     val context = LocalContext.current
     val diagnostics = remember(context) { collectRuntimeDiagnostics(context) }
+    val scope = rememberCoroutineScope()
+    var checking by remember { mutableStateOf(false) }
+    var checkStatus by remember { mutableStateOf("Runtime check has not been run.") }
 
     LiquidGlassCard {
         Row(
@@ -87,6 +103,54 @@ fun Mt5RuntimeDiagnosticsCard() {
                 )
             }
         }
+
+        Spacer(modifier = Modifier.height(10.dp))
+        Button(
+            onClick = {
+                if (!checking) {
+                    checking = true
+                    checkStatus = "Starting authenticated headless X11 and Wine checks…"
+                    scope.launch {
+                        try {
+                            withContext(Dispatchers.IO) {
+                                Mt5RuntimeManager.logFile(context).writeText("Runtime check requested")
+                            }
+                            ContextCompat.startForegroundService(
+                                context,
+                                Intent(context, Mt5RuntimeService::class.java).setAction(Mt5RuntimeService.ACTION_START)
+                            )
+                            val result = withContext(Dispatchers.IO) {
+                                var latest = "Runtime check is still running."
+                                repeat(70) {
+                                    delay(500)
+                                    val log = Mt5RuntimeManager.logFile(context).takeIf { it.isFile }?.readText().orEmpty()
+                                    val terminal = log.contains("Wine version probe exit code") ||
+                                        log.contains("Wine version probe failed") ||
+                                        log.contains("Wine probe not started")
+                                    latest = log.lines().takeLast(8).joinToString("\n").ifBlank { latest }
+                                    if (terminal) return@withContext latest
+                                }
+                                latest
+                            }
+                            checkStatus = result
+                        } catch (error: Throwable) {
+                            checkStatus = error.message ?: "Unable to start the runtime check."
+                        } finally {
+                            checking = false
+                        }
+                    }
+                }
+            },
+            enabled = !checking,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(if (checking) "Checking runtime…" else "Run headless X11 + Wine check")
+        }
+        Text(
+            text = checkStatus,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
 
         Spacer(modifier = Modifier.height(8.dp))
         Text(

@@ -84,6 +84,7 @@ class Mt5RuntimeService : Service() {
                 handedOffToProbe = true
                 runWineVersionProbe()
             } else {
+                appendRuntimeLog("Wine probe not started. Check Termux permission, allow-external-apps, and the Winlator Mali runtime files.")
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
