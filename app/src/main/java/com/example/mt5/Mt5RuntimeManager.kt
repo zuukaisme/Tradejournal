@@ -5,6 +5,7 @@ import android.net.Uri
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.FileInputStream
 import java.util.zip.ZipInputStream
 
 object Mt5RuntimeManager {
@@ -14,13 +15,10 @@ object Mt5RuntimeManager {
     fun logFile(context: Context): File = File(context.filesDir, "mt5-runtime.log")
 
     fun isInstalled(context: Context): Boolean =
-        requiredFiles(runtimeDirectory(context)).all { it.isFile }
+        bundleProblems(runtimeDirectory(context)).isEmpty()
 
-    fun missingFiles(context: Context): List<String> {
-        val root = runtimeDirectory(context)
-        return requiredFiles(root).filterNot { it.isFile }
-            .map { it.relativeTo(root).invariantSeparatorsPath }
-    }
+    fun missingFiles(context: Context): List<String> =
+        bundleProblems(runtimeDirectory(context))
 
     @Synchronized
     fun installBundle(context: Context, uri: Uri): Result<Unit> = runCatching {
@@ -74,10 +72,9 @@ object Mt5RuntimeManager {
         }
 
         val runtimeRoot = if (File(staging, "runtime").isDirectory) File(staging, "runtime") else staging
-        val missing = requiredFiles(runtimeRoot).filterNot { it.isFile }
-            .map { it.relativeTo(runtimeRoot).invariantSeparatorsPath }
-        require(missing.isEmpty()) {
-            "This is not a supported TradePulse MT5 runtime bundle. Missing: ${missing.joinToString()}"
+        val problems = bundleProblems(runtimeRoot)
+        require(problems.isEmpty()) {
+            "This is not a supported TradePulse MT5 runtime bundle: ${problems.joinToString()}"
         }
 
         File(runtimeRoot, "bin/box64").setExecutable(true, false)
@@ -96,6 +93,42 @@ object Mt5RuntimeManager {
         backup.deleteRecursively()
         staging.deleteRecursively()
     }
+
+    private fun bundleProblems(root: File): List<String> {
+        val required = requiredFiles(root)
+        val problems = required.filterNot { it.isFile }
+            .map { it.relativeTo(root).invariantSeparatorsPath }.toMutableList()
+        if (problems.isNotEmpty()) return problems
+
+        if (elfMachine(File(root, "bin/box64")) != 183) {
+            problems += "bin/box64 must be an Android ARM64 ELF executable"
+        }
+        if (elfMachine(File(root, "rootfs/usr/bin/wine64")) != 62) {
+            problems += "rootfs/usr/bin/wine64 must be an x86_64 ELF executable"
+        }
+        if (elfMachine(File(root, "rootfs/usr/bin/Xvfb")) != 62) {
+            problems += "rootfs/usr/bin/Xvfb must be an x86_64 ELF executable"
+        }
+        FileInputStream(File(root, "mt5/terminal64.exe")).use { input ->
+            val header = ByteArray(2)
+            if (input.read(header) != 2 || header[0] != 'M'.code.toByte() || header[1] != 'Z'.code.toByte()) {
+                problems += "mt5/terminal64.exe must be a Windows executable"
+            }
+        }
+        return problems
+    }
+
+    private fun elfMachine(file: File): Int? = runCatching {
+        FileInputStream(file).use { input ->
+            val header = ByteArray(20)
+            if (input.read(header) != header.size) return@use null
+            if (header[0] != 0x7f.toByte() || header[1] != 'E'.code.toByte() ||
+                header[2] != 'L'.code.toByte() || header[3] != 'F'.code.toByte() ||
+                header[4] != 2.toByte() || header[5] != 1.toByte()
+            ) return@use null
+            (header[18].toInt() and 0xff) or ((header[19].toInt() and 0xff) shl 8)
+        }
+    }.getOrNull()
 
     private fun requiredFiles(root: File): List<File> = listOf(
         File(root, "bin/box64"),
