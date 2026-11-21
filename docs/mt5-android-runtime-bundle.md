@@ -40,3 +40,8 @@ A launcher can use these paths:
 ## Important
 
 This contract is a packaging boundary, not a claim that a generic Winlator archive is directly compatible. The runtime still needs device-specific validation. The Galaxy A12 Exynos/Mali configuration is outside the minimum hardware profile published by some Winlator builds, so a real on-device launch test is required before enabling automated trading. Do not place broker passwords in the ZIP or in launcher arguments.
+
+
+## Licensing and distribution
+
+Do not redistribute the MetaTrader 5 terminal or broker-specific files in TradePulse releases. The terminal directory in a bundle must come from the user's own installation. If the Wine/Box64/PRoot components are derived from Winlator or other third-party projects, preserve their applicable license notices, source-offer obligations and attribution. This repository currently defines the bundle interface; it does not contain those third-party runtime binaries.
