@@ -254,7 +254,7 @@ fun Mt5EmbeddedRuntimeCard() {
             }
 
             OutlinedButton(
-                onClick = { installerPicker.launch(arrayOf("application/vnd.microsoft.portable-executable", "application/octet-stream", "application/x-msdownload")) },
+                onClick = { installerPicker.launch(arrayOf("*/*")) },
                 enabled = !busy,
                 modifier = Modifier.fillMaxWidth()
             ) {
