@@ -5,6 +5,7 @@
 
 input string BridgeHost = "127.0.0.1";
 input uint BridgePort = 8765;
+input string BridgeToken = "";
 input uint ReconnectSeconds = 3;
 
 CTrade Trade;
@@ -53,6 +54,7 @@ bool ConnectBridge()
       return false;
    }
 
+   SendLine("AUTH|" + BridgeToken);
    SendLine("HELLO|" + IntegerToString((long)AccountInfoInteger(ACCOUNT_LOGIN)) + "|" +
             AccountInfoString(ACCOUNT_SERVER) + "|" + AccountInfoString(ACCOUNT_COMPANY));
    return true;
@@ -150,6 +152,8 @@ void HandleCommand(const string line)
    string parts[];
    int count = StringSplit(line, '|', parts);
    if(count <= 0) return;
+
+   if(parts[0] == "AUTH_OK") return;
 
    if(parts[0] == "PING")
    {
