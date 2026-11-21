@@ -121,7 +121,7 @@ class Mt5RuntimeService : Service() {
 
     private fun appendRuntimeLog(message: String) {
         runCatching {
-            Mt5RuntimeManager.logFile(this).appendText("\\n$message")
+            Mt5RuntimeManager.logFile(this).appendText("\n$message")
         }
     }
 
