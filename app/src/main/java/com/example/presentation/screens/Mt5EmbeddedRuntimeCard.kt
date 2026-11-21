@@ -92,12 +92,12 @@ fun Mt5EmbeddedRuntimeCard() {
             }
 
             Text(
-                "The runtime is stored inside TradePulse. It does not use a VPS or another MT5 computer. Import a compatible runtime bundle containing Wine, Box64, PRoot, Xvfb and your MT5 terminal installation.",
+                "The runtime is stored inside TradePulse. It does not use a VPS or another MT5 computer. Import a compatible ARM64 Box64 runtime bundle containing Wine, Xvfb and your MT5 terminal installation.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
-                "Required bundle files: launch-mt5.sh, bin/proot, rootfs/usr/bin/box64, rootfs/usr/bin/wine, rootfs/usr/bin/Xvfb and mt5/terminal64.exe.",
+                "Required bundle files: bin/box64 (Android ARM64), rootfs/usr/bin/wine64 and rootfs/usr/bin/Xvfb (Linux x86_64), plus mt5/terminal64.exe.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
