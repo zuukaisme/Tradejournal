@@ -53,9 +53,9 @@ class Mt5RuntimeService : Service() {
             val details = buildList {
                 addAll(launchConfiguration.blockers)
                 addAll(inspection.launchBlockers)
-                if (!TermuxHeadlessX11Bridge.isInstalled(this)) {
+                if (!TermuxHeadlessX11Bridge.isInstalled(this@Mt5RuntimeService)) {
                     add("Install Termux and its xorg-server-xvfb package to provide the headless display.")
-                } else if (!TermuxHeadlessX11Bridge.hasRunCommandPermission(this)) {
+                } else if (!TermuxHeadlessX11Bridge.hasRunCommandPermission(this@Mt5RuntimeService)) {
                     add("Grant TradePulse the Termux Run commands permission and enable allow-external-apps in Termux.")
                 }
                 add("Terminal launch remains disabled until the X11 display and Wine runtime probes pass.")
@@ -80,7 +80,7 @@ class Mt5RuntimeService : Service() {
                 launchConfiguration.executable != null &&
                 launchConfiguration.blockers.all { it.startsWith("A live headless X11 server") }
             if (canProbeWine) {
-                runWineVersionProbe(launchConfiguration)
+                runWineVersionProbe()
             } else {
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
@@ -90,7 +90,7 @@ class Mt5RuntimeService : Service() {
         }
     }
 
-    private fun runWineVersionProbe(configuration: WinlatorMaliLaunchConfiguration) {
+    private fun runWineVersionProbe() {
         Thread({
             var pid: Int? = null
             try {
