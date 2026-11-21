@@ -104,10 +104,11 @@ object AiStrategyGenerator {
         }
 
         return try {
+            val effectiveSystemPrompt = AiInstructionStore.applyTo(systemPrompt)
             val rawResponse = when (provider) {
-                AiProvider.CLAUDE -> callAnthropic(trimmedKey, trimmedModel, systemPrompt, trimmedPrompt)
-                AiProvider.GEMINI -> callGemini(trimmedKey, trimmedModel, systemPrompt, trimmedPrompt, temperature)
-                AiProvider.OPENAI -> callOpenAi(trimmedKey, trimmedModel, systemPrompt, trimmedPrompt)
+                AiProvider.CLAUDE -> callAnthropic(trimmedKey, trimmedModel, effectiveSystemPrompt, trimmedPrompt)
+                AiProvider.GEMINI -> callGemini(trimmedKey, trimmedModel, effectiveSystemPrompt, trimmedPrompt, temperature)
+                AiProvider.OPENAI -> callOpenAi(trimmedKey, trimmedModel, effectiveSystemPrompt, trimmedPrompt)
             }
             val cleaned = rawResponse.trim()
             if (cleaned.isEmpty()) {

@@ -25,6 +25,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.example.domain.model.AppThemePreset
+import com.example.backtest.AiInstructionStore
 import com.example.backtest.BinaryCandleCache
 import com.example.backtest.PythonStrategyFolder
 import com.example.notifications.EveningReminderScheduler
@@ -46,6 +47,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AiInstructionStore.initialize(applicationContext)
         enableEdgeToEdge()
         hasCacheStorageAccess = BinaryCandleCache.hasCacheStorageAccess()
 
