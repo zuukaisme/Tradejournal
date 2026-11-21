@@ -43,7 +43,7 @@ object Mt5RuntimeManager {
                     }
 
                     val destination = File(staging, relativePath).canonicalFile
-                    require(destination.toPath().startsWith(staging.canonicalFile.toPath())) {
+                    require(destination.canonicalPath.startsWith(staging.canonicalPath + File.separator)) {
                         "The runtime bundle contains a path outside its installation directory."
                     }
 
@@ -83,6 +83,8 @@ object Mt5RuntimeManager {
         File(runtimeRoot, "launch-mt5.sh").setExecutable(true, false)
         File(runtimeRoot, "bin/proot").setExecutable(true, false)
         File(runtimeRoot, "rootfs/usr/bin/box64").setExecutable(true, false)
+        File(runtimeRoot, "rootfs/usr/bin/wine").setExecutable(true, false)
+        File(runtimeRoot, "rootfs/usr/bin/Xvfb").setExecutable(true, false)
 
         val installed = runtimeDirectory(context)
         val backup = File(context.filesDir, "mt5-runtime-backup")
