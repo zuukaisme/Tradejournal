@@ -33,7 +33,6 @@ import androidx.compose.ui.unit.dp
 import com.example.mt5.Mt5LocalBridgeServer
 import com.example.mt5.Mt5InstallerManager
 import com.example.mt5.Mt5RuntimeManager
-import com.example.mt5.HeadlessX11RuntimeManager
 import com.example.mt5.TermuxHeadlessX11Bridge
 import com.example.mt5.ProotRuntimeLayout
 import kotlinx.coroutines.Dispatchers
@@ -55,7 +54,6 @@ fun Mt5EmbeddedRuntimeCard() {
     var requestedTimeframe by remember { mutableStateOf("M5") }
     var installed by remember { mutableStateOf(Mt5RuntimeManager.isInstalled(context)) }
     var installerStaged by remember { mutableStateOf(Mt5InstallerManager.isInstallerStaged(context)) }
-    var headlessX11Installed by remember { mutableStateOf(HeadlessX11RuntimeManager.isInstalled(context)) }
     var termuxInstalled by remember { mutableStateOf(TermuxHeadlessX11Bridge.isInstalled(context)) }
     var termuxPermissionGranted by remember { mutableStateOf(TermuxHeadlessX11Bridge.hasRunCommandPermission(context)) }
     val winlatorInspection = remember(installed) { Mt5RuntimeManager.winlatorMaliInspection(context) }
@@ -92,24 +90,6 @@ fun Mt5EmbeddedRuntimeCard() {
             "Termux command permission granted. Enable allow-external-apps in Termux settings and install Xvfb."
         } else {
             "Termux command permission was not granted."
-        }
-    }
-
-    val headlessX11Picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            busy = true
-            status = "Validating and importing the ARM64 headless X11 runtime…"
-            scope.launch {
-                val result = withContext(Dispatchers.IO) {
-                    HeadlessX11RuntimeManager.install(context, uri)
-                }
-                headlessX11Installed = result.isSuccess && HeadlessX11RuntimeManager.isInstalled(context)
-                status = result.fold(
-                    { "Headless X11 runtime imported. Start runtime diagnostics to test Xvfb and Wine." },
-                    { it.message ?: "Headless X11 runtime import failed." }
-                )
-                busy = false
-            }
         }
     }
 
@@ -186,20 +166,6 @@ fun Mt5EmbeddedRuntimeCard() {
             )
             Text(
                 "The current ZIP format is a temporary prototype format. Do not use it for Winlator Mali imagefs, Proton or WOWBox64 archives.",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            OutlinedButton(
-                onClick = { headlessX11Picker.launch(arrayOf("application/zip", "application/octet-stream")) },
-                enabled = !busy,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(if (headlessX11Installed) "Replace headless X11 runtime" else "Import headless X11 runtime (.zip)")
-            }
-            Text(
-                if (headlessX11Installed) "Android ARM64 Xvfb runtime is installed."
-                else "Export the Xvfb bundle from Termux using scripts/export-termux-xvfb-runtime.sh, then import the ZIP here.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
