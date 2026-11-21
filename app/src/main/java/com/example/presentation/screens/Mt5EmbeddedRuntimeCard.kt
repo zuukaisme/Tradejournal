@@ -34,6 +34,7 @@ import com.example.mt5.Mt5LocalBridgeServer
 import com.example.mt5.Mt5InstallerManager
 import com.example.mt5.Mt5RuntimeManager
 import com.example.mt5.HeadlessX11RuntimeManager
+import com.example.mt5.TermuxHeadlessX11Bridge
 import com.example.mt5.ProotRuntimeLayout
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -55,6 +56,8 @@ fun Mt5EmbeddedRuntimeCard() {
     var installed by remember { mutableStateOf(Mt5RuntimeManager.isInstalled(context)) }
     var installerStaged by remember { mutableStateOf(Mt5InstallerManager.isInstallerStaged(context)) }
     var headlessX11Installed by remember { mutableStateOf(HeadlessX11RuntimeManager.isInstalled(context)) }
+    var termuxInstalled by remember { mutableStateOf(TermuxHeadlessX11Bridge.isInstalled(context)) }
+    var termuxPermissionGranted by remember { mutableStateOf(TermuxHeadlessX11Bridge.hasRunCommandPermission(context)) }
     val winlatorInspection = remember(installed) { Mt5RuntimeManager.winlatorMaliInspection(context) }
     val prootInspection = remember(installed) { ProotRuntimeLayout.inspect(context) }
     var busy by remember { mutableStateOf(false) }
@@ -80,6 +83,15 @@ fun Mt5EmbeddedRuntimeCard() {
                 )
                 busy = false
             }
+        }
+    }
+
+    val termuxPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        termuxPermissionGranted = granted
+        status = if (granted) {
+            "Termux command permission granted. Enable allow-external-apps in Termux settings and install Xvfb."
+        } else {
+            "Termux command permission was not granted."
         }
     }
 
@@ -191,6 +203,24 @@ fun Mt5EmbeddedRuntimeCard() {
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+
+            Text(
+                when {
+                    !termuxInstalled -> "Termux is not installed. Install Termux to provide a headless Xvfb process without downloading another runtime bundle."
+                    termuxPermissionGranted -> "Termux command access is enabled. In Termux run: pkg install x11-repo xorg-server-xvfb xorg-fonts-misc. Then set allow-external-apps=true in ~/.termux/termux.properties and run termux-reload-settings."
+                    else -> "Termux is installed but TradePulse does not have permission to start its background Xvfb process. Grant the permission below, then enable allow-external-apps in Termux."
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (termuxInstalled && !termuxPermissionGranted) {
+                OutlinedButton(
+                    onClick = { termuxPermissionLauncher.launch("com.termux.permission.RUN_COMMAND") },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Grant Termux command permission")
+                }
+            }
 
             OutlinedButton(
                 onClick = { installerPicker.launch(arrayOf("application/vnd.microsoft.portable-executable", "application/octet-stream", "application/x-msdownload")) },
