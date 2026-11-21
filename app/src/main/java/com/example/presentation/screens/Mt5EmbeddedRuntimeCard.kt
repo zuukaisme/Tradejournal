@@ -34,6 +34,7 @@ import com.example.mt5.Mt5LocalBridgeServer
 import com.example.mt5.Mt5InstallerManager
 import com.example.mt5.Mt5RuntimeManager
 import com.example.mt5.TermuxHeadlessX11Bridge
+import com.example.mt5.WinlatorImageFsImporter
 import com.example.mt5.ProotRuntimeLayout
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -56,7 +57,9 @@ fun Mt5EmbeddedRuntimeCard() {
     var installerStaged by remember { mutableStateOf(Mt5InstallerManager.isInstallerStaged(context)) }
     var termuxInstalled by remember { mutableStateOf(TermuxHeadlessX11Bridge.isInstalled(context)) }
     var termuxPermissionGranted by remember { mutableStateOf(TermuxHeadlessX11Bridge.hasRunCommandPermission(context)) }
-    val winlatorInspection = remember(installed) { Mt5RuntimeManager.winlatorMaliInspection(context) }
+    var runtimeRevision by remember { mutableStateOf(0) }
+    val winlatorAssetAvailable = remember { WinlatorImageFsImporter.bundledAssetAvailable(context) }
+    val winlatorInspection = remember(installed, runtimeRevision) { Mt5RuntimeManager.winlatorMaliInspection(context) }
     val prootInspection = remember(installed) { ProotRuntimeLayout.inspect(context) }
     var busy by remember { mutableStateOf(false) }
     var status by remember {
@@ -136,6 +139,35 @@ fun Mt5EmbeddedRuntimeCard() {
                     Text("Winlator Mali integration in progress", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
+
+            OutlinedButton(
+                onClick = {
+                    busy = true
+                    status = "Importing Winlator Mali ImageFS from the installed app. This may take several minutes…"
+                    scope.launch {
+                        val result = withContext(Dispatchers.IO) {
+                            WinlatorImageFsImporter.importBundledImageFs(context)
+                        }
+                        result.onSuccess { imported ->
+                            runtimeRevision++
+                            status = "Winlator Mali ImageFS imported: ${imported.filesWritten} archive entries, ${imported.bytesWritten / (1024L * 1024L)} MiB expanded. Proton/Wine, prefix and MT5 still need to be supplied."
+                        }.onFailure {
+                            status = it.message ?: "Winlator Mali ImageFS import failed."
+                        }
+                        busy = false
+                    }
+                },
+                enabled = !busy && winlatorAssetAvailable,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Import Winlator Mali ImageFS")
+            }
+            Text(
+                if (winlatorAssetAvailable) "Uses the imagefs.tzst asset already bundled in the installed Winlator Mali app; no runtime download is started."
+                else "No bundled imagefs.tzst asset was found. Install the compatible Winlator Mali build with its ImageFS asset included.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
 
             Text(
                 "Winlator Mali ImageFS: " + if (winlatorInspection.runtimeFilesReady) "runtime files detected" else "not ready (${winlatorInspection.missingComponents.size} components missing)",
