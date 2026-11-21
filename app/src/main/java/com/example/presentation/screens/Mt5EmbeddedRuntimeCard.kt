@@ -155,12 +155,12 @@ fun Mt5EmbeddedRuntimeCard() {
                 )
             }
             Text(
-                "The Gemini repository provides a useful PRoot/Box64/Wine setup design. TradePulse is targeting headless MT5 execution through the local API, so Android desktop rendering and touch input are not required. TradePulse can import and start an Android ARM64 Xvfb display for a Wine runtime probe. Full MT5 terminal launch and bot deployment still need validation.",
+                "The Gemini repository provides a useful PRoot/Box64/Wine setup design. TradePulse is targeting headless MT5 execution through the local API, so Android desktop rendering and touch input are not required. TradePulse can start Termux's Android ARM64 Xvfb in the background and verify an authenticated X11 connection before probing Wine. Full MT5 terminal launch and bot deployment still need validation.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
-                "This experimental loader stores files inside TradePulse. It is not yet compatible with Winlator Mali's real imagefs and ARM64EC Wine packages. The device-specific Box64/Wine environment is being validated against the imported headless Xvfb server.",
+                "This experimental loader stores files inside TradePulse. It is not yet compatible with Winlator Mali's real imagefs and ARM64EC Wine packages. The device-specific Box64/Wine environment is being validated against the Termux headless Xvfb server.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -215,7 +215,7 @@ fun Mt5EmbeddedRuntimeCard() {
                 color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f)
             ) {
                 Text(
-                    "MT5 bot execution is not enabled yet. Importing Xvfb only supplies the headless display; Winlator Mali ImageFS, Proton ARM64EC, MT5 terminal startup, bridge EA deployment, and bot lifecycle must all pass validation first.",
+                    "MT5 bot execution is not enabled yet. Termux Xvfb only supplies the headless display; Winlator Mali ImageFS, Proton ARM64EC, MT5 terminal startup, bridge EA deployment, and bot lifecycle must all pass validation first.",
                     modifier = Modifier.padding(12.dp),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface
