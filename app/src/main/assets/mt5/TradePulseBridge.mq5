@@ -11,6 +11,7 @@ input uint ReconnectSeconds = 3;
 
 CTrade Trade;
 int BridgeSocket = INVALID_HANDLE;
+bool BridgeAuthenticated = false;
 string ReceiveBuffer = "";
 ulong LastSnapshot = 0;
 ulong LastConnectAttempt = 0;
@@ -37,6 +38,7 @@ void DisconnectBridge()
       BridgeSocket = INVALID_HANDLE;
    }
    ReceiveBuffer = "";
+   BridgeAuthenticated = false;
 }
 
 bool ConnectBridge()
@@ -55,9 +57,11 @@ bool ConnectBridge()
       return false;
    }
 
-   SendLine("AUTH|" + BridgeToken);
-   SendLine("HELLO|" + IntegerToString((long)AccountInfoInteger(ACCOUNT_LOGIN)) + "|" +
-            AccountInfoString(ACCOUNT_SERVER) + "|" + AccountInfoString(ACCOUNT_COMPANY));
+   if(!SendLine("AUTH|" + BridgeToken))
+   {
+      DisconnectBridge();
+      return false;
+   }
    return true;
 }
 
@@ -154,7 +158,24 @@ void HandleCommand(const string line)
    int count = StringSplit(line, '|', parts);
    if(count <= 0) return;
 
-   if(parts[0] == "AUTH_OK") return;
+   if(parts[0] == "AUTH_OK")
+   {
+      if(!BridgeAuthenticated)
+      {
+         BridgeAuthenticated = true;
+         SendLine("HELLO|" + IntegerToString((long)AccountInfoInteger(ACCOUNT_LOGIN)) + "|" +
+                  AccountInfoString(ACCOUNT_SERVER) + "|" + AccountInfoString(ACCOUNT_COMPANY));
+      }
+      return;
+   }
+
+   if(parts[0] == "AUTH_FAILED")
+   {
+      DisconnectBridge();
+      return;
+   }
+
+   if(!BridgeAuthenticated) return;
 
    if(parts[0] == "PING")
    {
@@ -290,7 +311,7 @@ void OnTimer()
    }
 
    ReadCommands();
-   if(now - LastSnapshot >= 1000)
+   if(BridgeAuthenticated && now - LastSnapshot >= 1000)
    {
       LastSnapshot = now;
       SendAccountSnapshot();
