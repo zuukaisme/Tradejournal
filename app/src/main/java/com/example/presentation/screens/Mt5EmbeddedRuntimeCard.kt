@@ -15,6 +15,7 @@ import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -47,6 +48,9 @@ fun Mt5EmbeddedRuntimeCard() {
     val bridgeToken by Mt5LocalBridgeServer.token.collectAsState()
     val account by Mt5LocalBridgeServer.account.collectAsState()
     val positions by Mt5LocalBridgeServer.positions.collectAsState()
+    val bars by Mt5LocalBridgeServer.bars.collectAsState()
+    var requestedSymbol by remember { mutableStateOf("EURUSD") }
+    var requestedTimeframe by remember { mutableStateOf("M5") }
     var installed by remember { mutableStateOf(Mt5RuntimeManager.isInstalled(context)) }
     var busy by remember { mutableStateOf(false) }
     var status by remember {
@@ -190,6 +194,35 @@ fun Mt5EmbeddedRuntimeCard() {
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+            OutlinedTextField(
+                value = requestedSymbol,
+                onValueChange = { requestedSymbol = it.uppercase().take(32) },
+                label = { Text("MT5 symbol") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = requestedTimeframe,
+                onValueChange = { requestedTimeframe = it.uppercase().take(4) },
+                label = { Text("Timeframe (M1, M5, M15, H1…)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedButton(
+                onClick = {
+                    runCatching { Mt5LocalBridgeServer.requestBars(requestedSymbol, requestedTimeframe, 500) }
+                        .onSuccess { sent -> status = if (sent) "Candle request sent to MT5." else "Connect the MT5 Expert Advisor first." }
+                        .onFailure { status = it.message ?: "Unable to request candles." }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Request 500 MT5 candles")
+            }
+            if (bars.isNotEmpty()) {
+                val latest = bars.last()
+                Text("${bars.size} candles · ${latest.symbol} ${latest.timeframe} · Latest close ${latest.close}", style = MaterialTheme.typography.bodySmall)
+            }
+
             if (account != null) {
                 Text(
                     "Account ${account!!.login} · ${account!!.server}",
@@ -211,7 +244,7 @@ fun Mt5EmbeddedRuntimeCard() {
             }
 
             Text(
-                "Only import runtime binaries from a source you trust. They run with TradePulse's app permissions. A successful import does not mean MT5 can launch. The package must be built for Android ARM64 and include an x86_64 Wine environment. Keep the foreground notification enabled while MT5 is running.",
+                "Only import runtime binaries from a source you trust. They run with TradePulse's app permissions. A successful import does not mean MT5 can launch. The current generic runtime is still a prototype, not Winlator Mali compatible. In the exported EA, AllowLiveTrading defaults to false; leave it disabled until the demo-account execution path has been tested. Keep the foreground notification enabled while MT5 is running.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
