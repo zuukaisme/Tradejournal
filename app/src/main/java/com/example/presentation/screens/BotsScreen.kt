@@ -79,6 +79,7 @@ import com.example.domain.model.BotStatus
 import com.example.domain.model.BotType
 import com.example.presentation.TradingViewModel
 import com.example.mt5.Mt5LocalBridgeServer
+import com.example.mt5.Mt5BotArtifactManager
 import com.example.presentation.components.CurrencyFormatter
 import com.example.presentation.components.LiquidGlassCard
 import com.example.presentation.components.LiquidGlassPill
@@ -109,6 +110,33 @@ fun BotsScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val mt5BridgeStatus by Mt5LocalBridgeServer.status.collectAsState()
+
+    val botArtifactImportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val target = runTarget
+        if (uri != null && target != null) {
+            scope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    runCatching {
+                        val displayName = context.contentResolver.query(
+                            uri,
+                            arrayOf(OpenableColumns.DISPLAY_NAME),
+                            null,
+                            null,
+                            null
+                        )?.use { cursor ->
+                            if (cursor.moveToFirst()) cursor.getString(0) else null
+                        }.orEmpty()
+                        Mt5BotArtifactManager.importArtifact(context, target.id, displayName, uri).getOrThrow()
+                    }
+                }
+                Toast.makeText(
+                    context,
+                    if (result.isSuccess) "Compiled bot stored locally. MT5 deployment is still pending runtime integration." else result.exceptionOrNull()?.message ?: "Import failed",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
 
     val botExportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
         val target = runTarget
@@ -313,21 +341,31 @@ fun BotsScreen(
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Text(
-                        "Exporting prepares the source file; it does not start a trade or mark the bot as running.",
+                        if (Mt5BotArtifactManager.hasArtifact(context, bot.id)) {
+                            "A compiled .ex5 artifact is stored locally for this bot. Automatic deployment is not available until the embedded MT5 runtime is integrated."
+                        } else {
+                            "You can import a compiled .ex5 artifact or export the editable source. Files remain stored locally until MT5 deployment is implemented."
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             },
             confirmButton = {
-                TextButton(
-                    onClick = {
-                        val extension = if (isLibrary) "mqh" else "mq5"
-                        val safeName = bot.name.replace(Regex("[^A-Za-z0-9_-]"), "_").take(48).ifBlank { "TradePulseBot" }
-                        botExportLauncher.launch("$safeName.$extension")
-                    },
-                    enabled = sourceReady
-                ) { Text("Export for MT5") }
+                Row {
+                    TextButton(
+                        onClick = { botArtifactImportLauncher.launch(arrayOf("application/octet-stream", "*/*")) },
+                        enabled = bot.id > 0L && !isLibrary
+                    ) { Text("Import .ex5") }
+                    TextButton(
+                        onClick = {
+                            val extension = if (isLibrary) "mqh" else "mq5"
+                            val safeName = bot.name.replace(Regex("[^A-Za-z0-9_-]"), "_").take(48).ifBlank { "TradePulseBot" }
+                            botExportLauncher.launch("$safeName.$extension")
+                        },
+                        enabled = sourceReady
+                    ) { Text("Export source") }
+                }
             },
             dismissButton = {
                 TextButton(onClick = { runTarget = null }) { Text("Close") }
