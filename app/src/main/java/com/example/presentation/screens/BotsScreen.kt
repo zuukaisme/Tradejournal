@@ -326,7 +326,7 @@ fun BotsScreen(
                         val safeName = bot.name.replace(Regex("[^A-Za-z0-9_-]"), "_").take(48).ifBlank { "TradePulseBot" }
                         botExportLauncher.launch("$safeName.$extension")
                     },
-                    enabled = sourceReady && !isLibrary
+                    enabled = sourceReady
                 ) { Text("Export for MT5") }
             },
             dismissButton = {
