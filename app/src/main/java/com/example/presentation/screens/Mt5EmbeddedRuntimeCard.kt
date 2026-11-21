@@ -86,18 +86,18 @@ fun Mt5EmbeddedRuntimeCard() {
                     tint = MaterialTheme.colorScheme.primary
                 )
                 Column {
-                    Text("Run MT5 inside TradePulse", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    Text("Local Wine + Box64 terminal runtime", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Experimental MT5 runtime", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text("Generic runtime loader — Winlator Mali adapter still pending", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
 
             Text(
-                "The runtime is stored inside TradePulse. It does not use a VPS or another MT5 computer. Import a compatible ARM64 Box64 runtime bundle containing Wine, Xvfb and your MT5 terminal installation.",
+                "This experimental loader stores files inside TradePulse. It is not yet compatible with Winlator Mali's real imagefs and ARM64EC Wine packages. The device-specific Wine/X server integration is still being developed.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
-                "Required bundle files: bin/box64 (Android ARM64), rootfs/usr/bin/wine64 and rootfs/usr/bin/Xvfb (Linux x86_64), plus mt5/terminal64.exe.",
+                "The current ZIP format is a temporary prototype format. Do not use it for Winlator Mali imagefs, Proton or WOWBox64 archives.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -138,7 +138,7 @@ fun Mt5EmbeddedRuntimeCard() {
 
             Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
             Text(
-                "Only import runtime binaries from a source you trust. They will run with TradePulse's app permissions. Importing a runtime does not guarantee it will work on this device. The package must be built for Android ARM64 and include an x86_64 Wine environment. Keep the foreground notification enabled while MT5 is running.",
+                "Only import runtime binaries from a source you trust. They run with TradePulse's app permissions. A successful import does not mean MT5 can launch. The package must be built for Android ARM64 and include an x86_64 Wine environment. Keep the foreground notification enabled while MT5 is running.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
