@@ -34,147 +34,30 @@ class Mt5RuntimeService : Service() {
             ACTION_START, null -> startRuntime()
             else -> stopSelf()
         }
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     private fun startRuntime() {
-        if (terminalPid?.let(nativeLauncher::isAlive) == true) return
-        val inspection = ProotRuntimeLayout.inspect(this)
-        if (!inspection.canLaunchEmbeddedTerminal) {
-            val details = (inspection.missingComponents + inspection.launchBlockers).joinToString("\n")
-            Mt5RuntimeManager.logFile(this).writeText("Gemini-style PRoot runtime preflight failed.\n$details")
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
-            return
-        }
         if (!starting.compareAndSet(false, true)) return
-        createNotificationChannel()
-        startForeground(NOTIFICATION_ID, buildNotification("Preparing embedded MT5 runtime"))
-        stopping.set(false)
-        runCatching { Mt5LocalBridgeServer.start(applicationContext) }.onFailure { error ->
-            Mt5RuntimeManager.logFile(this).appendText("\\nBridge server failed: ${error.message}")
-            starting.set(false)
+        try {
+            val inspection = Mt5RuntimeManager.winlatorMaliInspection(this)
+            val details = buildList {
+                addAll(inspection.missingComponents)
+                addAll(inspection.launchBlockers)
+                add("The legacy generic Xvfb launcher is not compatible with the Winlator Mali ImageFS runtime.")
+                add("MT5 launch remains disabled until the Winlator process environment and embedded X11 Surface/input bridge are connected.")
+            }.distinct()
+            Mt5RuntimeManager.logFile(this).writeText(
+                "Embedded MT5 launch preflight\n" +
+                    "ImageFS version: ${inspection.imageFsVersion ?: "not found"}\n" +
+                    "Runtime files ready: ${inspection.runtimeFilesReady}\n" +
+                    "Terminal launch enabled: false\n" +
+                    details.joinToString("\n") { "- $it" }
+            )
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
-            return
-        }
-
-        Thread({
-            try {
-                runRuntime()
-            } finally {
-                starting.set(false)
-            }
-        }, "TradePulse-MT5-Launcher").apply {
-            isDaemon = true
-            start()
-        }
-    }
-
-    private fun runRuntime() {
-        val runtime = Mt5RuntimeManager.runtimeDirectory(this)
-        val rootfs = File(runtime, "rootfs")
-        val box64 = File(runtime, "bin/box64")
-        val wine64 = File(rootfs, "usr/bin/wine64")
-        val xvfb = File(rootfs, "usr/bin/Xvfb")
-        val mt5Directory = File(runtime, "mt5")
-        val terminal = File(mt5Directory, "terminal64.exe")
-        val prefix = File(runtime, "wineprefix")
-        val home = File(runtime, "home")
-        val temp = File(runtime, "tmp")
-        val log = Mt5RuntimeManager.logFile(this)
-
-        try {
-            check(Mt5RuntimeManager.isInstalled(this)) {
-                "The embedded MT5 runtime bundle is incomplete: ${Mt5RuntimeManager.missingFiles(this).joinToString()}"
-            }
-            listOf(prefix, home, temp).forEach {
-                check(it.mkdirs() || it.isDirectory) { "Unable to create runtime directory: ${it.name}" }
-            }
-
-            val libraryPaths = listOf(
-                File(rootfs, "usr/lib/x86_64-linux-gnu"),
-                File(rootfs, "lib/x86_64-linux-gnu"),
-                File(rootfs, "usr/lib"),
-                File(rootfs, "lib")
-            ).filter { it.isDirectory }.joinToString(File.pathSeparator) { it.absolutePath }
-
-            check(libraryPaths.isNotBlank()) {
-                "The runtime bundle is missing its x86_64 Wine library directories."
-            }
-
-            val environment = mapOf(
-                "HOME" to home.absolutePath,
-                "WINEPREFIX" to prefix.absolutePath,
-                "WINEARCH" to "win64",
-                "DISPLAY" to ":0",
-                "WINEDEBUG" to "-all",
-                "TMPDIR" to temp.absolutePath,
-                "BOX64_LD_LIBRARY_PATH" to libraryPaths,
-                "BOX64_PATH" to File(rootfs, "usr/bin").absolutePath,
-                "BOX64_LOG" to "0"
-            )
-
-            displayPid = nativeLauncher.start(
-                executable = box64,
-                arguments = listOf(
-                    box64.absolutePath,
-                    xvfb.absolutePath,
-                    ":0",
-                    "-screen",
-                    "0",
-                    "1024x768x24",
-                    "-nolisten",
-                    "tcp"
-                ),
-                environment = environment,
-                workingDirectory = runtime,
-                logFile = log
-            )
-
-            Thread.sleep(1500)
-            check(!stopping.get()) { "MT5 runtime startup was cancelled." }
-            check(displayPid?.let(nativeLauncher::isAlive) == true) {
-                "The virtual display stopped during startup. Check the MT5 runtime log."
-            }
-
-            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
-                .notify(NOTIFICATION_ID, buildNotification("Starting MetaTrader 5"))
-
-            terminalPid = nativeLauncher.start(
-                executable = box64,
-                arguments = listOf(
-                    box64.absolutePath,
-                    wine64.absolutePath,
-                    terminal.absolutePath
-                ),
-                environment = environment,
-                workingDirectory = mt5Directory,
-                logFile = log
-            )
-
-            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
-                .notify(NOTIFICATION_ID, buildNotification("Embedded MT5 terminal is running"))
-
-            val exitCode = terminalPid?.let(nativeLauncher::waitFor) ?: -1
-            terminalPid = null
-            Mt5LocalBridgeServer.stop()
-            stopDisplay()
-
-            if (!stopping.get()) {
-                (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
-                    .notify(NOTIFICATION_ID, buildNotification("MT5 terminal stopped (exit $exitCode)"))
-                stopSelf()
-            }
-        } catch (error: Throwable) {
-            log.appendText("\n${error.stackTraceToString()}")
-            Mt5LocalBridgeServer.stop()
-            stopProcesses()
-            if (!stopping.get()) {
-                (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
-                    .notify(NOTIFICATION_ID, buildNotification("MT5 failed to start. Check runtime log."))
-                stopSelf()
-            }
+        } finally {
+            starting.set(false)
         }
     }
 
