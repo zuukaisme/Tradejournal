@@ -22,6 +22,9 @@ class Mt5RuntimeService : Service() {
     @Volatile
     private var terminalPid: Int? = null
 
+    @Volatile
+    private var probePid: Int? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -92,6 +95,8 @@ class Mt5RuntimeService : Service() {
                     File(filesDir, "mt5-wine-probe.log")
                 )
                 pid = processId
+                probePid = processId
+                if (stopping.get()) nativeLauncher.stop(processId)
                 val deadline = System.currentTimeMillis() + WINE_PROBE_TIMEOUT_MS
                 while (nativeLauncher.isAlive(processId) && System.currentTimeMillis() < deadline) {
                     Thread.sleep(100)
@@ -107,6 +112,7 @@ class Mt5RuntimeService : Service() {
                 appendRuntimeLog("Wine version probe failed: ${error.message ?: error.javaClass.simpleName}")
                 pid?.let { runCatching { nativeLauncher.forceStop(it) } }
             } finally {
+                probePid = null
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
@@ -127,6 +133,8 @@ class Mt5RuntimeService : Service() {
     }
 
     private fun stopProcesses() {
+        probePid?.let { runCatching { nativeLauncher.stop(it) } }
+        probePid = null
         terminalPid?.let { runCatching { nativeLauncher.stop(it) } }
         terminalPid = null
         stopDisplay()
