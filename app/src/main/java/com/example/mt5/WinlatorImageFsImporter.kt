@@ -1,6 +1,7 @@
 package com.example.mt5
 
 import android.content.Context
+import android.system.Os
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -18,6 +19,7 @@ data class WinlatorImageFsImportResult(
 object WinlatorImageFsImporter {
     const val WINLATOR_PACKAGE = "com.winlator.mali"
     const val IMAGE_FS_ASSET = "imagefs.tzst"
+    private const val IMAGE_FS_VERSION = "21"
     private const val MAX_EXPANDED_BYTES = 24L * 1024L * 1024L * 1024L
     private const val MAX_ENTRIES = 1_000_000
 
@@ -63,13 +65,26 @@ object WinlatorImageFsImporter {
                                 continue
                             }
 
-                            if (!entry.isFile) continue
                             output.parentFile?.let {
                                 check(it.mkdirs() || it.isDirectory) {
                                     "Unable to create ImageFS directory."
                                 }
                             }
 
+                            if (entry.isSymbolicLink) {
+                                val target = entry.linkName
+                                check(target.isNotBlank() && !target.startsWith("/") && !target.startsWith("\\")) {
+                                    "ImageFS archive contains an absolute or empty symbolic link."
+                                }
+                                val resolvedTarget = File(output.parentFile, target).canonicalFile.path
+                                check(resolvedTarget.startsWith(canonicalStage + File.separator)) {
+                                    "ImageFS archive contains a symbolic link outside its root."
+                                }
+                                Os.symlink(target, output.absolutePath)
+                                continue
+                            }
+
+                            if (!entry.isFile) continue
                             FileOutputStream(output).use { sink ->
                                 val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                                 while (true) {
@@ -89,20 +104,23 @@ object WinlatorImageFsImporter {
                 }
             }
 
-            val version = File(stage, ".winlator/.img_version")
-            check(version.isFile && version.readText().isNotBlank()) {
-                "The imported archive is not a valid Winlator Mali ImageFS."
-            }
             check(File(stage, "usr/bin/box64").isFile) {
                 "The ImageFS archive does not contain the expected Box64 runtime."
             }
+            val configDirectory = File(stage, ".winlator")
+            check(configDirectory.mkdirs() || configDirectory.isDirectory) {
+                "Unable to create the Winlator ImageFS metadata directory."
+            }
+            File(configDirectory, ".img_version").writeText(IMAGE_FS_VERSION)
 
             backup.deleteRecursively()
             if (destination.exists()) {
                 check(destination.renameTo(backup)) { "Unable to preserve the existing runtime before import." }
             }
             if (!stage.renameTo(destination)) {
-                if (backup.exists()) backup.renameTo(destination)
+                if (backup.exists()) check(backup.renameTo(destination)) {
+                    "Unable to restore the previous ImageFS after activation failed."
+                }
                 error("Unable to activate the imported Winlator ImageFS.")
             }
             backup.deleteRecursively()
