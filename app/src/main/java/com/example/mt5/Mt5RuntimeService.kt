@@ -84,23 +84,24 @@ class Mt5RuntimeService : Service() {
             var pid: Int? = null
             try {
                 val executable = configuration.executable ?: error("Wine executable is unavailable.")
-                pid = nativeLauncher.start(
+                val processId = nativeLauncher.start(
                     executable,
                     listOf("--version"),
                     configuration.environment,
                     configuration.workingDirectory,
                     File(filesDir, "mt5-wine-probe.log")
                 )
+                pid = processId
                 val deadline = System.currentTimeMillis() + WINE_PROBE_TIMEOUT_MS
-                while (nativeLauncher.isAlive(pid) && System.currentTimeMillis() < deadline) {
+                while (nativeLauncher.isAlive(processId) && System.currentTimeMillis() < deadline) {
                     Thread.sleep(100)
                 }
-                if (nativeLauncher.isAlive(pid)) {
-                    nativeLauncher.stop(pid)
+                if (nativeLauncher.isAlive(processId)) {
+                    nativeLauncher.stop(processId)
                     Thread.sleep(1500)
-                    if (nativeLauncher.isAlive(pid)) nativeLauncher.forceStop(pid)
+                    if (nativeLauncher.isAlive(processId)) nativeLauncher.forceStop(processId)
                 }
-                val exitCode = nativeLauncher.waitFor(pid)
+                val exitCode = nativeLauncher.waitFor(processId)
                 appendRuntimeLog("Wine version probe exit code: $exitCode")
             } catch (error: Throwable) {
                 appendRuntimeLog("Wine version probe failed: ${error.message ?: error.javaClass.simpleName}")

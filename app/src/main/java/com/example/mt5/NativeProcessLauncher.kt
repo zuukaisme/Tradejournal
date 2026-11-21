@@ -42,7 +42,6 @@ class NativeProcessLauncher {
 
     fun waitFor(pid: Int): Int = nativeWaitFor(pid)
     fun stop(pid: Int) = nativeKill(pid, 15)
-    fun forceStop(pid: Int) = nativeKill(pid, 9)
     fun isAlive(pid: Int): Boolean = nativeIsAlive(pid)
 
     companion object {
