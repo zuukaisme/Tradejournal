@@ -12,8 +12,14 @@ import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
 class Mt5RuntimeService : Service() {
-    private var runtimeProcess: Process? = null
     private val stopping = AtomicBoolean(false)
+    private val nativeLauncher by lazy { NativeProcessLauncher() }
+
+    @Volatile
+    private var displayPid: Int? = null
+
+    @Volatile
+    private var terminalPid: Int? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -31,67 +37,134 @@ class Mt5RuntimeService : Service() {
     }
 
     private fun startRuntime() {
-        if (runtimeProcess?.isAlive == true) return
+        if (terminalPid?.let(nativeLauncher::isAlive) == true) return
         createNotificationChannel()
-        startForeground(NOTIFICATION_ID, buildNotification("Starting embedded MT5 runtime"))
-
-        if (!Mt5RuntimeManager.isInstalled(this)) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
-            return
-        }
-
+        startForeground(NOTIFICATION_ID, buildNotification("Preparing embedded MT5 runtime"))
         stopping.set(false)
+
+        Thread({
+            runRuntime()
+        }, "TradePulse-MT5-Launcher").apply {
+            isDaemon = true
+            start()
+        }
+    }
+
+    private fun runRuntime() {
         val runtime = Mt5RuntimeManager.runtimeDirectory(this)
-        val launcher = File(runtime, "launch-mt5.sh")
+        val rootfs = File(runtime, "rootfs")
+        val box64 = File(runtime, "bin/box64")
+        val wine64 = File(rootfs, "usr/bin/wine64")
+        val xvfb = File(rootfs, "usr/bin/Xvfb")
+        val mt5Directory = File(runtime, "mt5")
+        val terminal = File(mt5Directory, "terminal64.exe")
+        val prefix = File(runtime, "wineprefix")
+        val home = File(runtime, "home")
+        val temp = File(runtime, "tmp")
         val log = Mt5RuntimeManager.logFile(this)
 
         try {
-            val process = ProcessBuilder("/system/bin/sh", launcher.absolutePath)
-                .directory(runtime)
-                .redirectErrorStream(true)
-                .redirectOutput(ProcessBuilder.Redirect.appendTo(log))
-                .apply {
-                    environment()["TRADEPULSE_RUNTIME_DIR"] = runtime.absolutePath
-                    environment()["TRADEPULSE_MT5_DIR"] = File(runtime, "mt5").absolutePath
-                    environment()["TRADEPULSE_WINEPREFIX"] = File(runtime, "wineprefix").absolutePath
-                    environment()["TRADEPULSE_LOG_FILE"] = log.absolutePath
-                }
-                .start()
-            runtimeProcess = process
-
-            Thread {
-                val exitCode = runCatching { process.waitFor() }.getOrNull()
-                if (!stopping.get()) {
-                    val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-                    manager.notify(
-                        NOTIFICATION_ID,
-                        buildNotification("MT5 runtime stopped${exitCode?.let { " (exit $it)" } ?: ""}")
-                    )
-                    stopSelf()
-                }
-            }.apply {
-                name = "TradePulse-MT5-Watcher"
-                isDaemon = true
-                start()
+            check(Mt5RuntimeManager.isInstalled(this)) {
+                "The embedded MT5 runtime bundle is incomplete: ${Mt5RuntimeManager.missingFiles(this).joinToString()}"
             }
+            listOf(prefix, home, temp).forEach {
+                check(it.mkdirs() || it.isDirectory) { "Unable to create runtime directory: ${it.name}" }
+            }
+
+            val libraryPaths = listOf(
+                File(rootfs, "usr/lib/x86_64-linux-gnu"),
+                File(rootfs, "lib/x86_64-linux-gnu"),
+                File(rootfs, "usr/lib"),
+                File(rootfs, "lib")
+            ).filter { it.isDirectory }.joinToString(File.pathSeparator) { it.absolutePath }
+
+            val environment = mapOf(
+                "HOME" to home.absolutePath,
+                "WINEPREFIX" to prefix.absolutePath,
+                "WINEARCH" to "win64",
+                "DISPLAY" to ":0",
+                "WINEDEBUG" to "-all",
+                "TMPDIR" to temp.absolutePath,
+                "BOX64_LD_LIBRARY_PATH" to libraryPaths,
+                "BOX64_PATH" to File(rootfs, "usr/bin").absolutePath,
+                "BOX64_LOG" to "0"
+            )
+
+            displayPid = nativeLauncher.start(
+                executable = box64,
+                arguments = listOf(
+                    box64.absolutePath,
+                    xvfb.absolutePath,
+                    ":0",
+                    "-screen",
+                    "0",
+                    "1024x768x24",
+                    "-nolisten",
+                    "tcp"
+                ),
+                environment = environment,
+                workingDirectory = runtime,
+                logFile = log
+            )
+
+            Thread.sleep(1500)
+            check(displayPid?.let(nativeLauncher::isAlive) == true) {
+                "The virtual display stopped during startup. Check the MT5 runtime log."
+            }
+
             (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
-                .notify(NOTIFICATION_ID, buildNotification("Embedded MT5 runtime is running"))
-        } catch (error: Exception) {
+                .notify(NOTIFICATION_ID, buildNotification("Starting MetaTrader 5"))
+
+            terminalPid = nativeLauncher.start(
+                executable = box64,
+                arguments = listOf(
+                    box64.absolutePath,
+                    wine64.absolutePath,
+                    terminal.absolutePath
+                ),
+                environment = environment,
+                workingDirectory = mt5Directory,
+                logFile = log
+            )
+
+            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
+                .notify(NOTIFICATION_ID, buildNotification("Embedded MT5 terminal is running"))
+
+            val exitCode = terminalPid?.let(nativeLauncher::waitFor) ?: -1
+            terminalPid = null
+            stopDisplay()
+
+            if (!stopping.get()) {
+                (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
+                    .notify(NOTIFICATION_ID, buildNotification("MT5 terminal stopped (exit $exitCode)"))
+                stopSelf()
+            }
+        } catch (error: Throwable) {
             log.appendText("\n${error.stackTraceToString()}")
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
+            stopProcesses()
+            if (!stopping.get()) {
+                (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
+                    .notify(NOTIFICATION_ID, buildNotification("MT5 failed to start. Check runtime log."))
+                stopSelf()
+            }
         }
     }
 
     private fun stopRuntime() {
         stopping.set(true)
-        runtimeProcess?.let { process ->
-            process.destroy()
-            if (process.isAlive) process.destroyForcibly()
-        }
-        runtimeProcess = null
+        stopProcesses()
         stopForeground(STOP_FOREGROUND_REMOVE)
+    }
+
+    private fun stopProcesses() {
+        terminalPid?.let { runCatching { nativeLauncher.stop(it) } }
+        terminalPid = null
+        stopDisplay()
+    }
+
+    private fun stopDisplay() {
+        displayPid?.let { runCatching { nativeLauncher.stop(it) } }
+        displayPid = null
     }
 
     override fun onDestroy() {
@@ -101,8 +174,13 @@ class Mt5RuntimeService : Service() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(CHANNEL_ID, "MT5 runtime", NotificationManager.IMPORTANCE_LOW)
-            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(channel)
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "MT5 runtime",
+                NotificationManager.IMPORTANCE_LOW
+            )
+            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
+                .createNotificationChannel(channel)
         }
     }
 
