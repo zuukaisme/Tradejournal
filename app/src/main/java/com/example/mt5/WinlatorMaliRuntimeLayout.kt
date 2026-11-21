@@ -37,18 +37,21 @@ object WinlatorMaliRuntimeLayout {
         ).firstOrNull { it.isFile }
 
         val prefixes = findWinePrefixes(imageFs)
-        val installedTerminal = prefixes.firstNotNullOfOrNull { prefix ->
+        val prefixCandidates = prefixes.map { prefix ->
             val system32 = File(prefix, "drive_c/windows/system32")
             val hostDll = listOf("wowbox64.dll", "libwow64fex.dll")
                 .map { File(system32, it) }
                 .firstOrNull { it.isFile }
-            val terminal = findTerminal(prefix)
-            if (hostDll != null && terminal != null) Triple(prefix, hostDll, terminal) else null
+            Triple(prefix, hostDll, findTerminal(prefix))
         }
+        val selected = prefixCandidates.firstOrNull { it.second != null && it.third != null }
+            ?: prefixCandidates.firstOrNull { it.second != null }
+            ?: prefixCandidates.firstOrNull { it.third != null }
+            ?: prefixCandidates.firstOrNull()
 
-        val selectedPrefix = installedTerminal?.first ?: prefixes.firstOrNull()
-        val hostDll = installedTerminal?.second
-        val terminal = installedTerminal?.third
+        val selectedPrefix = selected?.first
+        val hostDll = selected?.second
+        val terminal = selected?.third
 
         val missing = buildList {
             if (version == null) add("Winlator Mali ImageFS version marker")
