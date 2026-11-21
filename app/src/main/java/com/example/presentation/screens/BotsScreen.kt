@@ -482,10 +482,67 @@ fun BotDetailScreen(
     onEditCode: () -> Unit
 ) {
     var selectedTab by remember(bot.id) { mutableStateOf(0) }
+    var showRunDialog by remember(bot.id) { mutableStateOf(false) }
+    val bridgeStatus by Mt5LocalBridgeServer.status.collectAsState()
+    val context = LocalContext.current
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.openOutputStream(uri)?.use { output ->
+                    output.write(bot.code.toByteArray(Charsets.UTF_8))
+                } ?: error("Unable to create the bot source file.")
+            }.onSuccess {
+                Toast.makeText(context, "${bot.name} exported", Toast.LENGTH_LONG).show()
+            }.onFailure {
+                Toast.makeText(context, it.message ?: "Export failed", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
     val versions by viewModel.repository.getBotVersions(bot.id).collectAsState(initial = emptyList())
     val sdf = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US) }
 
     BackHandler(onBack = onBack)
+
+    if (showRunDialog) {
+        val isLibrary = bot.type == BotType.LIBRARY
+        AlertDialog(
+            onDismissRequest = { showRunDialog = false },
+            title = { Text("Prepare ${bot.name} for MT5") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Bridge: $bridgeStatus", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        when {
+                            isLibrary -> "MQL5 libraries cannot run by themselves. An EA, indicator or script must load or call this library."
+                            bot.code.isBlank() -> "This bot has no source code to export."
+                            bridgeStatus == "MT5 Expert Advisor authenticated" -> "The bridge is connected. Automatic deployment, chart attachment and bot start/stop are not available yet."
+                            else -> "The MT5 terminal is not connected. Export the source and compile it in MetaEditor after MT5 is installed."
+                        },
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        "Exporting does not start the bot or place trades.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val extension = if (isLibrary) "mqh" else "mq5"
+                        val safeName = bot.name.replace(Regex("[^A-Za-z0-9_-]"), "_").take(48).ifBlank { "TradePulseBot" }
+                        exportLauncher.launch("$safeName.$extension")
+                        showRunDialog = false
+                    },
+                    enabled = bot.code.isNotBlank()
+                ) { Text("Export source") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRunDialog = false }) { Text("Close") }
+            }
+        )
+    }
 
     Column(
         modifier = Modifier
@@ -522,6 +579,9 @@ fun BotDetailScreen(
                 }
 
                 Row {
+                    IconButton(onClick = { showRunDialog = true }) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = "Prepare for MT5")
+                    }
                     IconButton(onClick = onEditCode) {
                         Icon(Icons.Default.Edit, contentDescription = "Edit Code")
                     }
