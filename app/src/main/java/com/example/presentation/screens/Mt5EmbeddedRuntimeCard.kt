@@ -54,6 +54,7 @@ fun Mt5EmbeddedRuntimeCard() {
     var requestedTimeframe by remember { mutableStateOf("M5") }
     var installed by remember { mutableStateOf(Mt5RuntimeManager.isInstalled(context)) }
     var installerStaged by remember { mutableStateOf(Mt5InstallerManager.isInstallerStaged(context)) }
+    val winlatorInspection = remember(installed) { Mt5RuntimeManager.winlatorMaliInspection(context) }
     var busy by remember { mutableStateOf(false) }
     var status by remember {
         mutableStateOf(
@@ -147,6 +148,11 @@ fun Mt5EmbeddedRuntimeCard() {
             }
 
             Text(
+                "Winlator Mali ImageFS: " + if (winlatorInspection.runtimeFilesReady) "runtime files detected" else "not ready (${winlatorInspection.missingComponents.size} components missing)",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
                 "This experimental loader stores files inside TradePulse. It is not yet compatible with Winlator Mali's real imagefs and ARM64EC Wine packages. The device-specific Wine/X server integration is still being developed.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -192,10 +198,10 @@ fun Mt5EmbeddedRuntimeCard() {
                         ContextCompat.startForegroundService(context, intent)
                         status = "MT5 runtime start requested. Check the runtime log if startup fails."
                     },
-                    enabled = installed && !busy,
+                    enabled = false,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text("Start MT5")
+                    Text("MT5 launch pending")
                 }
             }
 

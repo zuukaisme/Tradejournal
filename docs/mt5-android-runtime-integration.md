@@ -51,3 +51,10 @@ These are upstream build inputs, not yet installed by TradePulse. The app should
 - The upstream README supports Exynos/Mali as a device category, but does not establish that the exact Galaxy A12 model can run MT5 acceptably.
 - MT5 is a trading terminal, not a documented generic Android SDK. Bot integration must be implemented against the running terminal's supported interfaces (for example, an MQL5 EA/bridge inside the terminal) and verified with a demo account first.
 - The current TradePulse debug APK build only validates that the prototype code compiles. It does not validate a Wine runtime, MT5 startup, broker connectivity, or live order execution.
+
+
+## TradePulse runtime-layout validation
+
+TradePulse now has a read-only layout inspector for the Winlator Mali imagefs. It checks for the imagefs version marker, ARM64 Box64, Proton 10 ARM64EC, the Wine prefix, a WOWBox64/FEX host DLL, and the installed MT5 terminal executable. Unit tests cover missing components and both supported host-DLL layouts.
+
+This is a filesystem preflight only. It does not extract the upstream archives, configure the Wine prefix, launch Proton, create the X server, or prove that MT5 works on a device. The MT5 start control remains unavailable until the Android X server/Surface/input host and the ARM64EC process launcher are integrated. The old generic ZIP bundle must not be mistaken for a Winlator Mali installation.

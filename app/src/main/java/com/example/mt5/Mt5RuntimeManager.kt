@@ -12,6 +12,9 @@ object Mt5RuntimeManager {
     private const val MAX_UNPACKED_BYTES = 6L * 1024L * 1024L * 1024L
 
     fun runtimeDirectory(context: Context): File = File(context.filesDir, "mt5-runtime")
+
+    fun winlatorMaliInspection(context: Context): WinlatorMaliRuntimeInspection =
+        WinlatorMaliRuntimeLayout.inspect(File(context.filesDir, "imagefs"))
     fun logFile(context: Context): File = File(context.filesDir, "mt5-runtime.log")
 
     fun isInstalled(context: Context): Boolean =
