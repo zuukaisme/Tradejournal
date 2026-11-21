@@ -163,14 +163,14 @@ fun Mt5EmbeddedRuntimeCard() {
             OutlinedButton(
                 onClick = {
                     busy = true
-                    status = "Importing Winlator Mali ImageFS from the installed app. This may take several minutes…"
+                    status = "Installing the bundled Winlator Mali ImageFS and Proton runtime. This may take several minutes…"
                     scope.launch {
                         val result = withContext(Dispatchers.IO) {
                             WinlatorImageFsImporter.importBundledImageFs(context)
                         }
                         result.onSuccess { imported ->
                             runtimeRevision++
-                            status = "Winlator Mali ImageFS imported: ${imported.filesWritten} archive entries, ${imported.bytesWritten / (1024L * 1024L)} MiB expanded. Proton/Wine, prefix and MT5 still need to be supplied."
+                            status = "Bundled Winlator Mali ImageFS and Proton runtime imported: ${imported.filesWritten} archive entries, ${imported.bytesWritten / (1024L * 1024L)} MiB expanded. A Wine prefix and MT5 installation are still required."
                         }.onFailure {
                             status = it.message ?: "Winlator Mali ImageFS import failed."
                         }
@@ -183,8 +183,8 @@ fun Mt5EmbeddedRuntimeCard() {
                 Text("Import Winlator Mali ImageFS")
             }
             Text(
-                if (winlatorAssetAvailable) "Uses the imagefs.tzst asset already bundled in the installed Winlator Mali app; no runtime download is started."
-                else "No bundled imagefs.tzst asset was found. Install the compatible Winlator Mali build with its ImageFS asset included.",
+                if (winlatorAssetAvailable) "Uses the ImageFS and Proton archives bundled inside this TradePulse APK. No Winlator installation is required."
+                else "The bundled runtime archives are missing from this build. Rebuild TradePulse with the runtime bundle workflow.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
