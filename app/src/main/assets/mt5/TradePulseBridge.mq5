@@ -6,6 +6,7 @@
 input string BridgeHost = "127.0.0.1";
 input uint BridgePort = 8765;
 input string BridgeToken = "";
+input bool AllowLiveTrading = false;
 input uint ReconnectSeconds = 3;
 
 CTrade Trade;
@@ -169,6 +170,12 @@ void HandleCommand(const string line)
 
    if((parts[0] == "BUY" || parts[0] == "SELL") && count >= 3)
    {
+      if(!AllowLiveTrading)
+      {
+         SendLine("ERROR|TRADING_DISABLED|Enable AllowLiveTrading in the EA inputs after demo testing.");
+         return;
+      }
+
       string symbol = parts[1];
       double volume = StringToDouble(parts[2]);
       bool success = false;
@@ -190,6 +197,12 @@ void HandleCommand(const string line)
 
    if(parts[0] == "CLOSE" && count >= 2)
    {
+      if(!AllowLiveTrading)
+      {
+         SendLine("ERROR|TRADING_DISABLED|Enable AllowLiveTrading in the EA inputs after demo testing.");
+         return;
+      }
+
       ulong ticket = (ulong)StringToInteger(parts[1]);
       bool success = Trade.PositionClose(ticket);
       SendLine("CLOSE_RESULT|" + parts[1] + "|" +
@@ -200,6 +213,12 @@ void HandleCommand(const string line)
 
    if(parts[0] == "CLOSE_ALL")
    {
+      if(!AllowLiveTrading)
+      {
+         SendLine("ERROR|TRADING_DISABLED|Enable AllowLiveTrading in the EA inputs after demo testing.");
+         return;
+      }
+
       int closed = 0;
       int failed = 0;
       for(int index = PositionsTotal() - 1; index >= 0; index--)
