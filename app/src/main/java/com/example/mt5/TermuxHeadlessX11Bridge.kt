@@ -49,6 +49,16 @@ object TermuxHeadlessX11Bridge {
         val displayNumber = "0".toByteArray(Charsets.US_ASCII)
         val file = File(context.filesDir, "mt5-x11.Xauthority")
 
+        writeAuthorizationFile(file, cookie)
+
+        val cookieHex = cookie.joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        return TermuxX11Authorization(file, cookieHex)
+    }
+
+    internal fun writeAuthorizationFile(file: File, cookie: ByteArray) {
+        require(cookie.size == 16) { "MIT-MAGIC-COOKIE-1 requires a 16-byte cookie." }
+        val authName = "MIT-MAGIC-COOKIE-1".toByteArray(Charsets.US_ASCII)
+        val displayNumber = "0".toByteArray(Charsets.US_ASCII)
         DataOutputStream(FileOutputStream(file)).use { output ->
             output.writeShort(0)
             output.writeShort(4)
@@ -60,9 +70,6 @@ object TermuxHeadlessX11Bridge {
             output.writeShort(cookie.size)
             output.write(cookie)
         }
-
-        val cookieHex = cookie.joinToString("") { "%02x".format(it.toInt() and 0xff) }
-        return TermuxX11Authorization(file, cookieHex)
     }
 
     fun start(context: Context, cookieHex: String) {
