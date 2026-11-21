@@ -79,11 +79,25 @@ object TermuxHeadlessX11Bridge {
         runCatching { runTermuxCommand(context, command) }
     }
 
-    fun isDisplayReady(timeoutMs: Int = 300): Boolean = runCatching {
+    fun isDisplayReady(cookieHex: String, timeoutMs: Int = 1000): Boolean = runCatching {
+        require(cookieHex.matches(Regex("[0-9a-f]{32}")))
+        val authName = "MIT-MAGIC-COOKIE-1".toByteArray(Charsets.US_ASCII)
+        val cookie = cookieHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
         Socket().use { socket ->
             socket.connect(InetSocketAddress("127.0.0.1", 6000), timeoutMs)
+            socket.soTimeout = timeoutMs
+            val packet = byteArrayOf(
+                'l'.code.toByte(), 0,
+                11, 0,
+                0, 0,
+                authName.size.toByte(), 0,
+                cookie.size.toByte(), 0,
+                0, 0
+            ) + authName + byteArrayOf(0, 0) + cookie
+            socket.getOutputStream().write(packet)
+            socket.getOutputStream().flush()
+            socket.getInputStream().read() == 1
         }
-        true
     }.getOrDefault(false)
 
     private fun runTermuxCommand(context: Context, command: String) {
