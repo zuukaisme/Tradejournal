@@ -35,6 +35,7 @@ import androidx.core.content.ContextCompat
 import com.example.mt5.Mt5LocalBridgeServer
 import com.example.mt5.Mt5InstallerManager
 import com.example.mt5.Mt5RuntimeManager
+import com.example.mt5.ProotRuntimeLayout
 import com.example.mt5.Mt5RuntimeService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -55,11 +56,12 @@ fun Mt5EmbeddedRuntimeCard() {
     var installed by remember { mutableStateOf(Mt5RuntimeManager.isInstalled(context)) }
     var installerStaged by remember { mutableStateOf(Mt5InstallerManager.isInstallerStaged(context)) }
     val winlatorInspection = remember(installed) { Mt5RuntimeManager.winlatorMaliInspection(context) }
+    val prootInspection = remember(installed) { ProotRuntimeLayout.inspect(context) }
     var busy by remember { mutableStateOf(false) }
     var status by remember {
         mutableStateOf(
-            if (installed) "Runtime bundle installed. MT5 terminal files are ready to launch."
-            else "Runtime not installed. Import a compatible Wine + Box64 bundle to continue."
+            if (installed) "Generic prototype bundle detected. It is not yet a runnable MT5 desktop runtime."
+            else "No runnable MT5 desktop runtime is installed."
         )
     }
 
@@ -118,7 +120,7 @@ fun Mt5EmbeddedRuntimeCard() {
                 }
                 installed = result.isSuccess
                 status = result.fold(
-                    { "Runtime bundle installed and validated." },
+                    { "Generic prototype bundle imported. It does not include the required PRoot/X11 desktop integration." },
                     { it.message ?: "Runtime installation failed." }
                 )
                 busy = false
@@ -150,6 +152,23 @@ fun Mt5EmbeddedRuntimeCard() {
             Text(
                 "Winlator Mali ImageFS: " + if (winlatorInspection.runtimeFilesReady) "runtime files detected" else "not ready (${winlatorInspection.missingComponents.size} components missing)",
                 style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                "Gemini-style PRoot runtime: " + if (prootInspection.runtimeFilesReady) "files detected" else "${prootInspection.missingComponents.size} required components missing",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (prootInspection.missingComponents.isNotEmpty()) {
+                Text(
+                    "Missing: ${prootInspection.missingComponents.joinToString()}.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Text(
+                "The Gemini repository provides a useful PRoot/Box64/Wine setup design, but its X11 Surface bridge is not complete. TradePulse will not start Wine or report MT5 running until native display rendering and input are connected.",
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(

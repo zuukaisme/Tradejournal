@@ -39,6 +39,14 @@ class Mt5RuntimeService : Service() {
 
     private fun startRuntime() {
         if (terminalPid?.let(nativeLauncher::isAlive) == true) return
+        val inspection = ProotRuntimeLayout.inspect(this)
+        if (!inspection.canLaunchEmbeddedTerminal) {
+            val details = (inspection.missingComponents + inspection.launchBlockers).joinToString("\n")
+            Mt5RuntimeManager.logFile(this).writeText("Gemini-style PRoot runtime preflight failed.\n$details")
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
+        }
         if (!starting.compareAndSet(false, true)) return
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification("Preparing embedded MT5 runtime"))

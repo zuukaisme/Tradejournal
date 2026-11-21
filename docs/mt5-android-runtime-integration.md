@@ -58,3 +58,14 @@ These are upstream build inputs, not yet installed by TradePulse. The app should
 TradePulse now has a read-only layout inspector for the Winlator Mali imagefs. It checks for the imagefs version marker, ARM64 Box64, Proton 10 ARM64EC, the Wine prefix, a WOWBox64/FEX host DLL, and the installed MT5 terminal executable. Unit tests cover missing components and both supported host-DLL layouts.
 
 This is a filesystem preflight only. It does not extract the upstream archives, configure the Wine prefix, launch Proton, create the X server, or prove that MT5 works on a device. The MT5 start control remains unavailable until the Android X server/Surface/input host and the ARM64EC process launcher are integrated. The old generic ZIP bundle must not be mistaken for a Winlator Mali installation.
+
+
+## Gemini Mt5android architecture review
+
+The companion repository `zuukaisme/Mt5android` was reviewed as an implementation reference. Its PRoot layout uses an app-private Linux rootfs, a native ARM64 `libproot.so`, Box64 and Wine in the guest rootfs, an app-private Wine prefix, and a native `libXlorie.so` X11 server. Its setup and launch scripts are useful reference material.
+
+The repository does not contain the referenced `libproot.so` or `libXlorie.so` binaries. Its X11 bridge stores an Android Surface and sends input packets to a local socket, but it does not attach the Surface to the native renderer or implement the server-side socket protocol. The SurfaceView therefore does not currently prove that an X11 desktop can be rendered in-app. Its latest workflow failed during Android SDK setup, before Gradle compilation.
+
+TradePulse now has a PRoot runtime filesystem preflight for that layout. It checks native PRoot/Xlorie libraries, guest Box64/Wine, the Wine prefix and a valid MT5 executable header. It deliberately retains launch blockers for native Surface presentation and the X11 input socket until those paths are implemented and verified. The older generic ZIP runtime is not considered a runnable desktop runtime.
+
+No runtime binaries or MT5 installer are copied from the companion repository. Runtime assets must be sourced and redistributed only after their licenses and provenance are verified.
