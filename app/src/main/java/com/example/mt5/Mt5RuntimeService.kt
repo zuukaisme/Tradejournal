@@ -185,9 +185,7 @@ class Mt5RuntimeService : Service() {
             Thread.sleep(100)
         }
 
-        nativeLauncher.stop(processId)
-        Thread.sleep(500)
-        if (nativeLauncher.isAlive(processId)) nativeLauncher.forceStop(processId)
+        stopAndReap(processId)
         displayPid = null
         error("Xvfb did not create a working :0 display socket within the startup timeout.")
     }
@@ -226,9 +224,24 @@ class Mt5RuntimeService : Service() {
         stopDisplay()
     }
 
+    @Synchronized
     private fun stopDisplay() {
-        displayPid?.let { runCatching { nativeLauncher.stop(it) } }
+        displayPid?.let(::stopAndReap)
         displayPid = null
+    }
+
+    private fun stopAndReap(pid: Int) {
+        runCatching { nativeLauncher.stop(pid) }
+        val deadline = System.currentTimeMillis() + 1500
+        while (runCatching { nativeLauncher.isAlive(pid) }.getOrDefault(false) &&
+            System.currentTimeMillis() < deadline
+        ) {
+            Thread.sleep(50)
+        }
+        if (runCatching { nativeLauncher.isAlive(pid) }.getOrDefault(false)) {
+            runCatching { nativeLauncher.forceStop(pid) }
+        }
+        runCatching { nativeLauncher.waitFor(pid) }
     }
 
     override fun onDestroy() {
