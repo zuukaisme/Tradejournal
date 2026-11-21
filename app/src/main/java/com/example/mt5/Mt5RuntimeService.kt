@@ -43,6 +43,12 @@ class Mt5RuntimeService : Service() {
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification("Preparing embedded MT5 runtime"))
         stopping.set(false)
+        runCatching { Mt5LocalBridgeServer.start(applicationContext) }.onFailure { error ->
+            Mt5RuntimeManager.logFile(this).appendText("\\nBridge server failed: ${error.message}")
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
+        }
 
         Thread({
             try {
@@ -143,6 +149,7 @@ class Mt5RuntimeService : Service() {
 
             val exitCode = terminalPid?.let(nativeLauncher::waitFor) ?: -1
             terminalPid = null
+            Mt5LocalBridgeServer.stop()
             stopDisplay()
 
             if (!stopping.get()) {
@@ -163,6 +170,7 @@ class Mt5RuntimeService : Service() {
 
     private fun stopRuntime() {
         stopping.set(true)
+        Mt5LocalBridgeServer.stop()
         stopProcesses()
         stopForeground(STOP_FOREGROUND_REMOVE)
     }
