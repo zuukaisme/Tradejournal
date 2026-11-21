@@ -48,6 +48,7 @@ fun Mt5EmbeddedRuntimeCard() {
     val account by Mt5LocalBridgeServer.account.collectAsState()
     val positions by Mt5LocalBridgeServer.positions.collectAsState()
     val bars by Mt5LocalBridgeServer.bars.collectAsState()
+    val lastBridgeResult by Mt5LocalBridgeServer.lastResult.collectAsState()
     var requestedSymbol by remember { mutableStateOf("EURUSD") }
     var requestedTimeframe by remember { mutableStateOf("M5") }
     var installed by remember { mutableStateOf(Mt5RuntimeManager.isInstalled(context)) }
@@ -195,6 +196,9 @@ fun Mt5EmbeddedRuntimeCard() {
 
             Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
             Text("Local bridge: $bridgeStatus", style = MaterialTheme.typography.bodySmall)
+            lastBridgeResult?.let { result ->
+                Text("Latest MT5 response: $result", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+            }
             if (bridgeToken.isNotBlank()) {
                 Text("Bridge token: $bridgeToken", style = MaterialTheme.typography.labelSmall)
                 OutlinedButton(
