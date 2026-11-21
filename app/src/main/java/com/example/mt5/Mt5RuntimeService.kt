@@ -69,7 +69,9 @@ class Mt5RuntimeService : Service() {
                     "Selected Wine prefix: ${inspection.winePrefix?.absolutePath ?: "not found"}\n" +
                     "MT5 terminal: ${inspection.terminal?.absolutePath ?: "not found"}\n" +
                     "Wine architecture validated: ${launchConfiguration.blockers.none { it.contains("ARM64 ELF") }}\n" +
-                    "Display socket present: ${File(filesDir, "imagefs/usr/tmp/.X11-unix/X0").exists()}\n" +
+                    "Termux available: ${TermuxHeadlessX11Bridge.isInstalled(this)}\n" +
+                    "Termux command permission: ${TermuxHeadlessX11Bridge.hasRunCommandPermission(this)}\n" +
+                    "Headless display endpoint: authenticated 127.0.0.1:0\n" +
                     "Terminal launch enabled: false\n" +
                     "Launch arguments: ${launchConfiguration.arguments.joinToString(" ")}\n" +
                     "Launch environment keys: ${launchConfiguration.environment.keys.sorted().joinToString(", ")}\n" +
