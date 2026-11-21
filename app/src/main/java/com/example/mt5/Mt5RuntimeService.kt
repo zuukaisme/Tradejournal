@@ -46,8 +46,8 @@ class Mt5RuntimeService : Service() {
             val details = buildList {
                 addAll(inspection.missingComponents)
                 addAll(inspection.launchBlockers)
-                add("The legacy generic Xvfb launcher is not compatible with the Winlator Mali ImageFS runtime.")
-                add("MT5 launch remains disabled until the Winlator process environment and embedded X11 Surface/input bridge are connected.")
+                add("The existing generic Xvfb bundle is not compatible with the Winlator Mali ImageFS and Proton ARM64EC layout.")
+                add("MT5 launch remains disabled until a validated headless Box64/Wine launcher, virtual display, and terminal lifecycle are implemented.")
             }.distinct()
             Mt5RuntimeManager.logFile(this).writeText(
                 "Embedded MT5 launch preflight\n" +
