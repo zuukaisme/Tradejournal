@@ -67,15 +67,24 @@ object TermuxHeadlessX11Bridge {
 
     fun start(context: Context, cookieHex: String) {
         require(cookieHex.matches(Regex("[0-9a-f]{32}"))) { "The X11 authorization cookie is invalid." }
-        val command = "if [ -f \"\$HOME/.tradepulse-xvfb.pid\" ]; then kill \"\$(cat \"\$HOME/.tradepulse-xvfb.pid\")\" 2>/dev/null || true; fi; " +
-            "xauth -f \"\$HOME/.tradepulse.Xauthority\" add 127.0.0.1:0 MIT-MAGIC-COOKIE-1 $cookieHex && " +
-            "echo \$\$ > \"\$HOME/.tradepulse-xvfb.pid\" && " +
-            "exec \"\$PREFIX/bin/Xvfb\" :0 -screen 0 1280x720x24 -listen tcp -auth \"\$HOME/.tradepulse.Xauthority\" -noreset"
+        val cleanup = "if [ -f \"\\$HOME/.tradepulse-xvfb.pid\" ]; then " +
+            "pid=\"\\$(cat \"\\$HOME/.tradepulse-xvfb.pid\")\"; " +
+            "case \"\\$pid\" in ''|*[!0-9]*) ;; *) " +
+            "if [ -r \"/proc/\\$pid/cmdline\" ] && grep -aq 'Xvfb' \"/proc/\\$pid/cmdline\"; then kill \"\\$pid\" 2>/dev/null || true; fi ;; esac; " +
+            "rm -f \"\\$HOME/.tradepulse-xvfb.pid\"; fi; "
+        val command = cleanup +
+            "xauth -f \"\\$HOME/.tradepulse.Xauthority\" add 127.0.0.1:0 MIT-MAGIC-COOKIE-1 $cookieHex && " +
+            "echo \\$\\$ > \"\\$HOME/.tradepulse-xvfb.pid\" && " +
+            "exec \"\\$PREFIX/bin/Xvfb\" :0 -screen 0 1280x720x24 -listen tcp -auth \"\\$HOME/.tradepulse.Xauthority\" -noreset"
         runTermuxCommand(context, command)
     }
 
     fun stop(context: Context) {
-        val command = "if [ -f \"\$HOME/.tradepulse-xvfb.pid\" ]; then kill \"\$(cat \"\$HOME/.tradepulse-xvfb.pid\")\" 2>/dev/null || true; rm -f \"\$HOME/.tradepulse-xvfb.pid\"; fi"
+        val command = "if [ -f \"\\$HOME/.tradepulse-xvfb.pid\" ]; then " +
+            "pid=\"\\$(cat \"\\$HOME/.tradepulse-xvfb.pid\")\"; " +
+            "case \"\\$pid\" in ''|*[!0-9]*) ;; *) " +
+            "if [ -r \"/proc/\\$pid/cmdline\" ] && grep -aq 'Xvfb' \"/proc/\\$pid/cmdline\"; then kill \"\\$pid\" 2>/dev/null || true; fi ;; esac; " +
+            "rm -f \"\\$HOME/.tradepulse-xvfb.pid\"; fi"
         runCatching { runTermuxCommand(context, command) }
     }
 
