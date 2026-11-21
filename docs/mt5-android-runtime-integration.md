@@ -69,3 +69,14 @@ The repository does not contain the referenced `libproot.so` or `libXlorie.so` b
 TradePulse now has a PRoot runtime filesystem preflight for that layout. It checks native PRoot/Xlorie libraries, guest Box64/Wine, the Wine prefix and a valid MT5 executable header. It deliberately retains launch blockers for native Surface presentation and the X11 input socket until those paths are implemented and verified. The older generic ZIP runtime is not considered a runnable desktop runtime.
 
 No runtime binaries or MT5 installer are copied from the companion repository. Runtime assets must be sourced and redistributed only after their licenses and provenance are verified.
+
+
+## Embedded X11 implementation decision
+
+Termux:X11 is the strongest Android-13-compatible upstream starting point identified so far: its published project describes a full X server built with the Android NDK and lists Android 7+ as its minimum OS. It is not a drop-in Android library. The upstream project includes an Android application, a companion Termux package, native X server sources, JNI entry points, submodules and a GPL-3.0 license.
+
+TradePulse must integrate the native server and the Android host lifecycle directly rather than launching the standalone Termux:X11 APK or assuming a SurfaceView is sufficient. Before source is vendored, pin an exact upstream commit, initialize and record every submodule revision, preserve all notices, and verify the complete dependency license set. The native engine must expose a documented host contract for startup, Surface attach/detach, frame presentation, pointer/keyboard input, resize, focus, and shutdown. The existing Gemini socket bridge is not reused because its server-side protocol and renderer attachment are absent.
+
+The current PR does not yet contain the native X server. This is intentional: adding an unbuilt native library or a nonfunctional Surface wrapper would create a false-positive runtime. The PRoot preflight now rejects placeholder files and requires ELF64 little-endian AArch64 (EM_AARCH64=183) for libproot.so, libXlorie.so, and Box64. Unit tests cover valid ARM64 ELF headers, invalid native payloads, Windows executable headers, and the still-blocked display lifecycle.
+
+A complete embedded renderer remains the next implementation milestone. Until native build, JNI host integration, lifecycle tests, and on-device presentation/input tests pass, the terminal launch guard stays closed.

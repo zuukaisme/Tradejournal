@@ -29,10 +29,10 @@ object ProotRuntimeLayout {
     )
 
     internal fun inspect(rootfs: File, prefix: File, nativeLibraryDir: File): ProotRuntimeInspection {
-        val proot = File(nativeLibraryDir, "libproot.so").takeIf { it.isFile }
-        val x11Server = File(nativeLibraryDir, "libXlorie.so").takeIf { it.isFile }
+        val proot = File(nativeLibraryDir, "libproot.so").takeIf { it.isFile && isArm64Elf(it) }
+        val x11Server = File(nativeLibraryDir, "libXlorie.so").takeIf { it.isFile && isArm64Elf(it) }
         val box64 = listOf(File(rootfs, "usr/bin/box64"), File(rootfs, "usr/local/bin/box64"))
-            .firstOrNull { it.isFile }
+            .firstOrNull { it.isFile && isArm64Elf(it) }
         val wine = listOf(
             File(rootfs, "opt/wine/bin/wine"),
             File(rootfs, "usr/bin/wine"),
@@ -44,9 +44,9 @@ object ProotRuntimeLayout {
         ).firstOrNull { it.isFile && hasWindowsHeader(it) }
 
         val missing = buildList {
-            if (proot == null) add("ARM64 PRoot native executable (libproot.so)")
-            if (x11Server == null) add("Embedded X11 server (libXlorie.so)")
-            if (box64 == null) add("Box64 inside the Linux rootfs")
+            if (proot == null) add("Valid ARM64 PRoot native library (libproot.so)")
+            if (x11Server == null) add("Valid ARM64 embedded X11 server (libXlorie.so)")
+            if (box64 == null) add("Valid ARM64 Box64 executable inside the Linux rootfs")
             if (wine == null) add("Wine inside the Linux rootfs")
             if (!File(prefix, "system.reg").isFile) add("Initialized Wine prefix")
             if (terminal == null) add("MetaTrader 5 terminal64.exe")
@@ -66,6 +66,25 @@ object ProotRuntimeLayout {
             )
         )
     }
+
+    private fun isArm64Elf(file: File): Boolean = runCatching {
+        FileInputStream(file).use { input ->
+            val header = ByteArray(20)
+            var offset = 0
+            while (offset < header.size) {
+                val count = input.read(header, offset, header.size - offset)
+                if (count < 0) return@use false
+                offset += count
+            }
+            header[0] == 0x7f.toByte() &&
+                header[1] == 'E'.code.toByte() &&
+                header[2] == 'L'.code.toByte() &&
+                header[3] == 'F'.code.toByte() &&
+                header[4] == 2.toByte() &&
+                header[5] == 1.toByte() &&
+                ((header[18].toInt() and 0xff) or ((header[19].toInt() and 0xff) shl 8)) == 183
+        }
+    }.getOrDefault(false)
 
     private fun hasWindowsHeader(file: File): Boolean = runCatching {
         FileInputStream(file).use { input ->
