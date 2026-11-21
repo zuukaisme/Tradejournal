@@ -108,6 +108,7 @@ class Mt5RuntimeService : Service() {
             )
 
             Thread.sleep(1500)
+            check(!stopping.get()) { "MT5 runtime startup was cancelled." }
             check(displayPid?.let(nativeLauncher::isAlive) == true) {
                 "The virtual display stopped during startup. Check the MT5 runtime log."
             }
