@@ -14,7 +14,7 @@ object Mt5RuntimeManager {
     fun runtimeDirectory(context: Context): File = File(context.filesDir, "mt5-runtime")
 
     fun winlatorMaliInspection(context: Context): WinlatorMaliRuntimeInspection =
-        WinlatorMaliRuntimeLayout.inspect(File(context.filesDir, "imagefs"))
+        WinlatorMaliRuntimeLayout.inspect(File(context.filesDir, "imagefs"), File(context.filesDir, "contents"))
     fun logFile(context: Context): File = File(context.filesDir, "mt5-runtime.log")
 
     fun isInstalled(context: Context): Boolean =

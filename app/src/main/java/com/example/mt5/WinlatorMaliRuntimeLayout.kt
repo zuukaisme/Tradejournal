@@ -23,18 +23,14 @@ data class WinlatorMaliRuntimeInspection(
 object WinlatorMaliRuntimeLayout {
     private const val PROTON_RUNTIME = "proton-10-arm64ec"
 
-    fun inspect(imageFs: File): WinlatorMaliRuntimeInspection {
+    fun inspect(imageFs: File, contentsRoot: File? = null): WinlatorMaliRuntimeInspection {
         val versionFile = File(imageFs, ".winlator/.img_version")
         val version = versionFile.takeIf { it.isFile }?.readText()?.trim()?.takeIf { it.isNotEmpty() }
         val box64 = listOf(
             File(imageFs, "usr/bin/box64"),
             File(imageFs, "usr/local/bin/box64")
         ).firstOrNull { it.isFile && isElfMachine(it, 183) }
-        val proton = File(imageFs, "opt/$PROTON_RUNTIME")
-        val wine = listOf(
-            File(proton, "bin/wine"),
-            File(proton, "bin/wine64")
-        ).firstOrNull { it.isFile }
+        val wine = findWineExecutable(imageFs, contentsRoot)
 
         val prefixes = findWinePrefixes(imageFs)
         val prefixCandidates = prefixes.map { prefix ->
@@ -56,7 +52,7 @@ object WinlatorMaliRuntimeLayout {
         val missing = buildList {
             if (version == null) add("Winlator Mali ImageFS version marker")
             if (box64 == null) add("Valid ARM64 Box64 ELF at usr/bin/box64")
-            if (wine == null) add("Proton ARM64EC Wine executable at opt/$PROTON_RUNTIME/bin/wine")
+            if (wine == null) add("Proton ARM64EC Wine executable in imagefs/opt or contents/proton")
             if (selectedPrefix == null) add("Wine prefix in home/xuser/.wine or home/xuser-<id>/.wine")
             if (hostDll == null) add("WOWBox64/FEX host DLL in the selected Wine prefix system32 directory")
             if (terminal == null) add("Valid MetaTrader 5 terminal64.exe inside a Wine prefix")
@@ -74,6 +70,33 @@ object WinlatorMaliRuntimeLayout {
                 "MT5 terminal startup, broker login, chart initialization, bridge EA deployment, and terminal process supervision have not yet been implemented and validated."
             )
         )
+    }
+
+    private fun findWineExecutable(imageFs: File, contentsRoot: File?): File? {
+        val runtimeDirectories = mutableListOf<File>()
+        val opt = File(imageFs, "opt")
+        opt.listFiles()?.filterTo(runtimeDirectories) {
+            it.isDirectory && (it.name.startsWith("proton-") || it.name.startsWith("wine-"))
+        }
+        listOf("proton", "wine").forEach { category ->
+            File(contentsRoot, category).listFiles()
+                ?.filterTo(runtimeDirectories) { it.isDirectory }
+        }
+
+        val ordered = runtimeDirectories.distinctBy { it.absolutePath }.sortedBy { directory ->
+            when {
+                directory.name.contains(PROTON_RUNTIME, ignoreCase = true) -> 0
+                directory.name.contains("proton", ignoreCase = true) &&
+                    directory.name.contains("arm64ec", ignoreCase = true) -> 1
+                directory.name.contains("proton", ignoreCase = true) -> 2
+                else -> 3
+            }
+        }
+        return ordered.asSequence()
+            .flatMap { directory ->
+                sequenceOf(File(directory, "bin/wine"), File(directory, "bin/wine64"))
+            }
+            .firstOrNull { it.isFile }
     }
 
     private fun findWinePrefixes(imageFs: File): List<File> {
