@@ -16,6 +16,7 @@ import java.net.Socket
 import java.nio.charset.StandardCharsets
 import java.security.SecureRandom
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.Locale
 
 object Mt5LocalBridgeServer {
     const val PORT = 8765
@@ -25,7 +26,10 @@ object Mt5LocalBridgeServer {
     private val running = AtomicBoolean(false)
     private val lock = Any()
     private val mutableStatus = MutableStateFlow("Stopped")
-    private val mutableEvents = MutableSharedFlow<String>(extraBufferCapacity = 256)
+    private val mutableEvents = MutableSharedFlow<String>(replay = 32, extraBufferCapacity = 256)
+    private val mutableAccount = MutableStateFlow<Mt5AccountSnapshot?>(null)
+    private val mutablePositions = MutableStateFlow<List<Mt5PositionSnapshot>>(emptyList())
+    private val pendingPositions = mutableListOf<Mt5PositionSnapshot>()
     private val mutableToken = MutableStateFlow("")
 
     private var server: ServerSocket? = null
@@ -35,6 +39,8 @@ object Mt5LocalBridgeServer {
 
     val status = mutableStatus.asStateFlow()
     val events = mutableEvents.asSharedFlow()
+    val account = mutableAccount.asStateFlow()
+    val positions = mutablePositions.asStateFlow()
     val token = mutableToken.asStateFlow()
 
     @Synchronized
@@ -82,6 +88,9 @@ object Mt5LocalBridgeServer {
         worker?.interrupt()
         worker = null
         mutableStatus.value = "Stopped"
+        mutableAccount.value = null
+        mutablePositions.value = emptyList()
+        synchronized(pendingPositions) { pendingPositions.clear() }
     }
 
     private fun acceptLoop(serverSocket: ServerSocket, expectedToken: String) {
@@ -129,7 +138,7 @@ object Mt5LocalBridgeServer {
             runCatching {
                 while (running.get() && !connection.isClosed) {
                     val line = reader.readLine() ?: break
-                    if (line.length <= 65536) mutableEvents.tryEmit(line)
+                    if (line.length <= 65536) handleEvent(line)
                 }
             }
 
@@ -149,6 +158,39 @@ object Mt5LocalBridgeServer {
         }
     }
 
+    private fun handleEvent(line: String) {
+        mutableEvents.tryEmit(line)
+        val fields = line.split('|')
+        when (fields.firstOrNull()) {
+            "ACCOUNT" -> if (fields.size >= 8) {
+                mutableAccount.value = Mt5AccountSnapshot(
+                    login = fields[1].toLongOrNull() ?: 0L,
+                    server = fields[2],
+                    currency = fields[3],
+                    balance = fields[4].toDoubleOrNull() ?: 0.0,
+                    equity = fields[5].toDoubleOrNull() ?: 0.0,
+                    margin = fields[6].toDoubleOrNull() ?: 0.0,
+                    freeMargin = fields[7].toDoubleOrNull() ?: 0.0
+                )
+            }
+            "POSITION" -> if (fields.size >= 7) {
+                val position = Mt5PositionSnapshot(
+                    ticket = fields[1].toLongOrNull() ?: 0L,
+                    symbol = fields[2],
+                    type = fields[3].toIntOrNull() ?: 0,
+                    volume = fields[4].toDoubleOrNull() ?: 0.0,
+                    openPrice = fields[5].toDoubleOrNull() ?: 0.0,
+                    profit = fields[6].toDoubleOrNull() ?: 0.0
+                )
+                synchronized(pendingPositions) { pendingPositions += position }
+            }
+            "SNAPSHOT_END" -> synchronized(pendingPositions) {
+                mutablePositions.value = pendingPositions.toList()
+                pendingPositions.clear()
+            }
+        }
+    }
+
     private fun loadOrCreateToken(context: Context): String {
         val preferences: SharedPreferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         preferences.getString(TOKEN_KEY, null)?.let { return it }
@@ -160,3 +202,22 @@ object Mt5LocalBridgeServer {
         return value
     }
 }
+
+data class Mt5AccountSnapshot(
+    val login: Long,
+    val server: String,
+    val currency: String,
+    val balance: Double,
+    val equity: Double,
+    val margin: Double,
+    val freeMargin: Double
+)
+
+data class Mt5PositionSnapshot(
+    val ticket: Long,
+    val symbol: String,
+    val type: Int,
+    val volume: Double,
+    val openPrice: Double,
+    val profit: Double
+)
