@@ -142,12 +142,12 @@ fun Mt5EmbeddedRuntimeCard() {
                 )
             }
             Text(
-                "The Gemini repository provides a useful PRoot/Box64/Wine setup design, but its X11 Surface bridge is not complete. TradePulse will not start Wine or report MT5 running until native display rendering and input are connected.",
+                "The Gemini repository provides a useful PRoot/Box64/Wine setup design. TradePulse is targeting headless MT5 execution through the local API, so Android desktop rendering and touch input are not required. The headless Wine process launcher and virtual display lifecycle still need implementation.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
-                "This experimental loader stores files inside TradePulse. It is not yet compatible with Winlator Mali's real imagefs and ARM64EC Wine packages. The device-specific Wine/X server integration is still being developed.",
+                "This experimental loader stores files inside TradePulse. It is not yet compatible with Winlator Mali's real imagefs and ARM64EC Wine packages. The device-specific Box64/Wine process environment and headless virtual display integration are still being developed.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -184,7 +184,7 @@ fun Mt5EmbeddedRuntimeCard() {
                 color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f)
             ) {
                 Text(
-                    "MT5 desktop launch is not available yet. Importing a generic ZIP here would not install the required Winlator Mali ImageFS, Proton ARM64EC, or embedded X11 display. The app will enable Run only after those components are integrated and tested.",
+                    "MT5 launch is not available yet. Importing a generic ZIP here would not install the required Winlator Mali ImageFS or Proton ARM64EC runtime. TradePulse will enable Run only after the headless launcher, virtual display, bridge EA deployment, and terminal lifecycle are integrated and tested.",
                     modifier = Modifier.padding(12.dp),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface
