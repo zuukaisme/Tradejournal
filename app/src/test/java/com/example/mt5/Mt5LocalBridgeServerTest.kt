@@ -9,7 +9,6 @@ import java.net.Socket
 import java.nio.charset.StandardCharsets
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -102,7 +101,7 @@ class Mt5LocalBridgeServerTest {
         awaitCondition { Mt5LocalBridgeServer.account.value == null }
         assertTrue(Mt5LocalBridgeServer.positions.value.isEmpty())
         assertTrue(Mt5LocalBridgeServer.bars.value.isEmpty())
-        assertFalse(Mt5LocalBridgeServer.status.value.contains("authenticated"))
+        assertEquals("Waiting for authenticated MT5 Expert Advisor", Mt5LocalBridgeServer.status.value)
     }
 
     private fun awaitCondition(condition: () -> Boolean) {
