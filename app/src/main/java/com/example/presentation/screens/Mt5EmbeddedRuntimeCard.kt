@@ -138,7 +138,7 @@ fun Mt5EmbeddedRuntimeCard() {
 
             Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
             Text(
-                "Importing a runtime does not guarantee it will work on this device. The package must be built for Android ARM64 and include an x86_64 Wine environment. Keep the foreground notification enabled while MT5 is running.",
+                "Only import runtime bundles from a source you trust: the startup script runs inside TradePulse with the app’s permissions. Importing a runtime does not guarantee it will work on this device. The package must be built for Android ARM64 and include an x86_64 Wine environment. Keep the foreground notification enabled while MT5 is running.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
