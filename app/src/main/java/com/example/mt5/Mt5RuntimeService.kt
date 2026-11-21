@@ -42,6 +42,7 @@ class Mt5RuntimeService : Service() {
 
     private fun startRuntime() {
         if (!starting.compareAndSet(false, true)) return
+        var handedOffToProbe = false
         try {
             createNotificationChannel()
             startForeground(NOTIFICATION_ID, buildNotification("Checking Winlator Mali runtime"))
@@ -80,13 +81,14 @@ class Mt5RuntimeService : Service() {
                 launchConfiguration.executable != null &&
                 launchConfiguration.blockers.all { it.startsWith("A live headless X11 server") }
             if (canProbeWine) {
+                handedOffToProbe = true
                 runWineVersionProbe()
             } else {
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
         } finally {
-            starting.set(false)
+            if (!handedOffToProbe) starting.set(false)
         }
     }
 
@@ -157,6 +159,7 @@ class Mt5RuntimeService : Service() {
             } finally {
                 probePid = null
                 stopDisplay()
+                starting.set(false)
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
