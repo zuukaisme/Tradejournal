@@ -98,7 +98,10 @@ class Mt5LocalBridgeServerTest {
             awaitCondition { Mt5LocalBridgeServer.account.value != null }
         }
 
-        awaitCondition { Mt5LocalBridgeServer.account.value == null }
+        awaitCondition {
+            Mt5LocalBridgeServer.account.value == null &&
+                Mt5LocalBridgeServer.status.value == "Waiting for authenticated MT5 Expert Advisor"
+        }
         assertTrue(Mt5LocalBridgeServer.positions.value.isEmpty())
         assertTrue(Mt5LocalBridgeServer.bars.value.isEmpty())
         assertEquals("Waiting for authenticated MT5 Expert Advisor", Mt5LocalBridgeServer.status.value)
