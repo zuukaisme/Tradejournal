@@ -28,7 +28,9 @@ object Mt5LocalBridgeServer {
     private val mutableEvents = MutableSharedFlow<String>(replay = 32, extraBufferCapacity = 256)
     private val mutableAccount = MutableStateFlow<Mt5AccountSnapshot?>(null)
     private val mutablePositions = MutableStateFlow<List<Mt5PositionSnapshot>>(emptyList())
+    private val mutableBars = MutableStateFlow<List<Mt5CandleSnapshot>>(emptyList())
     private val pendingPositions = mutableListOf<Mt5PositionSnapshot>()
+    private val pendingBars = mutableListOf<Mt5CandleSnapshot>()
     private val mutableToken = MutableStateFlow("")
 
     private var server: ServerSocket? = null
@@ -40,6 +42,7 @@ object Mt5LocalBridgeServer {
     val events = mutableEvents.asSharedFlow()
     val account = mutableAccount.asStateFlow()
     val positions = mutablePositions.asStateFlow()
+    val bars = mutableBars.asStateFlow()
     val token = mutableToken.asStateFlow()
 
     @Synchronized
@@ -57,6 +60,32 @@ object Mt5LocalBridgeServer {
             isDaemon = true
             start()
         }
+    }
+
+    fun requestBars(symbol: String, timeframe: String, count: Int = 500): Boolean {
+        require(symbol.matches(Regex("[A-Za-z0-9._-]{1,32}"))) { "Invalid MT5 symbol." }
+        require(timeframe in setOf("M1", "M2", "M3", "M4", "M5", "M6", "M10", "M12", "M15", "M20", "M30", "H1", "H2", "H3", "H4", "H6", "H8", "H12", "D1", "W1", "MN1")) { "Unsupported timeframe." }
+        require(count in 1..1000) { "Candle count must be between 1 and 1000." }
+        return sendCommand("BARS|$symbol|$timeframe|$count")
+    }
+
+    fun placeMarketOrder(side: String, symbol: String, volume: Double, liveTradingConfirmed: Boolean): Boolean {
+        require(liveTradingConfirmed) { "Explicit live-trading confirmation is required." }
+        require(side == "BUY" || side == "SELL") { "Order side must be BUY or SELL." }
+        require(symbol.matches(Regex("[A-Za-z0-9._-]{1,32}"))) { "Invalid MT5 symbol." }
+        require(volume.isFinite() && volume > 0.0) { "Volume must be greater than zero." }
+        return sendCommand("$side|$symbol|$volume")
+    }
+
+    fun closePosition(ticket: Long, liveTradingConfirmed: Boolean): Boolean {
+        require(liveTradingConfirmed) { "Explicit live-trading confirmation is required." }
+        require(ticket > 0L) { "Invalid MT5 position ticket." }
+        return sendCommand("CLOSE|$ticket")
+    }
+
+    fun closeAllPositions(liveTradingConfirmed: Boolean): Boolean {
+        require(liveTradingConfirmed) { "Explicit live-trading confirmation is required." }
+        return sendCommand("CLOSE_ALL")
     }
 
     fun sendCommand(command: String): Boolean {
@@ -89,7 +118,9 @@ object Mt5LocalBridgeServer {
         mutableStatus.value = "Stopped"
         mutableAccount.value = null
         mutablePositions.value = emptyList()
+        mutableBars.value = emptyList()
         synchronized(pendingPositions) { pendingPositions.clear() }
+        synchronized(pendingBars) { pendingBars.clear() }
     }
 
     private fun acceptLoop(serverSocket: ServerSocket, expectedToken: String) {
@@ -172,6 +203,23 @@ object Mt5LocalBridgeServer {
                     freeMargin = fields[7].toDoubleOrNull() ?: 0.0
                 )
             }
+            "BAR" -> if (fields.size >= 9) {
+                val candle = Mt5CandleSnapshot(
+                    symbol = fields[1],
+                    timeframe = fields[2],
+                    timestamp = fields[3].toLongOrNull() ?: 0L,
+                    open = fields[4].toDoubleOrNull() ?: 0.0,
+                    high = fields[5].toDoubleOrNull() ?: 0.0,
+                    low = fields[6].toDoubleOrNull() ?: 0.0,
+                    close = fields[7].toDoubleOrNull() ?: 0.0,
+                    volume = fields[8].toLongOrNull() ?: 0L
+                )
+                synchronized(pendingBars) { pendingBars += candle }
+            }
+            "BARS_END" -> synchronized(pendingBars) {
+                mutableBars.value = pendingBars.toList()
+                pendingBars.clear()
+            }
             "POSITION" -> if (fields.size >= 7) {
                 val position = Mt5PositionSnapshot(
                     ticket = fields[1].toLongOrNull() ?: 0L,
@@ -219,4 +267,16 @@ data class Mt5PositionSnapshot(
     val volume: Double,
     val openPrice: Double,
     val profit: Double
+)
+
+
+data class Mt5CandleSnapshot(
+    val symbol: String,
+    val timeframe: String,
+    val timestamp: Long,
+    val open: Double,
+    val high: Double,
+    val low: Double,
+    val close: Double,
+    val volume: Long
 )
