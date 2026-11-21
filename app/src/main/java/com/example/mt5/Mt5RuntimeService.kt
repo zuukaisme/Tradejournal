@@ -27,6 +27,9 @@ class Mt5RuntimeService : Service() {
     @Volatile
     private var probePid: Int? = null
 
+    @Volatile
+    private var termuxDisplayActive = false
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -55,7 +58,12 @@ class Mt5RuntimeService : Service() {
             val details = buildList {
                 addAll(launchConfiguration.blockers)
                 addAll(inspection.launchBlockers)
-                add("Terminal launch remains disabled until a headless X11 server is integrated and validated.")
+                if (!TermuxHeadlessX11Bridge.isInstalled(this)) {
+                    add("Install Termux and its xorg-server-xvfb package to provide the headless display.")
+                } else if (!TermuxHeadlessX11Bridge.hasRunCommandPermission(this)) {
+                    add("Grant TradePulse the Termux Run commands permission and enable allow-external-apps in Termux.")
+                }
+                add("Terminal launch remains disabled until the X11 display and Wine runtime probes pass.")
             }.distinct()
             Mt5RuntimeManager.logFile(this).writeText(
                 "Embedded MT5 launch preflight\n" +
@@ -71,7 +79,9 @@ class Mt5RuntimeService : Service() {
                     "Launch environment keys: ${launchConfiguration.environment.keys.sorted().joinToString(", ")}\n" +
                     details.joinToString("\n") { "- $it" }
             )
-            val canProbeWine = HeadlessX11RuntimeManager.isInstalled(this) &&
+            val hasTermuxControl = TermuxHeadlessX11Bridge.isInstalled(this) &&
+                TermuxHeadlessX11Bridge.hasRunCommandPermission(this)
+            val canProbeWine = (hasTermuxControl || HeadlessX11RuntimeManager.isInstalled(this)) &&
                 launchConfiguration.executable != null &&
                 launchConfiguration.blockers.all { it.startsWith("A live headless X11 server") }
             if (canProbeWine) {
@@ -91,13 +101,48 @@ class Mt5RuntimeService : Service() {
             try {
                 val imageFs = File(filesDir, "imagefs")
                 val displaySocket = File(imageFs, "usr/tmp/.X11-unix/X0")
-                startHeadlessDisplay(imageFs, displaySocket)
+                var authorization: TermuxX11Authorization? = null
+                var usingTermuxDisplay = false
+
+                if (TermuxHeadlessX11Bridge.isInstalled(this) &&
+                    TermuxHeadlessX11Bridge.hasRunCommandPermission(this)
+                ) {
+                    try {
+                        authorization = TermuxHeadlessX11Bridge.createAuthorization(this)
+                        TermuxHeadlessX11Bridge.start(this, authorization.cookieHex)
+                        termuxDisplayActive = true
+                        val displayDeadline = System.currentTimeMillis() + DISPLAY_START_TIMEOUT_MS
+                        while (System.currentTimeMillis() < displayDeadline) {
+                            check(!stopping.get()) { "Runtime startup was cancelled." }
+                            if (TermuxHeadlessX11Bridge.isDisplayReady()) {
+                                usingTermuxDisplay = true
+                                break
+                            }
+                            Thread.sleep(100)
+                        }
+                        if (!usingTermuxDisplay) {
+                            TermuxHeadlessX11Bridge.stop(this)
+                            termuxDisplayActive = false
+                            appendRuntimeLog("Termux Xvfb did not open TCP display :0.")
+                        }
+                    } catch (error: Throwable) {
+                        TermuxHeadlessX11Bridge.stop(this)
+                        termuxDisplayActive = false
+                        if (stopping.get()) throw error
+                        appendRuntimeLog("Termux Xvfb startup failed: ${error.message ?: error.javaClass.simpleName}")
+                    }
+                }
+
+                if (!usingTermuxDisplay) startHeadlessDisplay(imageFs, displaySocket)
                 check(!stopping.get()) { "Runtime startup was cancelled." }
                 val inspection = Mt5RuntimeManager.winlatorMaliInspection(this)
                 val resolvedConfiguration = WinlatorMaliLaunchConfigurationBuilder.build(
                     imageFs,
                     inspection,
-                    displaySocket
+                    displaySocket,
+                    if (usingTermuxDisplay) "127.0.0.1:0" else ":0",
+                    authorization?.file,
+                    true
                 )
                 check(resolvedConfiguration.blockers.isEmpty()) {
                     resolvedConfiguration.blockers.joinToString()
@@ -234,6 +279,10 @@ class Mt5RuntimeService : Service() {
 
     @Synchronized
     private fun stopDisplay() {
+        if (termuxDisplayActive) {
+            TermuxHeadlessX11Bridge.stop(this)
+            termuxDisplayActive = false
+        }
         displayPid?.let(::stopAndReap)
         displayPid = null
     }
