@@ -84,6 +84,10 @@ class Mt5RuntimeService : Service() {
                 File(rootfs, "lib")
             ).filter { it.isDirectory }.joinToString(File.pathSeparator) { it.absolutePath }
 
+            check(libraryPaths.isNotBlank()) {
+                "The runtime bundle is missing its x86_64 Wine library directories."
+            }
+
             val environment = mapOf(
                 "HOME" to home.absolutePath,
                 "WINEPREFIX" to prefix.absolutePath,
