@@ -45,6 +45,7 @@ class Mt5RuntimeService : Service() {
         stopping.set(false)
         runCatching { Mt5LocalBridgeServer.start(applicationContext) }.onFailure { error ->
             Mt5RuntimeManager.logFile(this).appendText("\\nBridge server failed: ${error.message}")
+            starting.set(false)
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return
@@ -159,6 +160,7 @@ class Mt5RuntimeService : Service() {
             }
         } catch (error: Throwable) {
             log.appendText("\n${error.stackTraceToString()}")
+            Mt5LocalBridgeServer.stop()
             stopProcesses()
             if (!stopping.get()) {
                 (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
