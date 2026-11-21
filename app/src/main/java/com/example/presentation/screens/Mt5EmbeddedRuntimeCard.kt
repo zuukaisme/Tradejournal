@@ -33,6 +33,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.example.mt5.Mt5LocalBridgeServer
+import com.example.mt5.Mt5InstallerManager
 import com.example.mt5.Mt5RuntimeManager
 import com.example.mt5.Mt5RuntimeService
 import kotlinx.coroutines.Dispatchers
@@ -52,12 +53,31 @@ fun Mt5EmbeddedRuntimeCard() {
     var requestedSymbol by remember { mutableStateOf("EURUSD") }
     var requestedTimeframe by remember { mutableStateOf("M5") }
     var installed by remember { mutableStateOf(Mt5RuntimeManager.isInstalled(context)) }
+    var installerStaged by remember { mutableStateOf(Mt5InstallerManager.isInstallerStaged(context)) }
     var busy by remember { mutableStateOf(false) }
     var status by remember {
         mutableStateOf(
             if (installed) "Runtime bundle installed. MT5 terminal files are ready to launch."
             else "Runtime not installed. Import a compatible Wine + Box64 bundle to continue."
         )
+    }
+
+    val installerPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            busy = true
+            status = "Validating and importing mt5setup.exe…"
+            scope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    Mt5InstallerManager.importInstaller(context, uri)
+                }
+                installerStaged = result.isSuccess
+                status = result.fold(
+                    { "MT5 installer imported successfully. It is staged but cannot be launched until the compatible Wine/Box64 runtime is integrated." },
+                    { it.message ?: "MT5 installer import failed." }
+                )
+                busy = false
+            }
+        }
     }
 
     val eaExporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
@@ -133,6 +153,20 @@ fun Mt5EmbeddedRuntimeCard() {
             )
             Text(
                 "The current ZIP format is a temporary prototype format. Do not use it for Winlator Mali imagefs, Proton or WOWBox64 archives.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            OutlinedButton(
+                onClick = { installerPicker.launch(arrayOf("application/vnd.microsoft.portable-executable", "application/octet-stream", "application/x-msdownload")) },
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(if (installerStaged) "Replace MT5 installer (.exe)" else "Import MT5 installer (.exe)")
+            }
+            Text(
+                if (installerStaged) "mt5setup.exe is safely stored in TradePulse. Installation is waiting for a compatible Wine runtime."
+                else "Import the official mt5setup.exe installer here. This is separate from the MQL5 bot importer.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
