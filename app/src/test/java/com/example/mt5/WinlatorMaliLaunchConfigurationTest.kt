@@ -33,6 +33,17 @@ class WinlatorMaliLaunchConfigurationTest {
         assertEquals("libwow64fex.dll", config.environment["HODLL"])
         assertEquals(":0", config.environment["DISPLAY"])
         assertEquals("0", config.environment["BOX64_MMAP32"])
+
+        val authorization = createFile(root, "x11.Xauthority", "cookie")
+        val tcpConfig = WinlatorMaliLaunchConfigurationBuilder.build(
+            root,
+            inspection,
+            displayAddress = "127.0.0.1:0",
+            xAuthorityFile = authorization,
+            displayAvailable = true
+        )
+        assertEquals("127.0.0.1:0", tcpConfig.environment["DISPLAY"])
+        assertEquals(authorization.absolutePath, tcpConfig.environment["XAUTHORITY"])
     }
 
     @Test
