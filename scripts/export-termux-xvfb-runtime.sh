@@ -52,8 +52,11 @@ else
     exit 1
 fi
 
-if [ -d "$PREFIX/share/fonts" ]; then
+if [ -d "$PREFIX/share/fonts/misc" ]; then
     cp -a "$PREFIX/share/fonts/." "$ROOT/share/fonts/"
+else
+    printf '%s\\n' "The Xorg misc fonts are missing. Install xorg-fonts-misc in Termux and retry."
+    exit 1
 fi
 
 if [ -d "$PREFIX/etc/fonts" ]; then

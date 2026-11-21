@@ -166,7 +166,14 @@ class Mt5RuntimeService : Service() {
         }
         val processId = nativeLauncher.start(
             xvfb,
-            listOf(":0", "-screen", "0", "1280x720x24", "-nolisten", "tcp", "-ac", "-noreset"),
+            listOf(
+                ":0",
+                "-screen", "0", "1280x720x24",
+                "-fp", File(runtime, "share/fonts").absolutePath,
+                "-nolisten", "tcp",
+                "-ac",
+                "-noreset"
+            ),
             environment,
             runtime,
             File(filesDir, "mt5-xvfb.log")

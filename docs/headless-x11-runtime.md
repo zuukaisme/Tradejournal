@@ -7,7 +7,7 @@ In Termux:
 ```sh
 termux-setup-storage
 pkg install x11-repo
-pkg install xorg-server-xvfb binutils zip
+pkg install xorg-server-xvfb xorg-fonts-misc binutils zip
 ```
 
 If those packages are already installed, no package reinstall is needed. Then run the export script from the TradePulse repository:
