@@ -268,6 +268,10 @@ fun SettingsScreen(
         }
 
         item {
+            Mt5EmbeddedRuntimeCard()
+        }
+
+        item {
             AiInstructionsSettingsCard()
         }
 
