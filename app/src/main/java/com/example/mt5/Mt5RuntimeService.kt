@@ -40,6 +40,8 @@ class Mt5RuntimeService : Service() {
     private fun startRuntime() {
         if (!starting.compareAndSet(false, true)) return
         try {
+            createNotificationChannel()
+            startForeground(NOTIFICATION_ID, buildNotification("Checking Winlator Mali runtime"))
             val inspection = Mt5RuntimeManager.winlatorMaliInspection(this)
             val details = buildList {
                 addAll(inspection.missingComponents)
