@@ -173,7 +173,7 @@ fun Mt5EmbeddedRuntimeCard() {
             Text(
                 when {
                     !termuxInstalled -> "Termux is not installed. Install Termux to provide a headless Xvfb process without downloading another runtime bundle."
-                    termuxPermissionGranted -> "Termux command access is enabled. In Termux run: pkg install x11-repo xorg-server-xvfb xorg-fonts-misc. Then set allow-external-apps=true in ~/.termux/termux.properties and run termux-reload-settings."
+                    termuxPermissionGranted -> "Termux command access is enabled. In Termux run: pkg install x11-repo, then pkg install xorg-server-xvfb xorg-fonts-misc. Set allow-external-apps=true in ~/.termux/termux.properties and run termux-reload-settings."
                     else -> "Termux is installed but TradePulse does not have permission to start its background Xvfb process. Grant the permission below, then enable allow-external-apps in Termux."
                 },
                 style = MaterialTheme.typography.labelSmall,
