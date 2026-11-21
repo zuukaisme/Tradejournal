@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -48,6 +49,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -76,6 +78,8 @@ import com.example.domain.model.Bot
 import com.example.domain.model.BotStatus
 import com.example.domain.model.BotType
 import com.example.presentation.TradingViewModel
+import com.example.mt5.Mt5LocalBridgeServer
+import com.example.mt5.Mt5BotArtifactManager
 import com.example.presentation.components.CurrencyFormatter
 import com.example.presentation.components.LiquidGlassCard
 import com.example.presentation.components.LiquidGlassPill
@@ -102,6 +106,57 @@ fun BotsScreen(
     var searchQuery by remember { mutableStateOf("") }
     var selectedTypeFilter by remember { mutableStateOf<BotType?>(null) }
     var selectedStatusFilter by remember { mutableStateOf<BotStatus?>(null) }
+    var runTarget by remember { mutableStateOf<Bot?>(null) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val mt5BridgeStatus by Mt5LocalBridgeServer.status.collectAsState()
+
+    val botArtifactImportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val target = runTarget
+        if (uri != null && target != null) {
+            scope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    runCatching {
+                        val displayName = context.contentResolver.query(
+                            uri,
+                            arrayOf(OpenableColumns.DISPLAY_NAME),
+                            null,
+                            null,
+                            null
+                        )?.use { cursor ->
+                            if (cursor.moveToFirst()) cursor.getString(0) else null
+                        }.orEmpty()
+                        Mt5BotArtifactManager.importArtifact(context, target.id, displayName, uri).getOrThrow()
+                    }
+                }
+                Toast.makeText(
+                    context,
+                    if (result.isSuccess) "Compiled bot stored locally. MT5 deployment is still pending runtime integration." else result.exceptionOrNull()?.message ?: "Import failed",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
+    val botExportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
+        val target = runTarget
+        if (uri != null && target != null) {
+            scope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    runCatching {
+                        context.contentResolver.openOutputStream(uri)?.use { output ->
+                            output.write(target.code.toByteArray(Charsets.UTF_8))
+                        } ?: error("Unable to create the bot source file.")
+                    }
+                }
+                Toast.makeText(
+                    context,
+                    if (result.isSuccess) "${target.name} exported" else result.exceptionOrNull()?.message ?: "Export failed",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
 
     val filteredBots = remember(bots, searchQuery, selectedTypeFilter, selectedStatusFilter) {
         bots.filter { bot ->
@@ -242,7 +297,8 @@ fun BotsScreen(
                             winRate = botWinRate,
                             totalPnL = botPnL,
                             currency = settings.currency,
-                            onClick = { viewModel.openBotDetails(bot) }
+                            onClick = { viewModel.openBotDetails(bot) },
+                            onRun = { runTarget = bot }
                         )
                     }
 
@@ -266,6 +322,57 @@ fun BotsScreen(
         }
     }
 
+    runTarget?.let { bot ->
+        val isLibrary = bot.type == BotType.LIBRARY
+        val sourceReady = bot.code.isNotBlank()
+        AlertDialog(
+            onDismissRequest = { runTarget = null },
+            title = { Text("Run ${bot.name}") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("MT5 bridge: $mt5BridgeStatus", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        when {
+                            isLibrary -> "MQL5 libraries cannot run by themselves. An Expert Advisor, indicator or script must load or call the library."
+                            !sourceReady -> "This bot has no source code to prepare."
+                            mt5BridgeStatus == "MT5 Expert Advisor authenticated" -> "The terminal bridge is connected, but automatic bot deployment and launch are not implemented yet."
+                            else -> "The MT5 terminal is not connected. You can still prepare and export this bot's source while the Wine runtime is being completed."
+                        },
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        if (Mt5BotArtifactManager.hasArtifact(context, bot.id)) {
+                            "A compiled .ex5 artifact is stored locally for this bot. Automatic deployment is not available until the embedded MT5 runtime is integrated."
+                        } else {
+                            "You can import a compiled .ex5 artifact or export the editable source. Files remain stored locally until MT5 deployment is implemented."
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                Row {
+                    TextButton(
+                        onClick = { botArtifactImportLauncher.launch(arrayOf("application/octet-stream", "*/*")) },
+                        enabled = bot.id > 0L && !isLibrary
+                    ) { Text("Import .ex5") }
+                    TextButton(
+                        onClick = {
+                            val extension = if (isLibrary) "mqh" else "mq5"
+                            val safeName = bot.name.replace(Regex("[^A-Za-z0-9_-]"), "_").take(48).ifBlank { "TradePulseBot" }
+                            botExportLauncher.launch("$safeName.$extension")
+                        },
+                        enabled = sourceReady
+                    ) { Text("Export source") }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { runTarget = null }) { Text("Close") }
+            }
+        )
+    }
+
     if (isBotEditorOpen) {
         BotEditorBottomSheet(
             bot = selectedBot,
@@ -282,7 +389,8 @@ fun BotItemCard(
     winRate: Double,
     totalPnL: Double,
     currency: com.example.domain.model.CurrencyCode,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onRun: () -> Unit
 ) {
     LiquidGlassCard(
         onClick = onClick,
@@ -391,6 +499,16 @@ fun BotItemCard(
                 )
             }
         }
+
+        OutlinedButton(
+            onClick = onRun,
+            modifier = Modifier.fillMaxWidth().testTag("run_bot_${bot.id}"),
+            shape = RoundedCornerShape(9.dp)
+        ) {
+            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(17.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("Run")
+        }
     }
 }
 
@@ -402,10 +520,67 @@ fun BotDetailScreen(
     onEditCode: () -> Unit
 ) {
     var selectedTab by remember(bot.id) { mutableStateOf(0) }
+    var showRunDialog by remember(bot.id) { mutableStateOf(false) }
+    val bridgeStatus by Mt5LocalBridgeServer.status.collectAsState()
+    val context = LocalContext.current
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.openOutputStream(uri)?.use { output ->
+                    output.write(bot.code.toByteArray(Charsets.UTF_8))
+                } ?: error("Unable to create the bot source file.")
+            }.onSuccess {
+                Toast.makeText(context, "${bot.name} exported", Toast.LENGTH_LONG).show()
+            }.onFailure {
+                Toast.makeText(context, it.message ?: "Export failed", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
     val versions by viewModel.repository.getBotVersions(bot.id).collectAsState(initial = emptyList())
     val sdf = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US) }
 
     BackHandler(onBack = onBack)
+
+    if (showRunDialog) {
+        val isLibrary = bot.type == BotType.LIBRARY
+        AlertDialog(
+            onDismissRequest = { showRunDialog = false },
+            title = { Text("Prepare ${bot.name} for MT5") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Bridge: $bridgeStatus", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        when {
+                            isLibrary -> "MQL5 libraries cannot run by themselves. An EA, indicator or script must load or call this library."
+                            bot.code.isBlank() -> "This bot has no source code to export."
+                            bridgeStatus == "MT5 Expert Advisor authenticated" -> "The bridge is connected. Automatic deployment, chart attachment and bot start/stop are not available yet."
+                            else -> "The MT5 terminal is not connected. Export the source and compile it in MetaEditor after MT5 is installed."
+                        },
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        "Exporting does not start the bot or place trades.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val extension = if (isLibrary) "mqh" else "mq5"
+                        val safeName = bot.name.replace(Regex("[^A-Za-z0-9_-]"), "_").take(48).ifBlank { "TradePulseBot" }
+                        exportLauncher.launch("$safeName.$extension")
+                        showRunDialog = false
+                    },
+                    enabled = bot.code.isNotBlank()
+                ) { Text("Export source") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRunDialog = false }) { Text("Close") }
+            }
+        )
+    }
 
     Column(
         modifier = Modifier
@@ -442,6 +617,9 @@ fun BotDetailScreen(
                 }
 
                 Row {
+                    IconButton(onClick = { showRunDialog = true }) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = "Prepare for MT5")
+                    }
                     IconButton(onClick = onEditCode) {
                         Icon(Icons.Default.Edit, contentDescription = "Edit Code")
                     }

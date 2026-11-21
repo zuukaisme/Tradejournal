@@ -17,10 +17,13 @@ class Mt5RuntimeService : Service() {
     private val nativeLauncher by lazy { NativeProcessLauncher() }
 
     @Volatile
-    private var displayPid: Int? = null
+    private var terminalPid: Int? = null
 
     @Volatile
-    private var terminalPid: Int? = null
+    private var probePid: Int? = null
+
+    @Volatile
+    private var termuxDisplayActive = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -34,139 +37,147 @@ class Mt5RuntimeService : Service() {
             ACTION_START, null -> startRuntime()
             else -> stopSelf()
         }
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     private fun startRuntime() {
-        if (terminalPid?.let(nativeLauncher::isAlive) == true) return
         if (!starting.compareAndSet(false, true)) return
-        createNotificationChannel()
-        startForeground(NOTIFICATION_ID, buildNotification("Preparing embedded MT5 runtime"))
-        stopping.set(false)
-        runCatching { Mt5LocalBridgeServer.start(applicationContext) }.onFailure { error ->
-            Mt5RuntimeManager.logFile(this).appendText("\\nBridge server failed: ${error.message}")
-            starting.set(false)
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
-            return
-        }
-
-        Thread({
-            try {
-                runRuntime()
-            } finally {
-                starting.set(false)
+        var handedOffToProbe = false
+        try {
+            createNotificationChannel()
+            startForeground(NOTIFICATION_ID, buildNotification("Checking Winlator Mali runtime"))
+            val inspection = Mt5RuntimeManager.winlatorMaliInspection(this)
+            val imageFs = File(filesDir, "imagefs")
+            val launchConfiguration = WinlatorMaliLaunchConfigurationBuilder.build(
+                imageFs,
+                inspection
+            )
+            val wineProbeConfiguration = WinlatorMaliLaunchConfigurationBuilder.build(
+                imageFs,
+                inspection,
+                displayAvailable = true,
+                wineProbeOnly = true
+            )
+            val details = buildList {
+                addAll(launchConfiguration.blockers)
+                addAll(inspection.launchBlockers)
+                if (!TermuxHeadlessX11Bridge.isInstalled(this@Mt5RuntimeService)) {
+                    add("Install Termux and its xorg-server-xvfb package to provide the headless display.")
+                } else if (!TermuxHeadlessX11Bridge.hasRunCommandPermission(this@Mt5RuntimeService)) {
+                    add("Grant TradePulse the Termux Run commands permission and enable allow-external-apps in Termux.")
+                }
+                add("Terminal launch remains disabled until the X11 display and Wine runtime probes pass.")
+            }.distinct()
+            Mt5RuntimeManager.logFile(this).writeText(
+                "Embedded MT5 launch preflight\n" +
+                    "ImageFS version: ${inspection.imageFsVersion ?: "not found"}\n" +
+                    "Runtime files ready: ${inspection.runtimeFilesReady}\n" +
+                    "Wine executable: ${inspection.wine?.absolutePath ?: "not found"}\n" +
+                    "Selected Wine prefix: ${inspection.winePrefix?.absolutePath ?: "not found"}\n" +
+                    "MT5 terminal: ${inspection.terminal?.absolutePath ?: "not found"}\n" +
+                    "Wine architecture validated: ${launchConfiguration.blockers.none { it.contains("ARM64 ELF") }}\n" +
+                    "Termux available: ${TermuxHeadlessX11Bridge.isInstalled(this)}\n" +
+                    "Termux command permission: ${TermuxHeadlessX11Bridge.hasRunCommandPermission(this)}\n" +
+                    "Headless display endpoint: authenticated 127.0.0.1:0\n" +
+                    "Terminal launch enabled: false\n" +
+                    "Launch arguments: ${launchConfiguration.arguments.joinToString(" ")}\n" +
+                    "Launch environment keys: ${launchConfiguration.environment.keys.sorted().joinToString(", ")}\n" +
+                    details.joinToString("\n") { "- $it" }
+            )
+            val hasTermuxControl = TermuxHeadlessX11Bridge.isInstalled(this) &&
+                TermuxHeadlessX11Bridge.hasRunCommandPermission(this)
+            val canProbeWine = hasTermuxControl && wineProbeConfiguration.ready
+            if (canProbeWine) {
+                handedOffToProbe = true
+                runWineVersionProbe()
+            } else {
+                appendRuntimeLog("Wine probe not started. Check Termux permission, allow-external-apps, and the Winlator Mali runtime files.")
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
             }
-        }, "TradePulse-MT5-Launcher").apply {
-            isDaemon = true
-            start()
+        } finally {
+            if (!handedOffToProbe) starting.set(false)
         }
     }
 
-    private fun runRuntime() {
-        val runtime = Mt5RuntimeManager.runtimeDirectory(this)
-        val rootfs = File(runtime, "rootfs")
-        val box64 = File(runtime, "bin/box64")
-        val wine64 = File(rootfs, "usr/bin/wine64")
-        val xvfb = File(rootfs, "usr/bin/Xvfb")
-        val mt5Directory = File(runtime, "mt5")
-        val terminal = File(mt5Directory, "terminal64.exe")
-        val prefix = File(runtime, "wineprefix")
-        val home = File(runtime, "home")
-        val temp = File(runtime, "tmp")
-        val log = Mt5RuntimeManager.logFile(this)
+    private fun runWineVersionProbe() {
+        Thread({
+            var pid: Int? = null
+            try {
+                check(TermuxHeadlessX11Bridge.isInstalled(this)) { "Termux is not installed." }
+                check(TermuxHeadlessX11Bridge.hasRunCommandPermission(this)) {
+                    "Grant TradePulse the Termux Run commands permission."
+                }
+                val authorization = TermuxHeadlessX11Bridge.createAuthorization(this)
+                TermuxHeadlessX11Bridge.start(this, authorization.cookieHex)
+                termuxDisplayActive = true
 
-        try {
-            check(Mt5RuntimeManager.isInstalled(this)) {
-                "The embedded MT5 runtime bundle is incomplete: ${Mt5RuntimeManager.missingFiles(this).joinToString()}"
-            }
-            listOf(prefix, home, temp).forEach {
-                check(it.mkdirs() || it.isDirectory) { "Unable to create runtime directory: ${it.name}" }
-            }
+                val displayDeadline = System.currentTimeMillis() + DISPLAY_START_TIMEOUT_MS
+                var displayReady = false
+                while (System.currentTimeMillis() < displayDeadline) {
+                    check(!stopping.get()) { "Runtime startup was cancelled." }
+                    if (TermuxHeadlessX11Bridge.isDisplayReady(authorization.cookieHex)) {
+                        displayReady = true
+                        break
+                    }
+                    Thread.sleep(150)
+                }
+                check(displayReady) {
+                    "Termux Xvfb did not complete an authenticated X11 handshake. Check the Xvfb package and allow-external-apps setting."
+                }
 
-            val libraryPaths = listOf(
-                File(rootfs, "usr/lib/x86_64-linux-gnu"),
-                File(rootfs, "lib/x86_64-linux-gnu"),
-                File(rootfs, "usr/lib"),
-                File(rootfs, "lib")
-            ).filter { it.isDirectory }.joinToString(File.pathSeparator) { it.absolutePath }
-
-            check(libraryPaths.isNotBlank()) {
-                "The runtime bundle is missing its x86_64 Wine library directories."
-            }
-
-            val environment = mapOf(
-                "HOME" to home.absolutePath,
-                "WINEPREFIX" to prefix.absolutePath,
-                "WINEARCH" to "win64",
-                "DISPLAY" to ":0",
-                "WINEDEBUG" to "-all",
-                "TMPDIR" to temp.absolutePath,
-                "BOX64_LD_LIBRARY_PATH" to libraryPaths,
-                "BOX64_PATH" to File(rootfs, "usr/bin").absolutePath,
-                "BOX64_LOG" to "0"
-            )
-
-            displayPid = nativeLauncher.start(
-                executable = box64,
-                arguments = listOf(
-                    box64.absolutePath,
-                    xvfb.absolutePath,
-                    ":0",
-                    "-screen",
-                    "0",
-                    "1024x768x24",
-                    "-nolisten",
-                    "tcp"
-                ),
-                environment = environment,
-                workingDirectory = runtime,
-                logFile = log
-            )
-
-            Thread.sleep(1500)
-            check(!stopping.get()) { "MT5 runtime startup was cancelled." }
-            check(displayPid?.let(nativeLauncher::isAlive) == true) {
-                "The virtual display stopped during startup. Check the MT5 runtime log."
-            }
-
-            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
-                .notify(NOTIFICATION_ID, buildNotification("Starting MetaTrader 5"))
-
-            terminalPid = nativeLauncher.start(
-                executable = box64,
-                arguments = listOf(
-                    box64.absolutePath,
-                    wine64.absolutePath,
-                    terminal.absolutePath
-                ),
-                environment = environment,
-                workingDirectory = mt5Directory,
-                logFile = log
-            )
-
-            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
-                .notify(NOTIFICATION_ID, buildNotification("Embedded MT5 terminal is running"))
-
-            val exitCode = terminalPid?.let(nativeLauncher::waitFor) ?: -1
-            terminalPid = null
-            Mt5LocalBridgeServer.stop()
-            stopDisplay()
-
-            if (!stopping.get()) {
-                (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
-                    .notify(NOTIFICATION_ID, buildNotification("MT5 terminal stopped (exit $exitCode)"))
+                val imageFs = File(filesDir, "imagefs")
+                val inspection = Mt5RuntimeManager.winlatorMaliInspection(this)
+                val resolvedConfiguration = WinlatorMaliLaunchConfigurationBuilder.build(
+                    imageFs,
+                    inspection,
+                    File(imageFs, "usr/tmp/.X11-unix/X0"),
+                    "127.0.0.1:0",
+                    authorization.file,
+                    true,
+                    wineProbeOnly = true
+                )
+                check(resolvedConfiguration.blockers.isEmpty()) {
+                    resolvedConfiguration.blockers.joinToString()
+                }
+                val executable = resolvedConfiguration.executable ?: error("Wine executable is unavailable.")
+                val processId = nativeLauncher.start(
+                    executable,
+                    resolvedConfiguration.arguments,
+                    resolvedConfiguration.environment,
+                    resolvedConfiguration.workingDirectory,
+                    File(filesDir, "mt5-wine-probe.log")
+                )
+                pid = processId
+                probePid = processId
+                if (stopping.get()) nativeLauncher.stop(processId)
+                val deadline = System.currentTimeMillis() + WINE_PROBE_TIMEOUT_MS
+                while (nativeLauncher.isAlive(processId) && System.currentTimeMillis() < deadline) {
+                    Thread.sleep(100)
+                }
+                if (nativeLauncher.isAlive(processId)) {
+                    nativeLauncher.stop(processId)
+                    Thread.sleep(1500)
+                    if (nativeLauncher.isAlive(processId)) nativeLauncher.forceStop(processId)
+                }
+                val exitCode = nativeLauncher.waitFor(processId)
+                appendRuntimeLog("Wine version probe exit code: $exitCode")
+            } catch (error: Throwable) {
+                appendRuntimeLog("Wine version probe failed: ${error.message ?: error.javaClass.simpleName}")
+                pid?.let { runCatching { nativeLauncher.forceStop(it) } }
+            } finally {
+                probePid = null
+                stopDisplay()
+                starting.set(false)
+                stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
-        } catch (error: Throwable) {
-            log.appendText("\n${error.stackTraceToString()}")
-            Mt5LocalBridgeServer.stop()
-            stopProcesses()
-            if (!stopping.get()) {
-                (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
-                    .notify(NOTIFICATION_ID, buildNotification("MT5 failed to start. Check runtime log."))
-                stopSelf()
-            }
+        }, "TradePulse-Wine-Probe").start()
+    }
+
+    private fun appendRuntimeLog(message: String) {
+        runCatching {
+            Mt5RuntimeManager.logFile(this).appendText("\n$message")
         }
     }
 
@@ -178,14 +189,19 @@ class Mt5RuntimeService : Service() {
     }
 
     private fun stopProcesses() {
+        probePid?.let { runCatching { nativeLauncher.stop(it) } }
+        probePid = null
         terminalPid?.let { runCatching { nativeLauncher.stop(it) } }
         terminalPid = null
         stopDisplay()
     }
 
+    @Synchronized
     private fun stopDisplay() {
-        displayPid?.let { runCatching { nativeLauncher.stop(it) } }
-        displayPid = null
+        if (termuxDisplayActive) {
+            TermuxHeadlessX11Bridge.stop(this)
+            termuxDisplayActive = false
+        }
     }
 
     override fun onDestroy() {
@@ -219,5 +235,7 @@ class Mt5RuntimeService : Service() {
         const val ACTION_STOP = "com.example.mt5.STOP"
         private const val CHANNEL_ID = "tradepulse_mt5_runtime"
         private const val NOTIFICATION_ID = 7315
+        private const val WINE_PROBE_TIMEOUT_MS = 20_000L
+        private const val DISPLAY_START_TIMEOUT_MS = 10_000L
     }
 }

@@ -244,9 +244,10 @@ JNIEXPORT jboolean JNICALL
 Java_com_example_mt5_NativeProcessLauncher_nativeIsAlive(JNIEnv *env, jobject instance, jint pid) {
     (void) env;
     (void) instance;
-    int status = 0;
-    pid_t result = waitpid((pid_t) pid, &status, WNOHANG);
-    if (result == (pid_t) pid) return JNI_FALSE;
-    if (result == 0) return JNI_TRUE;
-    return errno == ECHILD ? JNI_FALSE : (kill((pid_t) pid, 0) == 0 || errno == EPERM ? JNI_TRUE : JNI_FALSE);
+    siginfo_t process_info;
+    memset(&process_info, 0, sizeof(process_info));
+    if (waitid(P_PID, (id_t) pid, &process_info, WEXITED | WNOHANG | WNOWAIT) != 0) {
+        return JNI_FALSE;
+    }
+    return process_info.si_pid == 0 ? JNI_TRUE : JNI_FALSE;
 }
