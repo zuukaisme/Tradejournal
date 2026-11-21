@@ -17,6 +17,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -24,9 +25,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.example.mt5.Mt5LocalBridgeServer
 import com.example.mt5.Mt5RuntimeManager
 import com.example.mt5.Mt5RuntimeService
 import kotlinx.coroutines.Dispatchers
@@ -37,6 +41,9 @@ import kotlinx.coroutines.withContext
 fun Mt5EmbeddedRuntimeCard() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val clipboardManager = LocalClipboardManager.current
+    val bridgeStatus by Mt5LocalBridgeServer.status.collectAsState()
+    val bridgeToken by Mt5LocalBridgeServer.token.collectAsState()
     var installed by remember { mutableStateOf(Mt5RuntimeManager.isInstalled(context)) }
     var busy by remember { mutableStateOf(false) }
     var status by remember {
@@ -137,6 +144,21 @@ fun Mt5EmbeddedRuntimeCard() {
             if (busy) androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth())
 
             Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+            Text("Local bridge: $bridgeStatus", style = MaterialTheme.typography.bodySmall)
+            if (bridgeToken.isNotBlank()) {
+                Text("Bridge token: $bridgeToken", style = MaterialTheme.typography.labelSmall)
+                OutlinedButton(
+                    onClick = { clipboardManager.setText(AnnotatedString(bridgeToken)) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Copy bridge token")
+                }
+                Text(
+                    "In MT5, add 127.0.0.1 to the allowed socket addresses, attach TradePulseBridge.mq5 to a chart, and enter this token in its BridgeToken input.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             Text(
                 "Only import runtime binaries from a source you trust. They run with TradePulse's app permissions. A successful import does not mean MT5 can launch. The package must be built for Android ARM64 and include an x86_64 Wine environment. Keep the foreground notification enabled while MT5 is running.",
                 style = MaterialTheme.typography.labelSmall,
