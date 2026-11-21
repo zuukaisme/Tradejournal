@@ -192,7 +192,7 @@ fun Mt5EmbeddedRuntimeCard() {
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
-                "This experimental loader stores files inside TradePulse. It is not yet compatible with Winlator Mali's real imagefs and ARM64EC Wine packages. The device-specific Box64/Wine environment is being validated against the Termux headless Xvfb server.",
+                "TradePulse can now import the base Winlator Mali ImageFS asset from the installed app, including its symbolic links. The Proton ARM64EC runtime, WOWBox64/FEX components, Wine prefix and MT5 terminal are separate packages or setup steps and are not copied from Winlator's private app storage.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
