@@ -66,10 +66,55 @@ class Mt5RuntimeService : Service() {
                     "Launch environment keys: ${launchConfiguration.environment.keys.sorted().joinToString(", ")}\n" +
                     details.joinToString("\n") { "- $it" }
             )
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
+            val canProbeWine = launchConfiguration.executable != null &&
+                launchConfiguration.blockers.all { it.startsWith("A live headless X11 server") }
+            if (canProbeWine) {
+                runWineVersionProbe(launchConfiguration)
+            } else {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
         } finally {
             starting.set(false)
+        }
+    }
+
+    private fun runWineVersionProbe(configuration: WinlatorMaliLaunchConfiguration) {
+        Thread({
+            var pid: Int? = null
+            try {
+                val executable = configuration.executable ?: error("Wine executable is unavailable.")
+                pid = nativeLauncher.start(
+                    executable,
+                    listOf("--version"),
+                    configuration.environment,
+                    configuration.workingDirectory,
+                    File(filesDir, "mt5-wine-probe.log")
+                )
+                val deadline = System.currentTimeMillis() + WINE_PROBE_TIMEOUT_MS
+                while (nativeLauncher.isAlive(pid) && System.currentTimeMillis() < deadline) {
+                    Thread.sleep(100)
+                }
+                if (nativeLauncher.isAlive(pid)) {
+                    nativeLauncher.stop(pid)
+                    Thread.sleep(1500)
+                    if (nativeLauncher.isAlive(pid)) nativeLauncher.forceStop(pid)
+                }
+                val exitCode = nativeLauncher.waitFor(pid)
+                appendRuntimeLog("Wine version probe exit code: $exitCode")
+            } catch (error: Throwable) {
+                appendRuntimeLog("Wine version probe failed: ${error.message ?: error.javaClass.simpleName}")
+                pid?.let { runCatching { nativeLauncher.forceStop(it) } }
+            } finally {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
+        }, "TradePulse-Wine-Probe").start()
+    }
+
+    private fun appendRuntimeLog(message: String) {
+        runCatching {
+            Mt5RuntimeManager.logFile(this).appendText("\\n$message")
         }
     }
 
@@ -122,5 +167,6 @@ class Mt5RuntimeService : Service() {
         const val ACTION_STOP = "com.example.mt5.STOP"
         private const val CHANNEL_ID = "tradepulse_mt5_runtime"
         private const val NOTIFICATION_ID = 7315
+        private const val WINE_PROBE_TIMEOUT_MS = 20_000L
     }
 }
