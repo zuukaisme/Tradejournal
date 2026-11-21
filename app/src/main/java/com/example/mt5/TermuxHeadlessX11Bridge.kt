@@ -45,8 +45,6 @@ object TermuxHeadlessX11Bridge {
 
     fun createAuthorization(context: Context): TermuxX11Authorization {
         val cookie = ByteArray(16).also(SecureRandom()::nextBytes)
-        val authName = "MIT-MAGIC-COOKIE-1".toByteArray(Charsets.US_ASCII)
-        val displayNumber = "0".toByteArray(Charsets.US_ASCII)
         val file = File(context.filesDir, "mt5-x11.Xauthority")
 
         writeAuthorizationFile(file, cookie)
