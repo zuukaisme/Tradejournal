@@ -5,8 +5,6 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
-import android.net.LocalSocket
-import android.net.LocalSocketAddress
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
@@ -17,9 +15,6 @@ class Mt5RuntimeService : Service() {
     private val stopping = AtomicBoolean(false)
     private val starting = AtomicBoolean(false)
     private val nativeLauncher by lazy { NativeProcessLauncher() }
-
-    @Volatile
-    private var displayPid: Int? = null
 
     @Volatile
     private var terminalPid: Int? = null
@@ -81,7 +76,7 @@ class Mt5RuntimeService : Service() {
             )
             val hasTermuxControl = TermuxHeadlessX11Bridge.isInstalled(this) &&
                 TermuxHeadlessX11Bridge.hasRunCommandPermission(this)
-            val canProbeWine = (hasTermuxControl || HeadlessX11RuntimeManager.isInstalled(this)) &&
+            val canProbeWine = hasTermuxControl &&
                 launchConfiguration.executable != null &&
                 launchConfiguration.blockers.all { it.startsWith("A live headless X11 server") }
             if (canProbeWine) {
@@ -99,49 +94,36 @@ class Mt5RuntimeService : Service() {
         Thread({
             var pid: Int? = null
             try {
-                val imageFs = File(filesDir, "imagefs")
-                val displaySocket = File(imageFs, "usr/tmp/.X11-unix/X0")
-                var authorization: TermuxX11Authorization? = null
-                var usingTermuxDisplay = false
+                check(TermuxHeadlessX11Bridge.isInstalled(this)) { "Termux is not installed." }
+                check(TermuxHeadlessX11Bridge.hasRunCommandPermission(this)) {
+                    "Grant TradePulse the Termux Run commands permission."
+                }
+                val authorization = TermuxHeadlessX11Bridge.createAuthorization(this)
+                TermuxHeadlessX11Bridge.start(this, authorization.cookieHex)
+                termuxDisplayActive = true
 
-                if (TermuxHeadlessX11Bridge.isInstalled(this) &&
-                    TermuxHeadlessX11Bridge.hasRunCommandPermission(this)
-                ) {
-                    try {
-                        authorization = TermuxHeadlessX11Bridge.createAuthorization(this)
-                        TermuxHeadlessX11Bridge.start(this, authorization.cookieHex)
-                        termuxDisplayActive = true
-                        val displayDeadline = System.currentTimeMillis() + DISPLAY_START_TIMEOUT_MS
-                        while (System.currentTimeMillis() < displayDeadline) {
-                            check(!stopping.get()) { "Runtime startup was cancelled." }
-                            if (TermuxHeadlessX11Bridge.isDisplayReady()) {
-                                usingTermuxDisplay = true
-                                break
-                            }
-                            Thread.sleep(100)
-                        }
-                        if (!usingTermuxDisplay) {
-                            TermuxHeadlessX11Bridge.stop(this)
-                            termuxDisplayActive = false
-                            appendRuntimeLog("Termux Xvfb did not open TCP display :0.")
-                        }
-                    } catch (error: Throwable) {
-                        TermuxHeadlessX11Bridge.stop(this)
-                        termuxDisplayActive = false
-                        if (stopping.get()) throw error
-                        appendRuntimeLog("Termux Xvfb startup failed: ${error.message ?: error.javaClass.simpleName}")
+                val displayDeadline = System.currentTimeMillis() + DISPLAY_START_TIMEOUT_MS
+                var displayReady = false
+                while (System.currentTimeMillis() < displayDeadline) {
+                    check(!stopping.get()) { "Runtime startup was cancelled." }
+                    if (TermuxHeadlessX11Bridge.isDisplayReady(authorization.cookieHex)) {
+                        displayReady = true
+                        break
                     }
+                    Thread.sleep(150)
+                }
+                check(displayReady) {
+                    "Termux Xvfb did not complete an authenticated X11 handshake. Check the Xvfb package and allow-external-apps setting."
                 }
 
-                if (!usingTermuxDisplay) startHeadlessDisplay(imageFs, displaySocket)
-                check(!stopping.get()) { "Runtime startup was cancelled." }
+                val imageFs = File(filesDir, "imagefs")
                 val inspection = Mt5RuntimeManager.winlatorMaliInspection(this)
                 val resolvedConfiguration = WinlatorMaliLaunchConfigurationBuilder.build(
                     imageFs,
                     inspection,
-                    displaySocket,
-                    if (usingTermuxDisplay) "127.0.0.1:0" else ":0",
-                    authorization?.file,
+                    File(imageFs, "usr/tmp/.X11-unix/X0"),
+                    "127.0.0.1:0",
+                    authorization.file,
                     true
                 )
                 check(resolvedConfiguration.blockers.isEmpty()) {
@@ -181,81 +163,6 @@ class Mt5RuntimeService : Service() {
         }, "TradePulse-Wine-Probe").start()
     }
 
-    private fun startHeadlessDisplay(imageFs: File, socket: File) {
-        val runtime = HeadlessX11RuntimeManager.runtimeDirectory(this)
-        check(HeadlessX11RuntimeManager.isInstalled(this)) {
-            "Import the Android ARM64 headless X11 runtime before starting the Wine check."
-        }
-        val temporaryDirectory = File(imageFs, "usr/tmp")
-        check(temporaryDirectory.mkdirs() || temporaryDirectory.isDirectory) {
-            "Unable to create the Winlator temporary directory."
-        }
-        val socketDirectory = socket.parentFile
-            ?: error("The X11 socket directory is invalid.")
-        check(socketDirectory.mkdirs() || socketDirectory.isDirectory) {
-            "Unable to create the X11 socket directory."
-        }
-        socket.delete()
-
-        val xvfb = File(runtime, "bin/Xvfb")
-        val environment = buildMap {
-            put("HOME", runtime.absolutePath)
-            put("PREFIX", runtime.absolutePath)
-            put("PATH", "${File(runtime, "bin").absolutePath}:/system/bin")
-            put("TMPDIR", temporaryDirectory.absolutePath)
-            put("DISPLAY", ":0")
-            put("XKB_CONFIG_ROOT", File(runtime, "share/X11/xkb").absolutePath)
-            put("FONTCONFIG_PATH", File(runtime, "etc/fonts").absolutePath)
-            put("LD_LIBRARY_PATH", "${File(runtime, "lib").absolutePath}:/system/lib64")
-            val sharedMemory = File(runtime, "lib/libandroid-shmem.so")
-            if (sharedMemory.isFile) put("LD_PRELOAD", sharedMemory.absolutePath)
-        }
-        val processId = nativeLauncher.start(
-            xvfb,
-            listOf(
-                ":0",
-                "-screen", "0", "1280x720x24",
-                "-fp", File(runtime, "share/fonts").absolutePath,
-                "-nolisten", "tcp",
-                "-ac",
-                "-noreset"
-            ),
-            environment,
-            runtime,
-            File(filesDir, "mt5-xvfb.log")
-        )
-        displayPid = processId
-
-        val deadline = System.currentTimeMillis() + DISPLAY_START_TIMEOUT_MS
-        while (System.currentTimeMillis() < deadline) {
-            check(!stopping.get()) { "Runtime startup was cancelled." }
-            if (!nativeLauncher.isAlive(processId)) {
-                val exitCode = nativeLauncher.waitFor(processId)
-                displayPid = null
-                error("Xvfb exited before creating its display socket. Exit code: $exitCode")
-            }
-            if (canConnectToDisplaySocket(socket)) return
-            Thread.sleep(100)
-        }
-
-        stopAndReap(processId)
-        displayPid = null
-        error("Xvfb did not create a working :0 display socket within the startup timeout.")
-    }
-
-    private fun canConnectToDisplaySocket(socketFile: File): Boolean = runCatching {
-        if (!socketFile.exists()) return@runCatching false
-        LocalSocket().use { client ->
-            client.connect(
-                LocalSocketAddress(
-                    socketFile.absolutePath,
-                    LocalSocketAddress.Namespace.FILESYSTEM
-                )
-            )
-        }
-        true
-    }.getOrDefault(false)
-
     private fun appendRuntimeLog(message: String) {
         runCatching {
             Mt5RuntimeManager.logFile(this).appendText("\n$message")
@@ -283,22 +190,6 @@ class Mt5RuntimeService : Service() {
             TermuxHeadlessX11Bridge.stop(this)
             termuxDisplayActive = false
         }
-        displayPid?.let(::stopAndReap)
-        displayPid = null
-    }
-
-    private fun stopAndReap(pid: Int) {
-        runCatching { nativeLauncher.stop(pid) }
-        val deadline = System.currentTimeMillis() + 1500
-        while (runCatching { nativeLauncher.isAlive(pid) }.getOrDefault(false) &&
-            System.currentTimeMillis() < deadline
-        ) {
-            Thread.sleep(50)
-        }
-        if (runCatching { nativeLauncher.isAlive(pid) }.getOrDefault(false)) {
-            runCatching { nativeLauncher.forceStop(pid) }
-        }
-        runCatching { nativeLauncher.waitFor(pid) }
     }
 
     override fun onDestroy() {
