@@ -18,7 +18,10 @@ object WinlatorMaliLaunchConfigurationBuilder {
     fun build(
         imageFs: File,
         inspection: WinlatorMaliRuntimeInspection,
-        displaySocket: File = File(imageFs, "usr/tmp/.X11-unix/X0")
+        displaySocket: File = File(imageFs, "usr/tmp/.X11-unix/X0"),
+        displayAddress: String = ":0",
+        xAuthorityFile: File? = null,
+        displayAvailable: Boolean = displaySocket.exists()
     ): WinlatorMaliLaunchConfiguration {
         val prefix = inspection.winePrefix
         val wine = inspection.wine
@@ -45,7 +48,7 @@ object WinlatorMaliLaunchConfigurationBuilder {
             if (hostDll == null) {
                 add("The ARM64EC host DLL is missing")
             }
-            if (!displaySocket.exists()) {
+            if (!displayAvailable) {
                 add("A live headless X11 server is required at ${displaySocket.absolutePath}")
             }
             if (!File(root, "usr/lib").isDirectory) {
@@ -68,7 +71,8 @@ object WinlatorMaliLaunchConfigurationBuilder {
             put("FONTCONFIG_PATH", File(root, "usr/etc/fonts").absolutePath)
             put("PREFIX", File(root, "usr").absolutePath)
             put("LD_LIBRARY_PATH", "${File(root, "usr/lib").absolutePath}:/system/lib64")
-            put("DISPLAY", ":0")
+            put("DISPLAY", displayAddress)
+            if (xAuthorityFile?.isFile == true) put("XAUTHORITY", xAuthorityFile.absolutePath)
             put("WINE_NO_DUPLICATE_EXPLORER", "1")
             put("WINE_DISABLE_FULLSCREEN_HACK", "1")
             put("WINE_GST_NO_GL", "1")
