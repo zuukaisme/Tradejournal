@@ -16,7 +16,6 @@ import java.net.Socket
 import java.nio.charset.StandardCharsets
 import java.security.SecureRandom
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.Locale
 
 object Mt5LocalBridgeServer {
     const val PORT = 8765
