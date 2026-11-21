@@ -90,7 +90,7 @@ fun Mt5RuntimeDiagnosticsCard() {
         ) {
             Column(modifier = Modifier.padding(10.dp)) {
                 Text(
-                    text = "Runtime status: Not installed",
+                    text = "Runtime status: Not verified",
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSecondaryContainer
