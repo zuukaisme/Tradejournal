@@ -4,7 +4,7 @@ TradePulse now includes a local TCP bridge protocol and an MQL5 Expert Advisor s
 
 ## Connection model
 
-- The Android app binds a TCP server to `127.0.0.1:8765` only.
+- The Settings card can export `TradePulseBridge.mq5` to a user-selected location. The Android app binds a TCP server to `127.0.0.1:8765` only.
 - The MT5 Expert Advisor connects to `127.0.0.1:8765` from the terminal running under Wine.
 - The app creates a persistent random 192-bit token and requires the EA to send `AUTH|<token>` as its first line.
 - The token is displayed in TradePulse Settings while the runtime service is active.
