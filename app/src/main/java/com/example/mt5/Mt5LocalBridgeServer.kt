@@ -52,7 +52,7 @@ object Mt5LocalBridgeServer {
         if (running.get()) return
         mutableToken.value = loadOrCreateToken(context.applicationContext)
         val socket = ServerSocket()
-        socket.reuseAddress = false
+        socket.reuseAddress = true
         socket.bind(java.net.InetSocketAddress(InetAddress.getByName("127.0.0.1"), PORT))
         server = socket
         running.set(true)
