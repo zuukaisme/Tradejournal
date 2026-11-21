@@ -196,9 +196,12 @@ object Mt5LocalBridgeServer {
             if (running.get()) mutableStatus.value = "Waiting for authenticated MT5 Expert Advisor"
         }
 
-        if (running.get()) {
-            running.set(false)
-            mutableStatus.value = "Bridge server stopped"
+        synchronized(this) {
+            if (running.get() && server === serverSocket) {
+                running.set(false)
+                server = null
+                mutableStatus.value = "Bridge server stopped"
+            }
         }
     }
 
