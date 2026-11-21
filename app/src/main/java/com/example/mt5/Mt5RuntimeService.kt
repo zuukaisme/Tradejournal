@@ -5,6 +5,8 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
+import android.net.LocalSocket
+import android.net.LocalSocketAddress
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
@@ -69,7 +71,8 @@ class Mt5RuntimeService : Service() {
                     "Launch environment keys: ${launchConfiguration.environment.keys.sorted().joinToString(", ")}\n" +
                     details.joinToString("\n") { "- $it" }
             )
-            val canProbeWine = launchConfiguration.executable != null &&
+            val canProbeWine = HeadlessX11RuntimeManager.isInstalled(this) &&
+                launchConfiguration.executable != null &&
                 launchConfiguration.blockers.all { it.startsWith("A live headless X11 server") }
             if (canProbeWine) {
                 runWineVersionProbe(launchConfiguration)
@@ -86,12 +89,25 @@ class Mt5RuntimeService : Service() {
         Thread({
             var pid: Int? = null
             try {
-                val executable = configuration.executable ?: error("Wine executable is unavailable.")
+                val imageFs = File(filesDir, "imagefs")
+                val displaySocket = File(imageFs, "usr/tmp/.X11-unix/X0")
+                startHeadlessDisplay(imageFs, displaySocket)
+                check(!stopping.get()) { "Runtime startup was cancelled." }
+                val inspection = Mt5RuntimeManager.winlatorMaliInspection(this)
+                val resolvedConfiguration = WinlatorMaliLaunchConfigurationBuilder.build(
+                    imageFs,
+                    inspection,
+                    displaySocket
+                )
+                check(resolvedConfiguration.blockers.isEmpty()) {
+                    resolvedConfiguration.blockers.joinToString()
+                }
+                val executable = resolvedConfiguration.executable ?: error("Wine executable is unavailable.")
                 val processId = nativeLauncher.start(
                     executable,
                     listOf("--version"),
-                    configuration.environment,
-                    configuration.workingDirectory,
+                    resolvedConfiguration.environment,
+                    resolvedConfiguration.workingDirectory,
                     File(filesDir, "mt5-wine-probe.log")
                 )
                 pid = processId
@@ -113,11 +129,81 @@ class Mt5RuntimeService : Service() {
                 pid?.let { runCatching { nativeLauncher.forceStop(it) } }
             } finally {
                 probePid = null
+                stopDisplay()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
         }, "TradePulse-Wine-Probe").start()
     }
+
+    private fun startHeadlessDisplay(imageFs: File, socket: File) {
+        val runtime = HeadlessX11RuntimeManager.runtimeDirectory(this)
+        check(HeadlessX11RuntimeManager.isInstalled(this)) {
+            "Import the Android ARM64 headless X11 runtime before starting the Wine check."
+        }
+        val temporaryDirectory = File(imageFs, "usr/tmp")
+        check(temporaryDirectory.mkdirs() || temporaryDirectory.isDirectory) {
+            "Unable to create the Winlator temporary directory."
+        }
+        val socketDirectory = socket.parentFile
+            ?: error("The X11 socket directory is invalid.")
+        check(socketDirectory.mkdirs() || socketDirectory.isDirectory) {
+            "Unable to create the X11 socket directory."
+        }
+        socket.delete()
+
+        val xvfb = File(runtime, "bin/Xvfb")
+        val environment = buildMap {
+            put("HOME", runtime.absolutePath)
+            put("PREFIX", runtime.absolutePath)
+            put("TMPDIR", temporaryDirectory.absolutePath)
+            put("DISPLAY", ":0")
+            put("XKB_CONFIG_ROOT", File(runtime, "share/X11/xkb").absolutePath)
+            put("FONTCONFIG_PATH", File(runtime, "etc/fonts").absolutePath)
+            put("LD_LIBRARY_PATH", "${File(runtime, "lib").absolutePath}:/system/lib64")
+            val sharedMemory = File(runtime, "lib/libandroid-shmem.so")
+            if (sharedMemory.isFile) put("LD_PRELOAD", sharedMemory.absolutePath)
+        }
+        val processId = nativeLauncher.start(
+            xvfb,
+            listOf(":0", "-screen", "0", "1280x720x24", "-nolisten", "tcp", "-ac", "-noreset"),
+            environment,
+            runtime,
+            File(filesDir, "mt5-xvfb.log")
+        )
+        displayPid = processId
+
+        val deadline = System.currentTimeMillis() + DISPLAY_START_TIMEOUT_MS
+        while (System.currentTimeMillis() < deadline) {
+            check(!stopping.get()) { "Runtime startup was cancelled." }
+            if (!nativeLauncher.isAlive(processId)) {
+                val exitCode = nativeLauncher.waitFor(processId)
+                displayPid = null
+                error("Xvfb exited before creating its display socket. Exit code: $exitCode")
+            }
+            if (canConnectToDisplaySocket(socket)) return
+            Thread.sleep(100)
+        }
+
+        nativeLauncher.stop(processId)
+        Thread.sleep(500)
+        if (nativeLauncher.isAlive(processId)) nativeLauncher.forceStop(processId)
+        displayPid = null
+        error("Xvfb did not create a working :0 display socket within the startup timeout.")
+    }
+
+    private fun canConnectToDisplaySocket(socketFile: File): Boolean = runCatching {
+        if (!socketFile.exists()) return@runCatching false
+        LocalSocket().use { client ->
+            client.connect(
+                LocalSocketAddress(
+                    socketFile.absolutePath,
+                    LocalSocketAddress.Namespace.FILESYSTEM
+                )
+            )
+        }
+        true
+    }.getOrDefault(false)
 
     private fun appendRuntimeLog(message: String) {
         runCatching {
@@ -177,5 +263,6 @@ class Mt5RuntimeService : Service() {
         private const val CHANNEL_ID = "tradepulse_mt5_runtime"
         private const val NOTIFICATION_ID = 7315
         private const val WINE_PROBE_TIMEOUT_MS = 20_000L
+        private const val DISPLAY_START_TIMEOUT_MS = 10_000L
     }
 }
