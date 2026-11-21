@@ -196,6 +196,29 @@ fun Mt5EmbeddedRuntimeCard() {
 
             Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
             Text("Local bridge: $bridgeStatus", style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                    onClick = {
+                        runCatching { Mt5LocalBridgeServer.start(context) }
+                            .onSuccess { status = "Local MT5 API bridge started on 127.0.0.1:8765." }
+                            .onFailure { status = it.message ?: "Unable to start the local MT5 bridge." }
+                    },
+                    enabled = bridgeStatus == "Stopped" || bridgeStatus == "Bridge server stopped",
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Start local API")
+                }
+                OutlinedButton(
+                    onClick = {
+                        Mt5LocalBridgeServer.stop()
+                        status = "Local MT5 API bridge stopped."
+                    },
+                    enabled = bridgeStatus != "Stopped" && bridgeStatus != "Bridge server stopped",
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Stop API")
+                }
+            }
             lastBridgeResult?.let { result ->
                 Text("Latest MT5 response: $result", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
             }
