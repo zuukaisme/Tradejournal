@@ -71,7 +71,7 @@ object WinlatorMaliRuntimeLayout {
             terminal = terminal,
             missingComponents = missing,
             launchBlockers = listOf(
-                "The Winlator Mali XServer and guest-process environment are not integrated into TradePulse. A headless display backend and lifecycle supervision are still required."
+                "MT5 terminal startup, broker login, chart initialization, bridge EA deployment, and terminal process supervision have not yet been implemented and validated."
             )
         )
     }
