@@ -19,9 +19,9 @@ mt5/
   terminal64.exe
 ```
 
-- `bin/box64` must be an Android ARM64 executable compatible with the phone.
+- `bin/box64` must be an Android ARM64/Bionic executable compatible with the phone.
 - `rootfs/usr/bin/wine64` and `rootfs/usr/bin/Xvfb` must be Linux x86_64 ELF binaries.
-- The root filesystem must include all shared libraries required by Wine and Xvfb.
+- The root filesystem must include all shared libraries required by Wine and Xvfb. ZIP packages must materialize symbolic links as regular files at the linked paths because the current ZIP importer does not restore Unix symlink metadata.
 - `mt5/terminal64.exe` must be a user-installed MetaTrader 5 Windows terminal.
 - TradePulse starts Box64 directly through a small JNI process launcher. It does not execute downloaded binaries with `ProcessBuilder`.
 
