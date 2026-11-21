@@ -23,13 +23,13 @@ class TermuxHeadlessX11BridgeTest {
         DataInputStream(FileInputStream(file)).use { input ->
             assertEquals(0, input.readUnsignedShort())
             assertEquals(4, input.readUnsignedShort())
-            assertArrayEquals(byteArrayOf(127, 0, 0, 1), ByteArray(4).also(input::readFully))
+            assertArrayEquals(byteArrayOf(127, 0, 0, 1), ByteArray(4).also { input.readFully(it) })
             assertEquals(1, input.readUnsignedShort())
-            assertEquals("0", ByteArray(1).also(input::readFully).toString(Charsets.US_ASCII))
+            assertEquals("0", ByteArray(1).also { input.readFully(it) }.toString(Charsets.US_ASCII))
             assertEquals(18, input.readUnsignedShort())
-            assertEquals("MIT-MAGIC-COOKIE-1", ByteArray(18).also(input::readFully).toString(Charsets.US_ASCII))
+            assertEquals("MIT-MAGIC-COOKIE-1", ByteArray(18).also { input.readFully(it) }.toString(Charsets.US_ASCII))
             assertEquals(16, input.readUnsignedShort())
-            assertArrayEquals(cookie, ByteArray(16).also(input::readFully))
+            assertArrayEquals(cookie, ByteArray(16).also { input.readFully(it) })
         }
     }
 }
