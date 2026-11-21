@@ -43,11 +43,14 @@ class Mt5RuntimeService : Service() {
             createNotificationChannel()
             startForeground(NOTIFICATION_ID, buildNotification("Checking Winlator Mali runtime"))
             val inspection = Mt5RuntimeManager.winlatorMaliInspection(this)
+            val launchConfiguration = WinlatorMaliLaunchConfigurationBuilder.build(
+                File(filesDir, "imagefs"),
+                inspection
+            )
             val details = buildList {
-                addAll(inspection.missingComponents)
+                addAll(launchConfiguration.blockers)
                 addAll(inspection.launchBlockers)
-                add("The existing generic Xvfb bundle is not compatible with the Winlator Mali ImageFS and Proton ARM64EC layout.")
-                add("MT5 launch remains disabled until a validated headless Box64/Wine launcher, virtual display, and terminal lifecycle are implemented.")
+                add("Terminal launch remains disabled until a headless X11 server is integrated and validated.")
             }.distinct()
             Mt5RuntimeManager.logFile(this).writeText(
                 "Embedded MT5 launch preflight\n" +
@@ -56,7 +59,11 @@ class Mt5RuntimeService : Service() {
                     "Wine executable: ${inspection.wine?.absolutePath ?: "not found"}\n" +
                     "Selected Wine prefix: ${inspection.winePrefix?.absolutePath ?: "not found"}\n" +
                     "MT5 terminal: ${inspection.terminal?.absolutePath ?: "not found"}\n" +
+                    "Wine architecture validated: ${launchConfiguration.blockers.none { it.contains("ARM64 ELF") }}\n" +
+                    "Display socket present: ${File(filesDir, "imagefs/usr/tmp/.X11-unix/X0").exists()}\n" +
                     "Terminal launch enabled: false\n" +
+                    "Launch arguments: ${launchConfiguration.arguments.joinToString(" ")}\n" +
+                    "Launch environment keys: ${launchConfiguration.environment.keys.sorted().joinToString(", ")}\n" +
                     details.joinToString("\n") { "- $it" }
             )
             stopForeground(STOP_FOREGROUND_REMOVE)
